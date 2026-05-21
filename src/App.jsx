@@ -13,19 +13,9 @@ function getInitials(name) {
   return name.split(" ").filter(Boolean).map(w => w[0]).join("").slice(0, 2).toUpperCase();
 }
 
-const STATUSES = [
-  "Not Started",
-  "In Progress",
-  "Editorial Review",
-  "Design Review",
-  "Proof Review",
-  "Internal Review",
-  "Client Review",
-  "Done",
-  "Blocked",
-];
+const STATUSES = ["Not Started", "In Progress", "Done", "Blocked"];
 const PRIORITIES   = ["Low", "Medium", "High", "Critical"];
-const DEPARTMENTS  = ["Editorial", "Design", "Proof", "Strategy", "Account", "Production"];
+const DEPARTMENTS  = ["Editorial", "Design", "Proof", "Strategy", "Account", "Production", "Client Review"];
 
 // --- DATA - deliverables = specific outputs; subtasks = production workflow steps
 const initialProjects = [
@@ -476,11 +466,6 @@ const durDays = (start, end) => Math.ceil((parseDate(end) - parseDate(start)) / 
 const statusMeta = {
   "Not Started":      { color: "#6b7280", bg: "rgba(100,116,139,0.15)" },
   "In Progress":      { color: "#38bdf8", bg: "rgba(56,189,248,0.15)"  },
-  "Editorial Review": { color: "#f59e0b", bg: "rgba(245,158,11,0.15)"  },
-  "Design Review":    { color: "#e879f9", bg: "rgba(232,121,249,0.15)" },
-  "Proof Review":     { color: "#fb923c", bg: "rgba(251,146,60,0.15)"  },
-  "Internal Review":  { color: "#818cf8", bg: "rgba(129,140,248,0.15)" },
-  "Client Review":    { color: "#a78bfa", bg: "rgba(167,139,250,0.15)" },
   "Done":             { color: "#34d399", bg: "rgba(52,211,153,0.15)"  },
   "Blocked":          { color: "#f87171", bg: "rgba(248,113,113,0.15)" },
 };
@@ -527,6 +512,7 @@ const deptMeta = {
   "Strategy":   { color: "#38bdf8", icon: "◆" },
   "Account":    { color: "#34d399", icon: "◎" },
   "Production": { color: "#4b5563", icon: "▣" },
+  "Client Review": { color: "#a78bfa", icon: "◎" },
 };
 
 function DeptBadge({ dept }) {
@@ -709,18 +695,62 @@ function DashboardView({ projects, people, onEditItem, onAddDeliverable, onAddSu
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 22 }}>
-      {/* KPI */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 10 }}>
+      {/* KPI row 1 — status counts */}
+      <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
         {STATUSES.map(s => {
           const m = statusMeta[s] || statusMeta["Not Started"]; const c = statusCounts[s];
+          if (!c) return null;
           return (
-            <div key={s} style={{ background: "#ffffff", border: `1px solid ${m.color}28`, borderRadius: 10, padding: "14px 16px", position: "relative", overflow: "hidden" }}>
+            <div key={s} style={{ background: "#ffffff", border: `1px solid ${m.color}40`, borderRadius: 10, padding: "12px 18px", position: "relative", overflow: "hidden", minWidth: 100, flex: "1 1 auto" }}>
               <div style={{ position: "absolute", bottom: 0, left: 0, width: `${Math.round((c/total)*100)}%`, height: 3, background: m.color }} />
-              <div style={{ fontSize: 30, fontWeight: 900, color: m.color, lineHeight: 1 }}>{c}</div>
+              <div style={{ fontSize: 28, fontWeight: 900, color: m.color, lineHeight: 1 }}>{c}</div>
               <div style={{ fontSize: 10, color: "#6b7280", marginTop: 4, fontWeight: 700, letterSpacing: "0.07em" }}>{s.toUpperCase()}</div>
             </div>
           );
         })}
+      </div>
+
+      {/* KPI row 2 — dept distribution breakdown */}
+      <div style={{ background: "#ffffff", border: "1px solid rgba(0,0,0,0.07)", borderRadius: 10, padding: "16px 20px" }}>
+        <div style={{ fontSize: 10, fontWeight: 700, color: "#6b7280", letterSpacing: "0.09em", textTransform: "uppercase", marginBottom: 14 }}>Work Distribution by Department</div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(130px, 1fr))", gap: 10 }}>
+          {DEPARTMENTS.map(dept => {
+            const m = deptMeta[dept] || { color: "#6b7280", icon: "●" };
+            const deptItems = allItems.filter(d => d.department === dept);
+            const ns = deptItems.filter(d => d.status === "Not Started").length;
+            const ip = deptItems.filter(d => d.status === "In Progress").length;
+            const dn = deptItems.filter(d => d.status === "Done").length;
+            const bl = deptItems.filter(d => d.status === "Blocked").length;
+            const total = deptItems.length;
+            if (!total) return null;
+            return (
+              <div key={dept} style={{ background: m.color + "08", border: `1px solid ${m.color}30`, borderRadius: 8, padding: "10px 12px" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 8 }}>
+                  <span style={{ fontSize: 14 }}>{m.icon}</span>
+                  <span style={{ fontSize: 11, fontWeight: 800, color: m.color }}>{dept}</span>
+                  <span style={{ marginLeft: "auto", fontSize: 12, fontWeight: 900, color: m.color }}>{total}</span>
+                </div>
+                {/* Mini progress bar */}
+                <div style={{ display: "flex", height: 6, borderRadius: 3, overflow: "hidden", gap: 1, marginBottom: 8 }}>
+                  {dn > 0 && <div style={{ flex: dn, background: "#34d399" }} />}
+                  {ip > 0 && <div style={{ flex: ip, background: "#38bdf8" }} />}
+                  {bl > 0 && <div style={{ flex: bl, background: "#f87171" }} />}
+                  {ns > 0 && <div style={{ flex: ns, background: "#e5e7eb" }} />}
+                </div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+                  {[["Not Started", ns, "#9ca3af"], ["In Progress", ip, "#38bdf8"], ["Done", dn, "#34d399"], ["Blocked", bl, "#f87171"]].map(([lbl, cnt, col]) =>
+                    cnt > 0 ? (
+                      <div key={lbl} style={{ display: "flex", justifyContent: "space-between", fontSize: 9, color: col }}>
+                        <span style={{ fontWeight: 600 }}>{lbl}</span>
+                        <span style={{ fontWeight: 800 }}>{cnt}</span>
+                      </div>
+                    ) : null
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
       </div>
       <div style={{ display: "grid", gridTemplateColumns: "1.1fr 0.9fr", gap: 18 }}>
         {/* Project health */}
@@ -794,7 +824,10 @@ function DashboardView({ projects, people, onEditItem, onAddDeliverable, onAddSu
             </tr>
           </thead>
           <tbody>
-            {allDeliverables.map(d => {
+            {[...allDeliverables]
+              .filter(d => d.status !== "Done")
+              .sort((a, b) => a.start.localeCompare(b.start))
+              .map(d => {
               const proj = projects.find(p => p.id === d.projectId);
               return (
                 <tr key={d.id} style={{ borderBottom: "1px solid rgba(0,0,0,0.04)" }}
@@ -839,15 +872,15 @@ function SectionHeader({ children, noMargin }) {
 }
 
 // --- TIMELINE ────────────────────────────────────────────────────────────────
-const DAY_W = 26;
+const MIN_DAY_W = 20; const MAX_DAY_W = 32;
 const D_ROW = 44;
 const S_ROW = 36;
 const TODAY = new Date("2026-05-20");
 const totalDays = Math.ceil((TIMELINE_END - TIMELINE_START) / 86400000);
 
 // Column widths for the left table
-const COL = { num: 36, title: 190, start: 88, end: 88, dur: 50, deps: 80, assignees: 80 };
-const LEFT_W = Object.values(COL).reduce((a, b) => a + b, 0);
+const COL_DEFAULTS = { num: 38, title: 220, start: 96, end: 96, dur: 56, deps: 86, assignees: 96 };
+// LEFT_W is now computed dynamically from colWidths state
 
 // Build a flat numbered index of all items across all projects
 function buildRowIndex(projects) {
@@ -869,15 +902,170 @@ function buildRowIndex(projects) {
   return { index, reverse, total: n - 1 };
 }
 
+
+// ── CASCADE DATE HELPER ──────────────────────────────────────────────────────
+// When a task's end date changes, snap all dependent tasks so they start the
+// day after their predecessor ends, propagating through the chain.
+function cascadeDates(projects, changedId, newEnd, holidays = []) {
+  const holidaySet = new Set(holidays.map(h => h.date));
+
+  // Advance a date string to the next working day (skip weekends + holidays)
+  function nextWorkingDay(dateStr) {
+    let d = new Date(dateStr + "T00:00:00");
+    while (holidaySet.has(d.toISOString().slice(0,10)) || d.getDay() === 0 || d.getDay() === 6) {
+      d = new Date(d.getTime() + 86400000);
+    }
+    return d.toISOString().slice(0,10);
+  }
+
+  // Add n working days to a date string
+  function addWorkDays(dateStr, n) {
+    let d = new Date(dateStr + "T00:00:00");
+    let added = 0;
+    while (added < n) {
+      d = new Date(d.getTime() + 86400000);
+      const ds = d.toISOString().slice(0,10);
+      if (d.getDay() !== 0 && d.getDay() !== 6 && !holidaySet.has(ds)) added++;
+    }
+    return d.toISOString().slice(0,10);
+  }
+
+  // Count working days between two date strings (inclusive of start)
+  function workingDaysDuration(startStr, endStr) {
+    let d = new Date(startStr + "T00:00:00");
+    const end = new Date(endStr + "T00:00:00");
+    let count = 0;
+    while (d <= end) {
+      const ds = d.toISOString().slice(0,10);
+      if (d.getDay() !== 0 && d.getDay() !== 6 && !holidaySet.has(ds)) count++;
+      d = new Date(d.getTime() + 86400000);
+    }
+    return Math.max(1, count);
+  }
+
+  const itemMap = {};
+  projects.forEach(proj => {
+    proj.deliverables.forEach(del => {
+      itemMap[del.id] = { ...del };
+      del.subtasks.forEach(sub => { itemMap[sub.id] = { ...sub }; });
+    });
+  });
+
+  const rowIndex = buildRowIndex(projects);
+  function depsTextToIds(depsText) {
+    if (!depsText) return [];
+    return depsText.split(',').map(s => s.trim()).filter(Boolean).map(num => {
+      const entry = rowIndex.reverse[parseInt(num)];
+      return entry ? entry.id : null;
+    }).filter(Boolean);
+  }
+
+  // Apply the direct change — also ensure newEnd itself isn't a holiday
+  const adjustedEnd = nextWorkingDay(newEnd) !== newEnd
+    ? (() => { let d = new Date(newEnd + "T00:00:00"); while (holidaySet.has(d.toISOString().slice(0,10)) || d.getDay()===0 || d.getDay()===6) d = new Date(d.getTime() + 86400000); return d.toISOString().slice(0,10); })()
+    : newEnd;
+  itemMap[changedId] = { ...itemMap[changedId], end: adjustedEnd };
+
+  const triggered = new Set([changedId]);
+  let anyChange = true;
+
+  while (anyChange) {
+    anyChange = false;
+    Object.values(itemMap).forEach(item => {
+      const deps = depsTextToIds(item.depsText || '');
+      if (!deps.length || !deps.some(d => triggered.has(d))) return;
+
+      const latestPredEnd = deps
+        .map(d => itemMap[d] ? parseDate(itemMap[d].end) : null)
+        .filter(Boolean)
+        .reduce((max, d) => d > max ? d : max, new Date(0));
+
+      if (latestPredEnd <= new Date(0)) return;
+
+      // Start the day after predecessor ends, skipping weekends + holidays
+      const dayAfter = new Date(latestPredEnd.getTime() + 86400000).toISOString().slice(0,10);
+      const ns = nextWorkingDay(dayAfter);
+
+      // Preserve working-day duration
+      const dur = workingDaysDuration(item.start, item.end);
+      const ne = addWorkDays(ns, dur - 1);
+
+      triggered.add(item.id);
+
+      if (ns !== item.start || ne !== item.end) {
+        itemMap[item.id] = { ...itemMap[item.id], start: ns, end: ne };
+        anyChange = true;
+      }
+    });
+  }
+
+  return projects.map(proj => ({
+    ...proj,
+    deliverables: proj.deliverables.map(del => {
+      const u = itemMap[del.id];
+      return {
+        ...(u ? { ...del, start: u.start, end: u.end } : del),
+        subtasks: del.subtasks.map(sub => {
+          const us = itemMap[sub.id];
+          return us ? { ...sub, start: us.start, end: us.end } : sub;
+        }),
+      };
+    }),
+  }));
+}
+
+
 function dayOffset(dateStr) {
   return Math.ceil((parseDate(dateStr) - TIMELINE_START) / 86400000);
 }
 
-function TimelineView({ projects, people, onEditItem, onAddDeliverable, onAddSubtask, onMarkDone, onSaveItem }) {
-  const [collapsed, setCollapsed] = useState({});
-  const toggle = (id) => setCollapsed(c => ({ ...c, [id]: !c[id] }));
+function TimelineView({ projects, people, onEditItem, onAddDeliverable, onAddSubtask, onMarkDone, onSaveItem, holidays = [] }) {
+  const [collapsed, setCollapsed] = useState(() => {
+    try { return JSON.parse(localStorage.getItem('planr_collapsed') || '{}'); } catch { return {}; }
+  });
+  const toggle = (id) => setCollapsed(c => {
+    const next = { ...c, [id]: !c[id] };
+    try { localStorage.setItem('planr_collapsed', JSON.stringify(next)); } catch {}
+    return next;
+  });
   const scrollRef = useRef(null);
+  const containerRef = useRef(null);
+  const [DAY_W, setDayW] = useState(24);
+  const [colWidths, setColWidths] = useState({ ...COL_DEFAULTS });
+  const LEFT_W = Object.values(colWidths).reduce((a, b) => a + b, 0);
   const rowIndex = buildRowIndex(projects);
+
+  // Drag-to-resize columns
+  const dragRef = useRef(null);
+  const startResizeCol = (colKey, e) => {
+    e.preventDefault();
+    const startX = e.clientX;
+    const startW = colWidths[colKey];
+    const onMove = (mv) => {
+      const delta = mv.clientX - startX;
+      setColWidths(cw => ({ ...cw, [colKey]: Math.max(36, startW + delta) }));
+    };
+    const onUp = () => {
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+    };
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+  };
+
+  // Auto-fit: compute DAY_W so timeline fills the available width
+  useEffect(() => {
+    const compute = () => {
+      if (!containerRef.current) return;
+      const available = containerRef.current.offsetWidth - LEFT_W - 20;
+      const fit = Math.floor(available / totalDays);
+      setDayW(Math.min(MAX_DAY_W, Math.max(MIN_DAY_W, fit)));
+    };
+    compute();
+    const ro = new ResizeObserver(compute);
+    if (containerRef.current) ro.observe(containerRef.current);
+    return () => ro.disconnect();
+  }, [totalDays, LEFT_W]);
 
   // Build month + week markers
   const months = [];
@@ -907,13 +1095,22 @@ function TimelineView({ projects, people, onEditItem, onAddDeliverable, onAddSub
   ]));
 
   return (
-    <div style={{ background: "#eceef2", border: "1px solid rgba(0,0,0,0.07)", borderRadius: 10, overflow: "hidden", fontFamily: "inherit" }}>
+    <div ref={containerRef} style={{ background: "#eceef2", border: "1px solid rgba(0,0,0,0.07)", borderRadius: 10, overflow: "hidden", fontFamily: "inherit" }}>
       {/* Sticky header row — month labels */}
       <div style={{ display: "flex", borderBottom: "1px solid rgba(0,0,0,0.07)", background: "#f5f6f8", position: "sticky", top: 0, zIndex: 20 }}>
-        {/* Left table header */}
+        {/* Left table header with resize handles */}
         <div style={{ width: LEFT_W, flexShrink: 0, display: "flex", borderRight: "1px solid rgba(0,0,0,0.07)" }}>
-          {[["#", COL.num], ["Title", COL.title], ["Start", COL.start], ["End", COL.end], ["Dur", COL.dur], ["Deps", COL.deps], ["Assigned To", COL.assignees]].map(([h, w]) => (
-            <div key={h} style={{ width: w, padding: "10px 10px", fontSize: 10, fontWeight: 700, color: "#6b7280", letterSpacing: "0.09em", flexShrink: 0, borderRight: "1px solid rgba(0,0,0,0.05)", whiteSpace: "nowrap", overflow: "hidden" }}>{h.toUpperCase()}</div>
+          {[["#","num"],["Title","title"],["Start","start"],["End","end"],["Dur","dur"],["Deps","deps"],["Assigned To","assignees"]].map(([label, key]) => (
+            <div key={key} style={{ width: colWidths[key], position: "relative", padding: "10px 8px", fontSize: 10, fontWeight: 700, color: "#6b7280", letterSpacing: "0.09em", flexShrink: 0, borderRight: "1px solid rgba(0,0,0,0.05)", whiteSpace: "nowrap", overflow: "hidden", userSelect: "none" }}>
+              {label.toUpperCase()}
+              {/* Drag handle */}
+              <div onMouseDown={(e) => startResizeCol(key, e)} style={{
+                position: "absolute", right: 0, top: 0, bottom: 0, width: 6, cursor: "col-resize",
+                display: "flex", alignItems: "center", justifyContent: "center",
+              }}>
+                <div style={{ width: 2, height: 14, background: "rgba(0,0,0,0.15)", borderRadius: 1 }} />
+              </div>
+            </div>
           ))}
         </div>
         {/* Scrollable month header */}
@@ -933,13 +1130,14 @@ function TimelineView({ projects, people, onEditItem, onAddDeliverable, onAddSub
         weeks={weeks} todayOff={todayOff} allItemsFlat={allItemsFlat}
         onEditItem={onEditItem} headerScrollRef={scrollRef}
         onAddDeliverable={onAddDeliverable} onAddSubtask={onAddSubtask}
-        onMarkDone={onMarkDone} onSaveItem={onSaveItem} rowIndex={rowIndex}
+        onMarkDone={onMarkDone} onSaveItem={onSaveItem} rowIndex={rowIndex} DAY_W={DAY_W}
+        colWidths={colWidths} LEFT_W={LEFT_W} holidays={holidays}
       />
     </div>
   );
 }
 
-function TimelineBody({ projects, people, collapsed, toggle, weeks, todayOff, allItemsFlat, onEditItem, headerScrollRef, onAddDeliverable, onAddSubtask, onMarkDone, onSaveItem, rowIndex }) {
+function TimelineBody({ projects, people, collapsed, toggle, weeks, todayOff, allItemsFlat, onEditItem, headerScrollRef, onAddDeliverable, onAddSubtask, onMarkDone, onSaveItem, rowIndex, DAY_W, colWidths, LEFT_W, holidays = [] }) {
   const bodyRef = useRef(null);
 
   const syncScroll = (e) => {
@@ -948,12 +1146,29 @@ function TimelineBody({ projects, people, collapsed, toggle, weeks, todayOff, al
 
   return (
     <div style={{ overflowX: "auto", overflowY: "visible" }} onScroll={syncScroll} ref={bodyRef}>
-      <div style={{ minWidth: LEFT_W + totalDays * DAY_W }}>
+      <div style={{ minWidth: LEFT_W + totalDays * DAY_W, position: "relative" }}>
+        {/* Holiday shading */}
+        {holidays.map(h => {
+          const off = Math.ceil((parseDate(h.date) - TIMELINE_START) / 86400000);
+          if (off < 0 || off >= totalDays) return null;
+          return (
+            <div key={h.date} title={h.name} style={{
+              position: "absolute", left: LEFT_W + off * DAY_W, top: 0, bottom: 0, width: DAY_W,
+              background: "rgba(251,146,60,0.12)", borderLeft: "1px solid rgba(251,146,60,0.3)",
+              pointerEvents: "none", zIndex: 1,
+            }}>
+              <div style={{ fontSize: 8, color: "#fb923c", fontWeight: 700, writingMode: "vertical-rl",
+                transform: "rotate(180deg)", paddingBottom: 4, opacity: 0.7, position: "absolute", bottom: 4, left: "50%", transform: "translateX(-50%) rotate(180deg)" }}>
+                {h.name}
+              </div>
+            </div>
+          );
+        })}
         {projects.map(proj => (
           <ProjectSection key={proj.id} proj={proj} people={people} collapsed={collapsed} toggle={toggle}
             weeks={weeks} todayOff={todayOff} allItemsFlat={allItemsFlat} onEditItem={onEditItem}
             onAddDeliverable={onAddDeliverable} onAddSubtask={onAddSubtask} onMarkDone={onMarkDone}
-            onSaveItem={onSaveItem} rowIndex={rowIndex} />
+            onSaveItem={onSaveItem} rowIndex={rowIndex} DAY_W={DAY_W} colWidths={colWidths} LEFT_W={LEFT_W} />
         ))}
         {/* Today footer */}
         <div style={{ display: "flex", height: 22, background: "#e8eaee", borderTop: "1px solid rgba(0,0,0,0.06)" }}>
@@ -967,7 +1182,7 @@ function TimelineBody({ projects, people, collapsed, toggle, weeks, todayOff, al
   );
 }
 
-function ProjectSection({ proj, people, collapsed, toggle, weeks, todayOff, allItemsFlat, onEditItem, onAddDeliverable, onAddSubtask, onMarkDone, onSaveItem, rowIndex }) {
+function ProjectSection({ proj, people, collapsed, toggle, weeks, todayOff, allItemsFlat, onEditItem, onAddDeliverable, onAddSubtask, onMarkDone, onSaveItem, rowIndex, DAY_W, colWidths, LEFT_W }) {
   const isProjCollapsed = !!collapsed[proj.id];
 
   // Span the whole project across the chart for the summary bar
@@ -1037,7 +1252,7 @@ function ProjectSection({ proj, people, collapsed, toggle, weeks, todayOff, allI
           collapsed={collapsed} toggle={toggle} weeks={weeks} todayOff={todayOff}
           allItemsFlat={allItemsFlat} onEditItem={onEditItem}
           onAddSubtask={() => onAddSubtask(proj, del)} onMarkDone={onMarkDone}
-          onSaveItem={onSaveItem} rowIndex={rowIndex} />
+          onSaveItem={onSaveItem} rowIndex={rowIndex} DAY_W={DAY_W} colWidths={colWidths} LEFT_W={LEFT_W} />
       ))}
 
       {/* Empty state */}
@@ -1056,7 +1271,7 @@ function ProjectSection({ proj, people, collapsed, toggle, weeks, todayOff, allI
   );
 }
 
-function DeliverableRow({ del, proj, people, collapsed, toggle, weeks, todayOff, allItemsFlat, onEditItem, onAddSubtask, onMarkDone, onSaveItem, rowIndex }) {
+function DeliverableRow({ del, proj, people, collapsed, toggle, weeks, todayOff, allItemsFlat, onEditItem, onAddSubtask, onMarkDone, onSaveItem, rowIndex, DAY_W, colWidths, LEFT_W }) {
   const isCollapsed = collapsed[del.id];
   const rowNum = rowIndex.index[del.id] || "?";
   const startOff = dayOffset(del.start);
@@ -1079,16 +1294,20 @@ function DeliverableRow({ del, proj, people, collapsed, toggle, weeks, todayOff,
         onMouseLeave={e => e.currentTarget.style.background = "rgba(245,158,11,0.03)"}>
 
         {/* Row # */}
-        <LeftCell width={COL.num} center>
+        <LeftCell width={colWidths.num} center>
           <span style={{ fontSize: 10, fontWeight: 700, color: "#9ca3af" }}>{rowNum}</span>
         </LeftCell>
 
         {/* Title */}
-        <LeftCell width={COL.title}>
+        <LeftCell width={colWidths.title}>
           <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
             <CheckButton isDone={del.status === "Done"} onClick={() => onMarkDone(proj.id, del.id, null)} />
+            {del.status === "Not Started" && (
+              <button onClick={e => { e.stopPropagation(); save({ status: "In Progress" }); }} title="Start task"
+                style={{ background: "none", border: "none", cursor: "pointer", color: "#34d399", fontSize: 11, padding: 0, lineHeight: 1, flexShrink: 0 }}>▶</button>
+            )}
             <button onClick={() => toggle(del.id)} style={{ background: "none", border: "none", cursor: "pointer", color: "#6b7280", fontSize: 11, padding: 0, lineHeight: 1, flexShrink: 0 }}>
-              {isCollapsed ? "▶" : "▼"}
+              {isCollapsed ? "▸" : "▾"}
             </button>
             <div style={{ width: 3, height: 14, background: proj.color, borderRadius: 1, flexShrink: 0 }} />
             <span style={{ fontSize: 11, fontWeight: 700, color: del.status === "Done" ? "#9ca3af" : "#111827", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1, textDecoration: del.status === "Done" ? "line-through" : "none" }} title={del.title}>{del.title}</span>
@@ -1101,27 +1320,27 @@ function DeliverableRow({ del, proj, people, collapsed, toggle, weeks, todayOff,
         </LeftCell>
 
         {/* Start */}
-        <LeftCell width={COL.start}>
+        <LeftCell width={colWidths.start}>
           <InlineDate value={del.start} onChange={v => save({ start: v })} />
         </LeftCell>
 
         {/* End */}
-        <LeftCell width={COL.end}>
+        <LeftCell width={colWidths.end}>
           <InlineDate value={del.end} onChange={v => save({ end: v })} />
         </LeftCell>
 
         {/* Duration (read-only, auto from dates) */}
-        <LeftCell width={COL.dur}>
+        <LeftCell width={colWidths.dur}>
           <span style={{ fontSize: 10, color: "#6b7280", padding: "2px 3px" }}>{durDays(del.start, del.end)}d</span>
         </LeftCell>
 
         {/* Dependencies */}
-        <LeftCell width={COL.deps}>
+        <LeftCell width={colWidths.deps}>
           <InlineDeps value={del.depsText || ""} onChange={v => save({ depsText: v })} />
         </LeftCell>
 
         {/* Assignees */}
-        <LeftCell width={COL.assignees} last>
+        <LeftCell width={colWidths.assignees} last>
           <InlineAssignees assignees={del.assignees} people={people} onChange={v => save({ assignees: v })} />
         </LeftCell>
 
@@ -1156,7 +1375,7 @@ function DeliverableRow({ del, proj, people, collapsed, toggle, weeks, todayOff,
       {!isCollapsed && del.subtasks.map(sub => (
         <SubtaskRow key={sub.id} sub={sub} del={del} proj={proj} people={people}
           weeks={weeks} todayOff={todayOff} allItemsFlat={allItemsFlat} onEditItem={onEditItem}
-          onMarkDone={onMarkDone} onSaveItem={onSaveItem} rowIndex={rowIndex} />
+          onMarkDone={onMarkDone} onSaveItem={onSaveItem} rowIndex={rowIndex} DAY_W={DAY_W} colWidths={colWidths} LEFT_W={LEFT_W} />
       ))}
       {!isCollapsed && del.subtasks.length === 0 && (
         <div style={{ display: "flex", height: 30, alignItems: "center", background: "rgba(0,0,0,0.02)", borderBottom: "1px solid rgba(0,0,0,0.03)" }}>
@@ -1170,7 +1389,7 @@ function DeliverableRow({ del, proj, people, collapsed, toggle, weeks, todayOff,
   );
 }
 
-function SubtaskRow({ sub, del, proj, people, weeks, todayOff, allItemsFlat, onEditItem, onMarkDone, onSaveItem, rowIndex }) {
+function SubtaskRow({ sub, del, proj, people, weeks, todayOff, allItemsFlat, onEditItem, onMarkDone, onSaveItem, rowIndex, DAY_W, colWidths, LEFT_W }) {
   const m = statusMeta[sub.status] || statusMeta["Not Started"];
   const rowNum = rowIndex.index[sub.id] || "?";
   const startOff = dayOffset(sub.start);
@@ -1191,41 +1410,45 @@ function SubtaskRow({ sub, del, proj, people, weeks, todayOff, allItemsFlat, onE
       onMouseLeave={e => e.currentTarget.style.background = "rgba(0,0,0,0.025)"}>
 
       {/* Row # */}
-      <LeftCell width={COL.num} center>
+      <LeftCell width={colWidths.num} center>
         <span style={{ fontSize: 9, color: "#9ca3af" }}>{rowNum}</span>
       </LeftCell>
 
       {/* Title */}
-      <LeftCell width={COL.title}>
+      <LeftCell width={colWidths.title}>
         <div style={{ display: "flex", alignItems: "center", gap: 5, paddingLeft: 18 }}>
           <div style={{ width: 10, height: 1, background: "rgba(0,0,0,0.1)", flexShrink: 0 }} />
           <CheckButton isDone={sub.status === "Done"} onClick={() => onMarkDone(proj.id, del.id, sub.id)} />
+          {sub.status === "Not Started" && (
+            <button onClick={e => { e.stopPropagation(); save({ status: "In Progress" }); }} title="Start task"
+              style={{ background: "none", border: "none", cursor: "pointer", color: "#34d399", fontSize: 10, padding: 0, lineHeight: 1, flexShrink: 0 }}>▶</button>
+          )}
           <span style={{ fontSize: 11, color: sub.status === "Done" ? "#9ca3af" : "#374151", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", textDecoration: sub.status === "Done" ? "line-through" : "none", flex: 1 }} title={sub.title}>{sub.title}</span>
         </div>
       </LeftCell>
 
       {/* Start */}
-      <LeftCell width={COL.start}>
+      <LeftCell width={colWidths.start}>
         <InlineDate value={sub.start} onChange={v => save({ start: v })} small />
       </LeftCell>
 
       {/* End */}
-      <LeftCell width={COL.end}>
+      <LeftCell width={colWidths.end}>
         <InlineDate value={sub.end} onChange={v => save({ end: v })} small />
       </LeftCell>
 
       {/* Duration */}
-      <LeftCell width={COL.dur}>
+      <LeftCell width={colWidths.dur}>
         <span style={{ fontSize: 10, color: "#9ca3af", padding: "2px 3px" }}>{durDays(sub.start, sub.end)}d</span>
       </LeftCell>
 
       {/* Dependencies */}
-      <LeftCell width={COL.deps}>
+      <LeftCell width={colWidths.deps}>
         <InlineDeps value={sub.depsText || ""} onChange={v => save({ depsText: v })} />
       </LeftCell>
 
       {/* Assignees */}
-      <LeftCell width={COL.assignees} last>
+      <LeftCell width={colWidths.assignees} last>
         <InlineAssignees assignees={sub.assignees} people={people} onChange={v => save({ assignees: v })} />
       </LeftCell>
 
@@ -1312,54 +1535,134 @@ function InlineDeps({ value, onChange }) {
 
 function InlineAssignees({ assignees, onChange, people }) {
   const [open, setOpen] = useState(false);
+  const triggerRef = useRef(null);
+  const [popPos, setPopPos] = useState({ top: 0, left: 0 });
+
   const toggle = (id) => onChange(assignees.includes(id) ? assignees.filter(x => x !== id) : [...assignees, id]);
+
+  const handleOpen = () => {
+    if (triggerRef.current) {
+      const rect = triggerRef.current.getBoundingClientRect();
+      // Try below first, flip above if not enough space
+      const spaceBelow = window.innerHeight - rect.bottom;
+      const popH = people.length * 40 + 50;
+      const top = spaceBelow > popH ? rect.bottom + 4 : rect.top - popH - 4;
+      setPopPos({ top, left: rect.left });
+    }
+    setOpen(o => !o);
+  };
+
+  // Close on outside click
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e) => {
+      if (triggerRef.current && !triggerRef.current.closest('[data-assignee-popup]') && !e.target.closest('[data-assignee-popup]')) {
+        setOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [open]);
+
   return (
-    <div style={{ position: "relative" }}>
-      <div onClick={() => setOpen(o => !o)} style={{ display: "flex", alignItems: "center", cursor: "pointer" }}>
+    <div style={{ position: "relative" }} ref={triggerRef}>
+      <div onClick={handleOpen} style={{ display: "flex", alignItems: "center", cursor: "pointer", gap: 2 }}>
         {assignees.length === 0
-          ? <span style={{ fontSize: 9, color: "#9ca3af", border: "1px dashed rgba(0,0,0,0.2)", borderRadius: 8, padding: "1px 5px", whiteSpace: "nowrap" }}>+ Assign</span>
-          : assignees.slice(0, 3).map(id => { const p = people.find(x => x.id === id); return p ? <div key={id} style={{ marginRight: -5 }}><Avatar person={p} size={18} /></div> : null; })
+          ? <span style={{ fontSize: 9, color: "#9ca3af", border: "1px dashed rgba(0,0,0,0.2)", borderRadius: 8, padding: "2px 7px", whiteSpace: "nowrap" }}>+ Assign</span>
+          : assignees.slice(0, 3).map(id => { const p = people.find(x => x.id === id); return p ? <div key={id} style={{ marginRight: -5 }}><Avatar person={p} size={20} /></div> : null; })
         }
         {assignees.length > 3 && <span style={{ fontSize: 9, color: "#6b7280", marginLeft: 8 }}>+{assignees.length-3}</span>}
       </div>
-      {open && (
-        <div style={{ position: "absolute", top: "calc(100% + 4px)", left: 0, zIndex: 100, background: "#fff",
-          border: "1px solid rgba(0,0,0,0.12)", borderRadius: 8, boxShadow: "0 4px 20px rgba(0,0,0,0.12)",
-          padding: 8, display: "flex", flexDirection: "column", gap: 3, minWidth: 150 }}>
-          {people.map(p => (
-            <div key={p.id} onClick={() => toggle(p.id)} style={{ display: "flex", alignItems: "center", gap: 8,
-              padding: "4px 8px", borderRadius: 5, cursor: "pointer", userSelect: "none",
-              background: assignees.includes(p.id) ? p.color + "15" : "transparent",
-              border: "1px solid " + (assignees.includes(p.id) ? p.color + "60" : "transparent"),
-            }}>
-              <Avatar person={p} size={20} />
-              <span style={{ fontSize: 11, color: "#1f2937", fontWeight: assignees.includes(p.id) ? 700 : 400, flex: 1 }}>{p.name}</span>
-              {assignees.includes(p.id) && <span style={{ color: p.color, fontSize: 11 }}>✓</span>}
-            </div>
-          ))}
-          <div onClick={() => setOpen(false)} style={{ borderTop: "1px solid rgba(0,0,0,0.07)", marginTop: 2, paddingTop: 4, textAlign: "center", fontSize: 10, color: "#9ca3af", cursor: "pointer" }}>Done</div>
-        </div>
-      )}
+      {open && typeof document !== 'undefined' && (() => {
+        const popup = (
+          <div data-assignee-popup="1" style={{
+            position: "fixed", top: popPos.top, left: popPos.left, zIndex: 9999,
+            background: "#fff", border: "1px solid rgba(0,0,0,0.12)", borderRadius: 10,
+            boxShadow: "0 8px 32px rgba(0,0,0,0.18)", padding: 10,
+            display: "flex", flexDirection: "column", gap: 4, minWidth: 200,
+          }}>
+            <div style={{ fontSize: 10, fontWeight: 700, color: "#6b7280", letterSpacing: "0.08em", textTransform: "uppercase", marginBottom: 4, padding: "0 4px" }}>Assign To</div>
+            {people.map(p => (
+              <div key={p.id} onClick={() => toggle(p.id)} style={{
+                display: "flex", alignItems: "center", gap: 10, padding: "7px 10px",
+                borderRadius: 7, cursor: "pointer", userSelect: "none",
+                background: assignees.includes(p.id) ? p.color + "18" : "#f7f8fa",
+                border: `1.5px solid ${assignees.includes(p.id) ? p.color + "70" : "transparent"}`,
+                transition: "all 0.1s",
+              }}>
+                <Avatar person={p} size={26} />
+                <span style={{ fontSize: 13, color: "#1f2937", fontWeight: assignees.includes(p.id) ? 700 : 400, flex: 1 }}>{p.name}</span>
+                {assignees.includes(p.id) && <span style={{ color: p.color, fontSize: 14, fontWeight: 900 }}>✓</span>}
+              </div>
+            ))}
+            <div onClick={() => setOpen(false)} style={{
+              borderTop: "1px solid rgba(0,0,0,0.07)", marginTop: 4, paddingTop: 6,
+              textAlign: "center", fontSize: 11, color: "#6b7280", cursor: "pointer", fontWeight: 600,
+            }}>Done</div>
+          </div>
+        );
+        // Use a portal-like approach via dangerouslySetInnerHTML alternative — render inline but fixed
+        return popup;
+      })()}
     </div>
   );
 }
 
 // --- PEOPLE VIEW ──────────────────────────────────────────────────────────────
-function PeopleView({ projects, people, onEditItem, onMarkDone }) {
+function PeopleView({ projects, people, onEditItem, onMarkDone, onSaveItem, holidays = [] }) {
   const allDeliverables = projects.flatMap(p => p.deliverables.map(d => ({ ...d, projectId: p.id, projectName: p.name, projectColor: p.color })));
   const allSubtasks = projects.flatMap(p => p.deliverables.flatMap(d => d.subtasks.map(s => ({ ...s, projectId: p.id, projectName: p.name, projectColor: p.color, deliverableId: d.id }))));
   const allItems = [...allDeliverables, ...allSubtasks];
-  const [selected, setSelected] = useState(people[0].id);
+  const [selected, setSelected] = useState(people[0]?.id || "");
 
   const person = people.find(p => p.id === selected);
-  const myItems = allItems.filter(t => t.assignees.includes(selected));
+  const myItems = allItems.filter(t => t.assignees && t.assignees.includes(selected));
   const byStatus = STATUSES.reduce((a, s) => ({ ...a, [s]: myItems.filter(t => t.status === s) }), {});
+
+  // Person-Gantt: compute date range from their tasks
+  const myDates = myItems.flatMap(t => [t.start, t.end]).filter(Boolean).sort();
+  const ganttStart = myDates.length ? new Date(myDates[0] + "T00:00:00") : TIMELINE_START;
+  const ganttEnd   = myDates.length ? new Date(myDates[myDates.length-1] + "T00:00:00") : TIMELINE_END;
+  const ganttDays  = Math.max(7, Math.ceil((ganttEnd - ganttStart) / 86400000) + 7);
+  const GDAY_W     = 18;
+  const G_ROW      = 28;
+  const holidaySet = new Set(holidays.map(h => h.date));
+
+  const gOffset = (dateStr) => Math.ceil((parseDate(dateStr) - ganttStart) / 86400000);
+
+  // Drag state for person gantt bars
+  const draggingRef = useRef(null);
+
+  const startDrag = (item, e) => {
+    e.preventDefault();
+    const startX = e.clientX;
+    const origStart = item.start;
+    const origEnd = item.end;
+    const origDur = Math.ceil((parseDate(origEnd) - parseDate(origStart)) / 86400000);
+
+    const onMove = (mv) => {
+      const deltaDays = Math.round((mv.clientX - startX) / GDAY_W);
+      if (deltaDays === 0) return;
+      const newStartD = new Date(parseDate(origStart).getTime() + deltaDays * 86400000);
+      const newEndD   = new Date(newStartD.getTime() + origDur * 86400000);
+      const ns = newStartD.toISOString().slice(0,10);
+      const ne = newEndD.toISOString().slice(0,10);
+      onSaveItem({ ...item, start: ns, end: ne });
+    };
+    const onUp = () => {
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+    };
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+  };
 
   return (
     <div style={{ display: "flex", gap: 18 }}>
+      {/* Sidebar */}
       <div style={{ width: 210, flexShrink: 0, display: "flex", flexDirection: "column", gap: 8 }}>
         {people.map(p => {
-          const items = allItems.filter(t => t.assignees.includes(p.id));
+          const items = allItems.filter(t => t.assignees && t.assignees.includes(p.id));
           const active = items.filter(t => t.status === "In Progress").length;
           const isSel = p.id === selected;
           return (
@@ -1379,87 +1682,194 @@ function PeopleView({ projects, people, onEditItem, onMarkDone }) {
         })}
       </div>
 
-      <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 14 }}>
-        {/* Person header */}
-        <div style={{ background: "#ffffff", border: "1px solid rgba(0,0,0,0.07)", borderRadius: 10, padding: "18px 22px", display: "flex", alignItems: "center", gap: 14 }}>
-          <Avatar person={person} size={50} />
-          <div>
-            <div style={{ fontSize: 20, fontWeight: 800, color: "#111827" }}>{person.name}</div>
-            <div style={{ display: "flex", gap: 14, marginTop: 5 }}>
-              {STATUSES.map(s => { const cnt = byStatus[s].length; if (!cnt) return null; const sm = statusMeta[s] || statusMeta["Not Started"]; return <span key={s} style={{ fontSize: 11, color: sm.color, fontWeight: 700 }}>{cnt} {s}</span>; })}
+      {/* Main content */}
+      {person && (
+        <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 14, minWidth: 0 }}>
+          {/* Person header */}
+          <div style={{ background: "#ffffff", border: "1px solid rgba(0,0,0,0.07)", borderRadius: 10, padding: "18px 22px", display: "flex", alignItems: "center", gap: 14 }}>
+            <Avatar person={person} size={50} />
+            <div>
+              <div style={{ fontSize: 20, fontWeight: 800, color: "#1f2937" }}>{person.name}</div>
+              <div style={{ display: "flex", gap: 14, marginTop: 5 }}>
+                {STATUSES.map(s => { const cnt = (byStatus[s]||[]).length; if (!cnt) return null; return <span key={s} style={{ fontSize: 11, color: (statusMeta[s]||statusMeta["Not Started"]).color, fontWeight: 700 }}>{cnt} {s}</span>; })}
+              </div>
+            </div>
+            <div style={{ marginLeft: "auto", textAlign: "right" }}>
+              <div style={{ fontSize: 30, fontWeight: 900, color: person.color }}>{myItems.length}</div>
+              <div style={{ fontSize: 10, color: "#6b7280", letterSpacing: "0.07em" }}>TOTAL TASKS</div>
             </div>
           </div>
-          <div style={{ marginLeft: "auto", textAlign: "right" }}>
-            <div style={{ fontSize: 30, fontWeight: 900, color: person.color }}>{myItems.length}</div>
-            <div style={{ fontSize: 10, color: "#6b7280", letterSpacing: "0.07em" }}>TOTAL TASKS</div>
-          </div>
-        </div>
 
-        {/* Active columns */}
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(180px, 1fr))", gap: 12 }}>
-          {["In Progress","Editorial Review","Design Review","Proof Review","Internal Review","Client Review","Blocked"].map(s => {
-            const items = byStatus[s]; const m = statusMeta[s] || statusMeta["Not Started"];
-            return (
-              <div key={s} style={{ background: "#ffffff", border: `1px solid ${m.color}22`, borderRadius: 10, overflow: "hidden" }}>
-                <div style={{ padding: "10px 14px", borderBottom: `1px solid ${m.color}18`, display: "flex", alignItems: "center", gap: 7 }}>
-                  <div style={{ width: 7, height: 7, borderRadius: "50%", background: m.color }} />
-                  <span style={{ fontSize: 11, fontWeight: 700, color: m.color, letterSpacing: "0.04em" }}>{s}</span>
-                  <span style={{ marginLeft: "auto", background: m.bg, color: m.color, borderRadius: 9, padding: "1px 7px", fontSize: 10, fontWeight: 700 }}>{items.length}</span>
-                </div>
-                <div style={{ padding: 10, display: "flex", flexDirection: "column", gap: 7, minHeight: 70 }}>
-                  {items.map(item => (
-                    <div key={item.id} style={{
-                      background: "rgba(0,0,0,0.04)", border: "1px solid rgba(0,0,0,0.07)",
-                      borderLeft: `3px solid ${item.projectColor}`, borderRadius: 6, padding: 10,
-                    }}>
-                      <div style={{ display: "flex", alignItems: "flex-start", gap: 8, marginBottom: 4 }}>
-                        <CheckButton isDone={false} onClick={() => onMarkDone(item.projectId, item.deliverableId || item.id, item.deliverableId ? item.id : null)} />
-                        <div style={{ flex: 1, cursor: "pointer" }} onClick={() => onEditItem(item)}>
-                          <div style={{ fontSize: 11, fontWeight: 700, color: "#1f2937", marginBottom: 2 }}>{item.title}</div>
-                          <div style={{ fontSize: 10, color: "#6b7280" }}>{item.projectName}</div>
+          {/* ── PERSON GANTT ── */}
+          {myItems.length > 0 && (
+            <div style={{ background: "#ffffff", border: "1px solid rgba(0,0,0,0.07)", borderRadius: 10, overflow: "hidden" }}>
+              <div style={{ padding: "12px 16px", borderBottom: "1px solid rgba(0,0,0,0.06)", fontSize: 11, fontWeight: 700, color: "#6b7280", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <span>Schedule Overview</span>
+                <span style={{ fontSize: 10, color: "#9ca3af", fontWeight: 400 }}>Drag bars to reschedule · changes sync to timeline</span>
+              </div>
+              <div style={{ overflowX: "auto" }}>
+                <div style={{ minWidth: (ganttDays + 2) * GDAY_W + 420, position: "relative" }}>
+                  {/* Month header */}
+                  <div style={{ display: "flex", background: "#f7f8fa", borderBottom: "1px solid rgba(0,0,0,0.06)" }}>
+                    <div style={{ width: 100, flexShrink: 0, borderRight: "1px solid rgba(0,0,0,0.06)", padding: "6px 10px", fontSize: 10, fontWeight: 700, color: "#9ca3af", letterSpacing: "0.07em" }}>CLIENT</div>
+                    <div style={{ width: 160, flexShrink: 0, borderRight: "1px solid rgba(0,0,0,0.06)", padding: "6px 10px", fontSize: 10, fontWeight: 700, color: "#9ca3af", letterSpacing: "0.07em" }}>DELIVERABLE</div>
+                    <div style={{ width: 160, flexShrink: 0, borderRight: "1px solid rgba(0,0,0,0.06)", padding: "6px 10px", fontSize: 10, fontWeight: 700, color: "#9ca3af", letterSpacing: "0.07em" }}>TASK</div>
+                    <div style={{ flex: 1, position: "relative", height: 28 }}>
+                      {/* Generate week markers */}
+                      {Array.from({ length: Math.ceil(ganttDays / 7) }, (_, wi) => {
+                        const d = new Date(ganttStart.getTime() + wi * 7 * 86400000);
+                        return (
+                          <div key={wi} style={{ position: "absolute", left: wi * 7 * GDAY_W, height: "100%",
+                            display: "flex", alignItems: "center", paddingLeft: 4, fontSize: 9, color: "#9ca3af",
+                            fontWeight: 600, borderLeft: "1px solid rgba(0,0,0,0.06)", whiteSpace: "nowrap" }}>
+                            {d.toLocaleDateString("en-US", { month: "short", day: "numeric" })}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {/* Task rows */}
+                  {myItems.map((item, idx) => {
+                    const startOff = gOffset(item.start);
+                    const endOff   = gOffset(item.end);
+                    const barW = Math.max((endOff - startOff) * GDAY_W + GDAY_W, 8);
+                    const proj = projects.find(p => p.id === item.projectId);
+                    const isHoliday = (dateStr) => holidaySet.has(dateStr);
+                    const isDone = item.status === "Done";
+                    return (
+                      <div key={item.id} style={{ display: "flex", height: G_ROW, borderBottom: "1px solid rgba(0,0,0,0.04)", alignItems: "center" }}
+                        onMouseEnter={e => e.currentTarget.style.background = "rgba(0,0,0,0.02)"}
+                        onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
+                        {/* Client column */}
+                        {(() => {
+                          const proj = projects.find(p => p.id === item.projectId);
+                          const parentDel = item.deliverableId
+                            ? proj?.deliverables.find(d => d.id === item.deliverableId)
+                            : null;
+                          return (
+                            <>
+                              <div style={{ width: 100, flexShrink: 0, padding: "0 8px", borderRight: "1px solid rgba(0,0,0,0.05)", overflow: "hidden", display: "flex", alignItems: "center" }}>
+                                <span style={{ fontSize: 10, fontWeight: 700, color: "#374151", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{proj?.client || "—"}</span>
+                              </div>
+                              {/* Deliverable column */}
+                              <div style={{ width: 160, flexShrink: 0, padding: "0 8px", borderRight: "1px solid rgba(0,0,0,0.05)", overflow: "hidden", display: "flex", alignItems: "center" }}>
+                                {parentDel
+                                  ? <span style={{ fontSize: 10, fontWeight: 600, color: proj?.color || "#374151", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{parentDel.title}</span>
+                                  : <span style={{ fontSize: 10, fontWeight: 600, color: proj?.color || "#374151", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{item.title}</span>
+                                }
+                              </div>
+                              {/* Task column */}
+                              <div style={{ width: 160, flexShrink: 0, padding: "0 8px", borderRight: "1px solid rgba(0,0,0,0.05)", overflow: "hidden", display: "flex", alignItems: "center" }}>
+                                <span style={{ fontSize: 10, fontWeight: 600, color: isDone ? "#9ca3af" : "#374151", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", textDecoration: isDone ? "line-through" : "none" }}>
+                                  {parentDel ? item.title : "—"}
+                                </span>
+                              </div>
+                            </>
+                          );
+                        })()}
+                        {/* Chart */}
+                        <div style={{ flex: 1, height: "100%", position: "relative", overflow: "visible" }}>
+                          {/* Holiday shading */}
+                          {holidays.map(h => {
+                            const hOff = gOffset(h.date);
+                            if (hOff < 0 || hOff > ganttDays + 2) return null;
+                            return <div key={h.date} style={{ position: "absolute", left: hOff * GDAY_W, top: 0, bottom: 0, width: GDAY_W, background: "rgba(251,146,60,0.1)", pointerEvents: "none" }} />;
+                          })}
+                          {/* Week grid */}
+                          {Array.from({ length: Math.ceil(ganttDays / 7) }, (_, wi) => (
+                            <div key={wi} style={{ position: "absolute", left: wi * 7 * GDAY_W, top: 0, bottom: 0, width: 1, background: "rgba(0,0,0,0.04)" }} />
+                          ))}
+                          {/* Draggable bar */}
+                          <div
+                            onMouseDown={(e) => startDrag(item, e)}
+                            style={{
+                              position: "absolute", left: startOff * GDAY_W, top: "50%", transform: "translateY(-50%)",
+                              width: barW, height: 16, borderRadius: 4, cursor: "ew-resize",
+                              background: isDone ? "#e5e7eb" : (proj?.color || "#6b7280") + "cc",
+                              border: `1.5px solid ${isDone ? "#d1d5db" : (proj?.color || "#6b7280")}`,
+                              overflow: "hidden", userSelect: "none",
+                            }}>
+                            <div style={{ position: "absolute", inset: 0, width: `${item.progress||0}%`, background: "rgba(0,0,0,0.15)" }} />
+                            <div style={{ position: "relative", padding: "0 4px", fontSize: 8, fontWeight: 600, color: isDone ? "#9ca3af" : "#fff", lineHeight: "16px", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                              {item.title}
+                            </div>
+                          </div>
                         </div>
                       </div>
-                      <ProgressBar value={item.progress} color={item.projectColor} />
-                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 5 }}>
-                        <PriorityDot priority={item.priority} />
-                        {item.department && <DeptBadge dept={item.department} />}
-                        <span style={{ fontSize: 10, color: "#9ca3af" }}>Due {fmt(parseDate(item.end))}</span>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Active task columns */}
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(180px, 1fr))", gap: 12 }}>
+            {["In Progress","Blocked"].map(s => {
+              const items = byStatus[s] || []; const m = statusMeta[s] || statusMeta["Not Started"];
+              return (
+                <div key={s} style={{ background: "#ffffff", border: `1px solid ${m.color}22`, borderRadius: 10, overflow: "hidden" }}>
+                  <div style={{ padding: "10px 14px", borderBottom: `1px solid ${m.color}18`, display: "flex", alignItems: "center", gap: 7 }}>
+                    <div style={{ width: 7, height: 7, borderRadius: "50%", background: m.color }} />
+                    <span style={{ fontSize: 11, fontWeight: 700, color: m.color }}>{s}</span>
+                    <span style={{ marginLeft: "auto", background: m.bg, color: m.color, borderRadius: 9, padding: "1px 7px", fontSize: 10, fontWeight: 700 }}>{items.length}</span>
+                  </div>
+                  <div style={{ padding: 10, display: "flex", flexDirection: "column", gap: 7, minHeight: 70 }}>
+                    {items.map(item => (
+                      <div key={item.id} style={{
+                        background: "rgba(0,0,0,0.04)", border: "1px solid rgba(0,0,0,0.07)",
+                        borderLeft: `3px solid ${item.projectColor}`, borderRadius: 6, padding: 10,
+                      }}>
+                        <div style={{ display: "flex", alignItems: "flex-start", gap: 8, marginBottom: 4 }}>
+                          <CheckButton isDone={false} onClick={() => onMarkDone(item.projectId, item.deliverableId || item.id, item.deliverableId ? item.id : null)} />
+                          <div style={{ flex: 1, cursor: "pointer" }} onClick={() => onEditItem(item)}>
+                            <div style={{ fontSize: 11, fontWeight: 700, color: "#1f2937", marginBottom: 2 }}>{item.title}</div>
+                            <div style={{ fontSize: 10, color: "#6b7280" }}>{item.projectName}</div>
+                          </div>
+                        </div>
+                        <ProgressBar value={item.progress} color={item.projectColor} />
+                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 5 }}>
+                          <PriorityDot priority={item.priority} />
+                          {item.department && <DeptBadge dept={item.department} />}
+                          <span style={{ fontSize: 10, color: "#9ca3af" }}>Due {fmt(parseDate(item.end))}</span>
+                        </div>
                       </div>
+                    ))}
+                    {items.length === 0 && <div style={{ padding: 10, textAlign: "center", fontSize: 11, color: "#9ca3af" }}>No tasks</div>}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+
+          {/* Not started + done */}
+          {["Not Started","Done"].map(s => {
+            const items = byStatus[s] || []; if (!items.length) return null; const m = statusMeta[s] || statusMeta["Not Started"];
+            return (
+              <div key={s} style={{ background: "#ffffff", border: "1px solid rgba(0,0,0,0.07)", borderRadius: 10, overflow: "hidden" }}>
+                <div style={{ padding: "10px 14px", borderBottom: "1px solid rgba(0,0,0,0.06)", display: "flex", gap: 7, alignItems: "center" }}>
+                  <div style={{ width: 7, height: 7, borderRadius: "50%", background: m.color }} />
+                  <span style={{ fontSize: 11, fontWeight: 700, color: m.color }}>{s}</span>
+                  <span style={{ fontSize: 10, color: "#9ca3af" }}>— {items.length}</span>
+                </div>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 8, padding: 10 }}>
+                  {items.map(item => (
+                    <div key={item.id} onClick={() => onEditItem(item)} style={{
+                      flex: "0 0 calc(33% - 6px)", background: "rgba(0,0,0,0.035)", borderRadius: 6,
+                      border: "1px solid rgba(0,0,0,0.05)", borderLeft: `3px solid ${item.projectColor}`,
+                      padding: 9, cursor: "pointer",
+                    }}>
+                      <div style={{ fontSize: 11, fontWeight: s === "Done" ? 400 : 600, color: s === "Done" ? "#9ca3af" : "#374151", textDecoration: s === "Done" ? "line-through" : "none" }}>{item.title}</div>
+                      <div style={{ fontSize: 10, color: "#9ca3af", marginTop: 2 }}>{item.projectName}</div>
                     </div>
                   ))}
-                  {items.length === 0 && <div style={{ padding: 10, textAlign: "center", fontSize: 11, color: "#9ca3af" }}>No tasks</div>}
                 </div>
               </div>
             );
           })}
         </div>
-
-        {/* Not started + done */}
-        {["Not Started","Done"].map(s => {
-          const items = byStatus[s]; if (!items.length) return null; const m = statusMeta[s] || statusMeta["Not Started"];
-          return (
-            <div key={s} style={{ background: "#ffffff", border: "1px solid rgba(0,0,0,0.07)", borderRadius: 10, overflow: "hidden" }}>
-              <div style={{ padding: "10px 14px", borderBottom: "1px solid rgba(0,0,0,0.06)", display: "flex", gap: 7, alignItems: "center" }}>
-                <div style={{ width: 7, height: 7, borderRadius: "50%", background: m.color }} />
-                <span style={{ fontSize: 11, fontWeight: 700, color: m.color }}>{s}</span>
-                <span style={{ fontSize: 10, color: "#9ca3af" }}>— {items.length}</span>
-              </div>
-              <div style={{ display: "flex", flexWrap: "wrap", gap: 8, padding: 10 }}>
-                {items.map(item => (
-                  <div key={item.id} onClick={() => onEditItem(item)} style={{
-                    flex: "0 0 calc(33% - 6px)", background: "rgba(0,0,0,0.035)", borderRadius: 6,
-                    border: "1px solid rgba(0,0,0,0.06)", borderLeft: `3px solid ${item.projectColor}`,
-                    padding: 9, cursor: "pointer",
-                  }}>
-                    <div style={{ fontSize: 11, fontWeight: s === "Done" ? 400 : 600, color: s === "Done" ? "#9ca3af" : "#1f2937" }}>{item.title}</div>
-                    <div style={{ fontSize: 10, color: "#9ca3af", marginTop: 2 }}>{item.projectName}</div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          );
-        })}
-      </div>
+      )}
     </div>
   );
 }
@@ -1472,10 +1882,6 @@ function getTrackStatus(del) {
   if (del.status === "Done") return "done";
   if (del.status === "Blocked") return "blocked";
   if (del.status === "Client Review")    return "client-review";
-  if (del.status === "Editorial Review") return "editorial-review";
-  if (del.status === "Design Review")    return "design-review";
-  if (del.status === "Proof Review")     return "proof-review";
-  if (del.status === "Internal Review")  return "on-track";
   const end = parseDate(del.end);
   const start = parseDate(del.start);
   // If end has passed and not done → off track
@@ -1494,13 +1900,11 @@ const trackMeta = {
   "on-track":        { label: "On Track",        color: "#34d399", bg: "rgba(52,211,153,0.12)",  icon: "●" },
   "at-risk":         { label: "At Risk",          color: "#fbbf24", bg: "rgba(251,191,36,0.12)",  icon: "◐" },
   "off-track":       { label: "Off Track",        color: "#f87171", bg: "rgba(248,113,113,0.12)", icon: "●" },
-  "editorial-review":{ label: "Editorial Review", color: "#f59e0b", bg: "rgba(245,158,11,0.12)",  icon: "✍" },
-  "design-review":   { label: "Design Review",    color: "#e879f9", bg: "rgba(232,121,249,0.12)", icon: "◈" },
-  "proof-review":    { label: "Proof Review",     color: "#fb923c", bg: "rgba(251,146,60,0.12)",  icon: "◉" },
-  "client-review":   { label: "Client Review",    color: "#a78bfa", bg: "rgba(167,139,250,0.12)", icon: "◎" },
   "blocked":         { label: "Blocked",          color: "#f87171", bg: "rgba(248,113,113,0.12)", icon: "⊘" },
   "done":            { label: "Complete",         color: "#6b7280", bg: "rgba(71,85,105,0.12)",   icon: "✓" },
 };
+
+const TRACK_OPTIONS = Object.keys(trackMeta);
 
 function getCurrentTask(del) {
   // First in-progress subtask, else first not-started, else the deliverable itself
@@ -1512,7 +1916,7 @@ function getCurrentTask(del) {
   return "Complete";
 }
 
-function StatusView({ projects, people, statusNotes, onUpdateNote, onAddDeliverable, onAddSubtask }) {
+function StatusView({ projects, people, statusNotes, onUpdateNote, onAddDeliverable, onAddSubtask, onSaveTrackOverride }) {
   const [editingNote, setEditingNote] = useState(null); // { projId, delId }
   const [noteText, setNoteText] = useState("");
   const [filterProj, setFilterProj] = useState("all");
@@ -1586,8 +1990,8 @@ function StatusView({ projects, people, statusNotes, onUpdateNote, onAddDelivera
       {/* ── Status table ── */}
       <div style={{ background: "#ffffff", border: "1px solid rgba(0,0,0,0.07)", borderRadius: 10, overflow: "hidden" }}>
         {/* Header */}
-        <div style={{ display: "grid", gridTemplateColumns: "130px 170px 190px 190px 100px 110px 120px 1fr 90px", gap: 0, borderBottom: "1px solid rgba(0,0,0,0.07)", background: "#eceef2" }}>
-          {["Client","Project","Deliverable","Current Task","Track","Dept","Assigned To","Status Notes / Next Steps",""].map((h, i) => (
+        <div style={{ display: "grid", gridTemplateColumns: "120px 160px 170px 170px 90px 80px 90px 100px 1fr 90px", gap: 0, borderBottom: "1px solid rgba(0,0,0,0.07)", background: "#eceef2" }}>
+          {["Client","Project","Deliverable","Current Task","Track","Dept","Team","Notes",""].map((h, i) => (
             <div key={h} style={{ padding: "10px 14px", fontSize: 10, fontWeight: 700, color: "#6b7280", letterSpacing: "0.08em", textTransform: "uppercase", borderRight: i < 6 ? "1px solid rgba(0,0,0,0.06)" : "none" }}>{h}</div>
           ))}
         </div>
@@ -1602,7 +2006,7 @@ function StatusView({ projects, people, statusNotes, onUpdateNote, onAddDelivera
           const isDone = track === "done";
           return (
             <div key={key} style={{
-              display: "grid", gridTemplateColumns: "130px 170px 190px 190px 100px 110px 120px 1fr 90px",
+              display: "grid", gridTemplateColumns: "120px 160px 170px 170px 90px 80px 90px 100px 1fr 90px",
               borderBottom: i < filtered.length - 1 ? "1px solid rgba(0,0,0,0.05)" : "none",
               opacity: isDone ? 0.5 : 1, transition: "opacity 0.15s",
             }}
@@ -1645,16 +2049,34 @@ function StatusView({ projects, people, statusNotes, onUpdateNote, onAddDelivera
                 )}
               </Cell>
 
-              {/* Track */}
+              {/* Track — with manual override */}
               <Cell border>
-                <span style={{
-                  display: "inline-flex", alignItems: "center", gap: 5,
-                  background: m.bg, color: m.color,
-                  border: `1px solid ${m.color}40`,
-                  borderRadius: 4, padding: "3px 8px", fontSize: 10, fontWeight: 700, whiteSpace: "nowrap",
-                }}>
-                  {m.icon} {m.label}
-                </span>
+                <div style={{ position: "relative" }}>
+                  <span style={{
+                    display: "inline-flex", alignItems: "center", gap: 4,
+                    background: m.bg, color: m.color,
+                    border: `1px solid ${m.color}40`,
+                    borderRadius: 4, padding: "3px 7px", fontSize: 10, fontWeight: 700, whiteSpace: "nowrap",
+                    cursor: "pointer",
+                  }}
+                    title="Click to override track status"
+                    onClick={e => {
+                      const sel = e.currentTarget.nextSibling;
+                      sel.style.display = sel.style.display === "block" ? "none" : "block";
+                    }}
+                  >{m.icon} {m.label} ▾</span>
+                  <select defaultValue="" style={{ display: "none", position: "absolute", top: "100%", left: 0, zIndex: 50,
+                    background: "#fff", border: "1px solid rgba(0,0,0,0.15)", borderRadius: 6, fontSize: 11,
+                    padding: "4px", boxShadow: "0 4px 12px rgba(0,0,0,0.1)", minWidth: 130, fontFamily: "inherit" }}
+                    onChange={e => {
+                      const val = e.target.value;
+                      e.target.style.display = "none";
+                      onSaveTrackOverride(proj.id, del.id, val || null);
+                    }}>
+                    <option value="">— Auto —</option>
+                    {TRACK_OPTIONS.map(t => <option key={t} value={t}>{trackMeta[t]?.label || t}</option>)}
+                  </select>
+                </div>
               </Cell>
 
               {/* Department */}
@@ -1665,17 +2087,16 @@ function StatusView({ projects, people, statusNotes, onUpdateNote, onAddDelivera
                 }
               </Cell>
 
-              {/* Assigned To */}
+              {/* Team */}
               <Cell border>
-                <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
-                  <div style={{ display: "flex" }}>
-                    {del.assignees.slice(0, 3).map(id => {
-                      const p = people.find(x => x.id === id);
-                      return p ? <div key={id} style={{ marginRight: -5 }}><Avatar person={p} size={20} /></div> : null;
-                    })}
-                  </div>
-                  <span style={{ fontSize: 10, color: "#6b7280", marginLeft: 8, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{assigneeNames || "—"}</span>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 2 }}>
+                  {del.assignees.slice(0, 3).map(id => {
+                    const p = people.find(x => x.id === id);
+                    return p ? <div key={id}><Avatar person={p} size={20} /></div> : null;
+                  })}
+                  {del.assignees.length === 0 && <span style={{ fontSize: 10, color: "#9ca3af" }}>—</span>}
                 </div>
+                {assigneeNames && <div style={{ fontSize: 9, color: "#6b7280", marginTop: 2, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{assigneeNames}</div>}
               </Cell>
 
               {/* Status Notes */}
@@ -1866,7 +2287,7 @@ function TeamSettingsModal({ people, onClose, onSave }) {
 }
 
 // --- PROJECT OPTIONS POPOVER ──────────────────────────────────────────────────
-function ProjectMenu({ proj, onClose, onArchive, onDelete, onRename }) {
+function ProjectMenu({ proj, onClose, onArchive, onDelete, onRename, onSaveAsTemplate }) {
   const [renaming, setRenaming] = useState(false);
   const [nameVal, setNameVal] = useState(proj.name);
   const [clientVal, setClientVal] = useState(proj.client || "");
@@ -1904,6 +2325,11 @@ function ProjectMenu({ proj, onClose, onArchive, onDelete, onRename }) {
           ) : (
             <MenuRow icon="✎" label="Rename / Edit details" onClick={() => setRenaming(true)} color="#94a3b8" />
           )}
+
+          <div style={{ height: 1, background: "rgba(0,0,0,0.06)", margin: "4px 0" }} />
+
+          {/* Save as template */}
+          <MenuRow icon="📋" label="Save as Template" sub="Reuse this structure for future projects." onClick={() => { onSaveAsTemplate(proj); onClose(); }} color="#a78bfa" />
 
           <div style={{ height: 1, background: "rgba(0,0,0,0.07)", margin: "4px 0" }} />
 
@@ -1951,6 +2377,81 @@ function MenuRow({ icon, label, sub, onClick, color }) {
 }
 
 // --- EXCEL IMPORT MODAL ───────────────────────────────────────────────────────
+
+// ─── HOLIDAYS ────────────────────────────────────────────────────────────────
+function HolidaysModal({ holidays, onClose, onSave }) {
+  const [list, setList] = useState(holidays.map(h => ({ ...h })));
+  const [newDate, setNewDate] = useState("");
+  const [newName, setNewName] = useState("");
+
+  const add = () => {
+    if (!newDate) return;
+    if (list.some(h => h.date === newDate)) return;
+    setList(l => [...l, { date: newDate, name: newName.trim() || "Holiday" }].sort((a,b) => a.date.localeCompare(b.date)));
+    setNewDate(""); setNewName("");
+  };
+
+  const remove = (date) => setList(l => l.filter(h => h.date !== date));
+
+  return (
+    <Overlay onClose={onClose}>
+      <ModalShell title="Holidays & Blackout Dates" onClose={onClose} accentColor="#fb923c" width={440}>
+        <div style={{ padding: 20, display: "flex", flexDirection: "column", gap: 14 }}>
+          <div style={{ fontSize: 12, color: "#6b7280" }}>
+            Holidays are shown on the timeline and automatically skipped by date calculations.
+          </div>
+          {/* Add row */}
+          <div style={{ display: "flex", gap: 8, alignItems: "flex-end" }}>
+            <div style={{ flex: 1 }}>
+              <div style={labelStyle}>Date</div>
+              <input type="date" value={newDate} onChange={e => setNewDate(e.target.value)}
+                style={{ ...selectStyle, width: "100%" }} />
+            </div>
+            <div style={{ flex: 1 }}>
+              <div style={labelStyle}>Name (optional)</div>
+              <input value={newName} onChange={e => setNewName(e.target.value)}
+                placeholder="e.g. July 4th" onKeyDown={e => e.key === "Enter" && add()}
+                style={{ ...selectStyle, width: "100%" }} />
+            </div>
+            <button onClick={add} style={{
+              background: "#fb923c", border: "none", borderRadius: 6, color: "#fff",
+              padding: "7px 14px", cursor: "pointer", fontSize: 12, fontWeight: 800, fontFamily: "inherit", flexShrink: 0,
+            }}>Add</button>
+          </div>
+          {/* List */}
+          <div style={{ display: "flex", flexDirection: "column", gap: 6, maxHeight: 280, overflowY: "auto" }}>
+            {list.length === 0 && <div style={{ fontSize: 12, color: "#9ca3af", textAlign: "center", padding: 16 }}>No holidays added yet.</div>}
+            {list.map(h => (
+              <div key={h.date} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 12px",
+                background: "#fff8f4", border: "1px solid rgba(251,146,60,0.25)", borderRadius: 7 }}>
+                <span style={{ fontSize: 13 }}>🗓</span>
+                <span style={{ fontSize: 12, fontWeight: 700, color: "#1f2937", flex: 1 }}>{h.name}</span>
+                <span style={{ fontSize: 11, color: "#9ca3af" }}>{fmt(parseDate(h.date))}</span>
+                <button onClick={() => remove(h.date)} style={{ background: "none", border: "none", color: "#f87171", cursor: "pointer", fontSize: 14, lineHeight: 1 }}>×</button>
+              </div>
+            ))}
+          </div>
+        </div>
+        <ModalFooter onClose={onClose} onSave={() => { onSave(list); onClose(); }} saveLabel="Save Holidays" color="#fb923c" />
+      </ModalShell>
+    </Overlay>
+  );
+}
+
+// Helper: advance a date string by n working days (skipping holidays)
+function addWorkingDays(dateStr, days, holidayDates) {
+  const hSet = new Set(holidayDates);
+  let d = new Date(dateStr + "T00:00:00");
+  let added = 0;
+  while (added < days) {
+    d = new Date(d.getTime() + 86400000);
+    const ds = d.toISOString().slice(0,10);
+    const dow = d.getDay();
+    if (dow !== 0 && dow !== 6 && !hSet.has(ds)) added++;
+  }
+  return d.toISOString().slice(0,10);
+}
+
 function ExcelImportModal({ onClose, onImport, existingColors }) {
   const [step, setStep] = useState("upload"); // upload → map → preview → done
   const [rows, setRows] = useState([]);        // raw rows from sheet
@@ -2293,6 +2794,267 @@ const PROJECT_COLORS = [
   "#fb923c","#e879f9","#4ade80","#60a5fa","#facc15",
 ];
 
+// ─── BUILT-IN TEMPLATES ───────────────────────────────────────────────────────
+const BUILT_IN_TEMPLATES = [
+  {
+    id: "tpl_email", name: "Email Campaign", icon: "✉",
+    deliverables: [
+      { title: "Email 1", subtasks: ["Copy Development","Internal Review","Revisions","Design & Build","QA & Send"] },
+      { title: "Email 2", subtasks: ["Copy Development","Internal Review","Revisions","Design & Build","QA & Send"] },
+      { title: "Email 3", subtasks: ["Copy Development","Internal Review","Revisions","Design & Build","QA & Send"] },
+    ],
+  },
+  {
+    id: "tpl_video", name: "Video Production", icon: "▶",
+    deliverables: [
+      { title: "Hero Video", subtasks: ["Creative Brief","Script Development","Client Review","Production","Edit & Post","Final Approval"] },
+      { title: "Social Cut 15s", subtasks: ["Edit from Hero","Motion Graphics","Internal Review","Revisions & Export"] },
+      { title: "Social Cut 30s", subtasks: ["Edit from Hero","Motion Graphics","Internal Review","Revisions & Export"] },
+    ],
+  },
+  {
+    id: "tpl_print", name: "Print / Collateral", icon: "◧",
+    deliverables: [
+      { title: "One-Pager", subtasks: ["Copy Development","Internal Review","Revisions","Design Layout","Proofreading","Print-Ready Export"] },
+      { title: "Brochure", subtasks: ["Copy Development","Internal Review","Revisions","Design Layout","Proofreading","Print-Ready Export"] },
+      { title: "Banner Set", subtasks: ["Concept","Design","Client Review","Revisions","Final Export"] },
+    ],
+  },
+  {
+    id: "tpl_launch", name: "Product Launch", icon: "🚀",
+    deliverables: [
+      { title: "Press Release", subtasks: ["First Draft","Legal Review","Revisions","Final Approval"] },
+      { title: "Landing Page", subtasks: ["Wireframe","Copy Development","Visual Design","Client Review","Development & QA"] },
+      { title: "Sales Deck", subtasks: ["Slide Outline","Copy Development","Design & Layout","Client Review","Revisions & Final"] },
+      { title: "Social Toolkit", subtasks: ["Copy — Captions","Static Graphics","Internal Review","Revisions","Package & Deliver"] },
+    ],
+  },
+];
+
+function buildProjectFromTemplate(tpl, name, client, color, startDate) {
+  const start = new Date(startDate + "T00:00:00");
+  let cursor = new Date(start);
+  const deliverables = tpl.deliverables.map((d, di) => {
+    const delStart = new Date(cursor);
+    const subtasks = d.subtasks.map((title, si) => {
+      const subStart = new Date(cursor);
+      const subEnd = new Date(cursor.getTime() + 2 * 86400000);
+      cursor = new Date(subEnd.getTime() + 86400000);
+      return {
+        id: `s_tpl_${di}_${si}_${Date.now()}`, title, status: "Not Started", priority: "Medium",
+        assignees: [], start: subStart.toISOString().slice(0,10), end: subEnd.toISOString().slice(0,10),
+        progress: 0, dependencies: [], department: "", depsText: "",
+      };
+    });
+    const delEnd = subtasks.length ? subtasks[subtasks.length-1].end : new Date(cursor.getTime() + 6*86400000).toISOString().slice(0,10);
+    cursor = new Date(new Date(delEnd).getTime() + 86400000);
+    return {
+      id: `d_tpl_${di}_${Date.now()}`, title: d.title, status: "Not Started", priority: "Medium",
+      assignees: [], start: delStart.toISOString().slice(0,10), end: delEnd,
+      progress: 0, dependencies: [], department: "", depsText: "", subtasks,
+    };
+  });
+  return { id: "proj_" + Date.now(), name, client, color, deliverables };
+}
+
+function TemplatesModal({ onClose, onAdd, existingColors, savedTemplates, onSaveTemplate }) {
+  const defaultColor = PROJECT_COLORS.find(c => !existingColors.includes(c)) || PROJECT_COLORS[0];
+  const [tab, setTab] = useState("use");
+  const [selected, setSelected] = useState(null);
+  const [name, setName] = useState("");
+  const [client, setClient] = useState("");
+  const [color, setColor] = useState(defaultColor);
+  const [startDate, setStartDate] = useState("2026-05-20");
+  const [error, setError] = useState("");
+  const [tplName, setTplName] = useState("");
+  const [tplIcon, setTplIcon] = useState("📋");
+  const [tplDeliverables, setTplDeliverables] = useState([{ title: "", subtasks: [""] }]);
+
+  const allTemplates = [...BUILT_IN_TEMPLATES, ...(savedTemplates || [])];
+
+  const handleCreate = () => {
+    if (!selected) { setError("Choose a template."); return; }
+    if (!name.trim()) { setError("Project name required."); return; }
+    const proj = buildProjectFromTemplate(selected, name.trim(), client.trim(), color, startDate);
+    onAdd(proj); onClose();
+  };
+
+  const addDeliverable = () => setTplDeliverables(d => [...d, { title: "", subtasks: [""] }]);
+  const removeDeliverable = (i) => setTplDeliverables(d => d.filter((_, idx) => idx !== i));
+  const updateDelTitle = (i, v) => setTplDeliverables(d => d.map((x, idx) => idx !== i ? x : { ...x, title: v }));
+  const addSubtask = (i) => setTplDeliverables(d => d.map((x, idx) => idx !== i ? x : { ...x, subtasks: [...x.subtasks, ""] }));
+  const removeSubtask = (di, si) => setTplDeliverables(d => d.map((x, idx) => idx !== di ? x : { ...x, subtasks: x.subtasks.filter((_, si2) => si2 !== si) }));
+  const updateSubtask = (di, si, v) => setTplDeliverables(d => d.map((x, idx) => idx !== di ? x : { ...x, subtasks: x.subtasks.map((s, si2) => si2 !== si ? s : v) }));
+
+  const handleSaveTemplate = () => {
+    if (!tplName.trim()) { setError("Template name required."); return; }
+    const tpl = {
+      id: "tpl_custom_" + Date.now(), name: tplName.trim(), icon: tplIcon,
+      deliverables: tplDeliverables.filter(d => d.title.trim()).map(d => ({
+        title: d.title.trim(), subtasks: d.subtasks.filter(s => s.trim()),
+      })),
+    };
+    onSaveTemplate(tpl);
+    setTplName(""); setTplIcon("📋"); setTplDeliverables([{ title: "", subtasks: [""] }]);
+    setError(""); setTab("use");
+  };
+
+  const tabSty = (t) => ({
+    flex: 1, padding: "10px 0", textAlign: "center", fontSize: 11, fontWeight: 700,
+    letterSpacing: "0.06em", cursor: "pointer", userSelect: "none",
+    borderBottom: tab === t ? "2px solid #a78bfa" : "2px solid transparent",
+    color: tab === t ? "#a78bfa" : "#6b7280", transition: "all 0.12s",
+  });
+
+  return (
+    <Overlay onClose={onClose}>
+      <ModalShell title="Templates" onClose={onClose} accentColor="#a78bfa" width={600}>
+        <div style={{ display: "flex", borderBottom: "1px solid rgba(0,0,0,0.07)" }}>
+          <div style={tabSty("use")} onClick={() => setTab("use")}>USE TEMPLATE</div>
+          <div style={tabSty("create")} onClick={() => setTab("create")}>CREATE TEMPLATE</div>
+        </div>
+
+        {tab === "use" && (
+          <div style={{ padding: 20, display: "flex", flexDirection: "column", gap: 16 }}>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, maxHeight: 300, overflowY: "auto" }}>
+              {allTemplates.map(tpl => (
+                <div key={tpl.id} onClick={() => { setSelected(tpl); if (!name) setName(tpl.name); }} style={{
+                  padding: "12px 14px", borderRadius: 8, cursor: "pointer",
+                  border: `2px solid ${selected?.id === tpl.id ? "#a78bfa" : "rgba(0,0,0,0.08)"}`,
+                  background: selected?.id === tpl.id ? "rgba(167,139,250,0.08)" : "#f7f8fa", transition: "all 0.12s",
+                }}>
+                  <div style={{ fontSize: 20, marginBottom: 4 }}>{tpl.icon || "📋"}</div>
+                  <div style={{ fontSize: 13, fontWeight: 700, color: "#1f2937" }}>{tpl.name}</div>
+                  <div style={{ fontSize: 10, color: "#6b7280", marginTop: 2 }}>{(tpl.deliverables||[]).length} deliverables</div>
+                  {selected?.id === tpl.id && (
+                    <div style={{ marginTop: 6 }}>
+                      {(tpl.deliverables||[]).map(d => (
+                        <div key={d.title} style={{ fontSize: 10, color: "#374151", marginTop: 2 }}>
+                          <span style={{ color: "#a78bfa" }}>▸</span> {d.title}
+                          <span style={{ color: "#9ca3af" }}> ({(d.subtasks||[]).length} tasks)</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+            {selected && (
+              <div style={{ display: "flex", flexDirection: "column", gap: 12, borderTop: "1px solid rgba(0,0,0,0.07)", paddingTop: 14 }}>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+                  <div><div style={labelStyle}>Project Name</div><input value={name} onChange={e => setName(e.target.value)} style={{ ...selectStyle, width: "100%" }} /></div>
+                  <div><div style={labelStyle}>Client</div><input value={client} onChange={e => setClient(e.target.value)} style={{ ...selectStyle, width: "100%", placeholder: "e.g. Acme Corp" }} /></div>
+                </div>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+                  <div><div style={labelStyle}>Start Date</div><input type="date" value={startDate} onChange={e => setStartDate(e.target.value)} style={{ ...selectStyle, width: "100%" }} /></div>
+                  <div>
+                    <div style={labelStyle}>Color</div>
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                      {PROJECT_COLORS.map(c => <div key={c} onClick={() => setColor(c)} style={{ width: 22, height: 22, borderRadius: "50%", background: c, cursor: "pointer", border: color === c ? "3px solid #fff" : "3px solid transparent", boxShadow: color === c ? `0 0 0 2px ${c}` : "none", flexShrink: 0 }} />)}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+            {error && <div style={{ fontSize: 11, color: "#f87171" }}>{error}</div>}
+            <ModalFooter onClose={onClose} onSave={handleCreate} saveLabel="Create Project" color="#a78bfa" />
+          </div>
+        )}
+
+        {tab === "create" && (
+          <div style={{ padding: 20, display: "flex", flexDirection: "column", gap: 14 }}>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 12, alignItems: "end" }}>
+              <div>
+                <div style={labelStyle}>Template Name</div>
+                <input value={tplName} onChange={e => setTplName(e.target.value)} placeholder="e.g. Social Campaign"
+                  style={{ ...selectStyle, width: "100%", fontSize: 14 }} />
+              </div>
+              <div>
+                <div style={labelStyle}>Icon</div>
+                <select value={tplIcon} onChange={e => setTplIcon(e.target.value)} style={{ ...selectStyle, fontSize: 16 }}>
+                  {["📋","✉","▶","◧","🚀","📊","🎨","📝","📱","🌐","📣","🎯"].map(ic => <option key={ic} value={ic}>{ic}</option>)}
+                </select>
+              </div>
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 10, maxHeight: 340, overflowY: "auto" }}>
+              {tplDeliverables.map((del, di) => (
+                <div key={di} style={{ background: "#f7f8fa", border: "1px solid rgba(0,0,0,0.08)", borderRadius: 8, padding: 12 }}>
+                  <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 8 }}>
+                    <div style={{ width: 6, height: 6, borderRadius: "50%", background: "#a78bfa", flexShrink: 0 }} />
+                    <input value={del.title} onChange={e => updateDelTitle(di, e.target.value)}
+                      placeholder={`Deliverable ${di + 1} (e.g. Email 1)`}
+                      style={{ ...selectStyle, flex: 1, fontWeight: 700 }} />
+                    <button onClick={() => removeDeliverable(di)} style={{ background: "none", border: "none", color: "#f87171", cursor: "pointer", fontSize: 16, lineHeight: 1 }}>×</button>
+                  </div>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 5, paddingLeft: 14 }}>
+                    {del.subtasks.map((sub, si) => (
+                      <div key={si} style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                        <div style={{ width: 4, height: 4, borderRadius: "50%", background: "#9ca3af", flexShrink: 0 }} />
+                        <input value={sub} onChange={e => updateSubtask(di, si, e.target.value)}
+                          placeholder={`Step ${si + 1} (e.g. Copy Development)`}
+                          style={{ ...selectStyle, flex: 1, fontSize: 11 }} />
+                        <button onClick={() => removeSubtask(di, si)} style={{ background: "none", border: "none", color: "#9ca3af", cursor: "pointer", fontSize: 14, lineHeight: 1 }}>×</button>
+                      </div>
+                    ))}
+                    <button onClick={() => addSubtask(di)} style={{
+                      background: "none", border: "1px dashed rgba(0,0,0,0.15)", borderRadius: 4, color: "#6b7280",
+                      padding: "3px 10px", cursor: "pointer", fontSize: 10, fontFamily: "inherit", marginTop: 2, textAlign: "left",
+                    }}>+ Add step</button>
+                  </div>
+                </div>
+              ))}
+            </div>
+            <button onClick={addDeliverable} style={{
+              background: "rgba(167,139,250,0.08)", border: "1px dashed rgba(167,139,250,0.4)",
+              borderRadius: 7, color: "#a78bfa", padding: "8px", cursor: "pointer",
+              fontSize: 11, fontFamily: "inherit", fontWeight: 700,
+            }}>+ Add Deliverable</button>
+            {error && <div style={{ fontSize: 11, color: "#f87171" }}>{error}</div>}
+            <ModalFooter onClose={onClose} onSave={handleSaveTemplate} saveLabel="Save Template" color="#a78bfa" />
+          </div>
+        )}
+      </ModalShell>
+    </Overlay>
+  );
+}
+
+// ─── EXCEL EXPORT ─────────────────────────────────────────────────────────────
+function exportToExcel(projects) {
+  if (!window.XLSX) { alert("Excel library not loaded yet."); return; }
+  const XLSX = window.XLSX;
+  const wb = XLSX.utils.book_new();
+
+  projects.forEach(proj => {
+    const inProgress = proj.deliverables.filter(d => d.status !== "Done");
+    if (!inProgress.length) return;
+
+    const rows = [["#","Task","Status","Department","Start","End","Duration (days)","Assignees","Dependencies","Progress %"]];
+    let rowNum = 1;
+    inProgress.forEach(del => {
+      rows.push([
+        rowNum++, del.title, del.status, del.department || "",
+        del.start, del.end, durDays(del.start, del.end),
+        del.assignees.join(", "), del.depsText || "", del.progress,
+      ]);
+      del.subtasks.filter(s => s.status !== "Done").forEach(sub => {
+        rows.push([
+          rowNum++, "  " + sub.title, sub.status, sub.department || "",
+          sub.start, sub.end, durDays(sub.start, sub.end),
+          sub.assignees.join(", "), sub.depsText || "", sub.progress,
+        ]);
+      });
+    });
+
+    const ws = XLSX.utils.aoa_to_sheet(rows);
+    ws["!cols"] = [4,25,14,14,12,12,10,20,14,10].map(w => ({ wch: w }));
+    XLSX.utils.book_append_sheet(wb, ws, proj.name.slice(0,31));
+  });
+
+  XLSX.writeFile(wb, `project-status-${new Date().toISOString().slice(0,10)}.xlsx`);
+}
+
+
+
 // --- NEW PROJECT MODAL ────────────────────────────────────────────────────────
 function NewProjectModal({ onClose, onAdd, existingColors }) {
   const defaultColor = PROJECT_COLORS.find(c => !existingColors.includes(c)) || PROJECT_COLORS[0];
@@ -2560,6 +3322,10 @@ export default function App() {
   const [showNewProject, setShowNewProject] = useState(false);
   const [showImport, setShowImport] = useState(false);
   const [showTeamSettings, setShowTeamSettings] = useState(false);
+  const [showTemplates, setShowTemplates] = useState(false);
+  const [savedTemplates, setSavedTemplates] = useState([]);
+  const [showHolidays, setShowHolidays] = useState(false);
+  const [holidays, setHolidays] = useState([]);
   const [projectMenu, setProjectMenu] = useState(null); // proj object
   const [showArchived, setShowArchived] = useState(false);
   const [statusNotes, setStatusNotes] = useState({});
@@ -2571,16 +3337,25 @@ export default function App() {
   const handleEditItem = (item) => setEditingItem(item);
 
   const handleSaveItem = (updated) => {
-    setProjects(projs => projs.map(proj => {
-      if (proj.id !== updated.projectId) return proj;
-      return {
-        ...proj,
-        deliverables: proj.deliverables.map(del => {
-          if (del.id === updated.id) return { ...del, ...updated };
-          return { ...del, subtasks: del.subtasks.map(s => s.id === updated.id ? { ...s, ...updated } : s) };
-        }),
-      };
-    }));
+    setProjects(projs => {
+      // First apply the direct update
+      let newProjs = projs.map(proj => {
+        if (proj.id !== updated.projectId) return proj;
+        return {
+          ...proj,
+          deliverables: proj.deliverables.map(del => {
+            if (del.id === updated.id) return { ...del, ...updated };
+            return { ...del, subtasks: del.subtasks.map(s => s.id === updated.id ? { ...s, ...updated } : s) };
+          }),
+        };
+      });
+      // If end date changed, cascade to dependents
+      const original = projs.flatMap(p => [...p.deliverables, ...p.deliverables.flatMap(d => d.subtasks)]).find(x => x.id === updated.id);
+      if (original && original.end !== updated.end) {
+        newProjs = cascadeDates(newProjs, updated.id, updated.end, holidays);
+      }
+      return newProjs;
+    });
   };
 
   const handleAddProject = (proj) => setProjects(p => [...p, proj]);
@@ -2601,6 +3376,19 @@ export default function App() {
   };
   const handleRenameProject = (id, name, client) => {
     setProjects(ps => ps.map(p => p.id !== id ? p : { ...p, name, client }));
+  };
+  const handleSaveAsTemplate = (proj) => {
+    const tpl = {
+      id: "tpl_saved_" + Date.now(),
+      name: proj.name + " (template)",
+      icon: "📋",
+      deliverables: proj.deliverables.map(d => ({
+        title: d.title,
+        subtasks: d.subtasks.map(s => s.title),
+      })),
+    };
+    setSavedTemplates(t => [...t, tpl]);
+    alert(`"${proj.name}" saved as a template!`);
   };
 
   const handleAddDeliverable = (projectId, del) => {
@@ -2710,6 +3498,33 @@ export default function App() {
           }}>
             <span style={{ fontSize: 13 }}>◎</span> TEAM
           </button>
+          {/* ── TEMPLATES BUTTON ── */}
+          <button onClick={() => setShowTemplates(true)} style={{
+            display: "flex", alignItems: "center", gap: 6,
+            background: "rgba(167,139,250,0.12)", border: "1px solid rgba(167,139,250,0.4)",
+            color: "#a78bfa", borderRadius: 6, padding: "5px 13px", cursor: "pointer",
+            fontSize: 11, fontWeight: 800, letterSpacing: "0.06em", fontFamily: "inherit",
+          }}>
+            <span style={{ fontSize: 13 }}>◧</span> TEMPLATES
+          </button>
+          {/* ── EXPORT BUTTON ── */}
+          <button onClick={() => exportToExcel(projects)} style={{
+            display: "flex", alignItems: "center", gap: 6,
+            background: "rgba(52,211,153,0.12)", border: "1px solid rgba(52,211,153,0.4)",
+            color: "#34d399", borderRadius: 6, padding: "5px 13px", cursor: "pointer",
+            fontSize: 11, fontWeight: 800, letterSpacing: "0.06em", fontFamily: "inherit",
+          }}>
+            <span style={{ fontSize: 13 }}>↓</span> EXPORT
+          </button>
+          {/* ── HOLIDAYS BUTTON ── */}
+          <button onClick={() => setShowHolidays(true)} style={{
+            display: "flex", alignItems: "center", gap: 6,
+            background: "rgba(251,146,60,0.1)", border: "1px solid rgba(251,146,60,0.35)",
+            color: "#fb923c", borderRadius: 6, padding: "5px 13px", cursor: "pointer",
+            fontSize: 11, fontWeight: 800, letterSpacing: "0.06em", fontFamily: "inherit",
+          }}>
+            <span>🗓</span> HOLIDAYS
+          </button>
           {/* ── IMPORT BUTTON ── */}
           <button onClick={() => setShowImport(true)} style={{
             display: "flex", alignItems: "center", gap: 6,
@@ -2809,19 +3624,50 @@ export default function App() {
           <TimelineView projects={projects} people={people} onEditItem={handleEditItem}
             onAddDeliverable={(proj) => setNewDeliverable(proj)}
             onAddSubtask={(proj, del) => setNewSubtask({ project: proj, deliverable: del })}
-            onMarkDone={handleMarkDone} onSaveItem={handleSaveItem}
+            onMarkDone={handleMarkDone} onSaveItem={handleSaveItem} holidays={holidays}
           />
         )}
-        {view === "people"  && <PeopleView projects={projects} people={people} onEditItem={handleEditItem} onMarkDone={handleMarkDone} />}
-        {view === "status"  && <StatusView projects={projects} people={people} statusNotes={statusNotes} onUpdateNote={handleUpdateNote} onAddDeliverable={(proj) => setNewDeliverable(proj)} onAddSubtask={(proj, del) => setNewSubtask({ project: proj, deliverable: del })} />}
+        {view === "people"  && <PeopleView projects={projects} people={people} onEditItem={handleEditItem} onMarkDone={handleMarkDone} onSaveItem={handleSaveItem} holidays={holidays} />}
+        {view === "status"  && <StatusView projects={projects} people={people} statusNotes={statusNotes} onUpdateNote={handleUpdateNote} onAddDeliverable={(proj) => setNewDeliverable(proj)} onAddSubtask={(proj, del) => setNewSubtask({ project: proj, deliverable: del })} onSaveTrackOverride={(projId, delId, val) => setProjects(ps => ps.map(p => p.id !== projId ? p : { ...p, deliverables: p.deliverables.map(d => d.id !== delId ? d : { ...d, trackOverride: val }) }))} />}
       </main>
 
       {/* ── Modals ── */}
+      {showHolidays && (
+        <HolidaysModal holidays={holidays} onClose={() => setShowHolidays(false)} onSave={(newHolidays) => {
+          setHolidays(newHolidays);
+          // Push any task that lands on a new holiday forward
+          const newHolidayDates = new Set(newHolidays.map(h => h.date));
+          setProjects(projs => {
+            let updated = projs;
+            projs.forEach(proj => {
+              proj.deliverables.forEach(del => {
+                [del, ...del.subtasks].forEach(item => {
+                  if (newHolidayDates.has(item.end)) {
+                    // Find next non-holiday day
+                    let d = new Date(item.end + "T00:00:00");
+                    while (newHolidayDates.has(d.toISOString().slice(0,10)) || d.getDay()===0 || d.getDay()===6) {
+                      d = new Date(d.getTime() + 86400000);
+                    }
+                    const newEnd = d.toISOString().slice(0,10);
+                    updated = cascadeDates(updated, item.id, newEnd, newHolidays);
+                  }
+                });
+              });
+            });
+            return updated;
+          });
+        }} />
+      )}
       {showTeamSettings && (
-        <TeamSettingsModal
-          people={people}
-          onClose={() => setShowTeamSettings(false)}
-          onSave={setPeople}
+        <TeamSettingsModal people={people} onClose={() => setShowTeamSettings(false)} onSave={setPeople} />
+      )}
+      {showTemplates && (
+        <TemplatesModal
+          existingColors={projects.map(p => p.color)}
+          savedTemplates={savedTemplates}
+          onClose={() => setShowTemplates(false)}
+          onAdd={handleAddProject}
+          onSaveTemplate={(tpl) => setSavedTemplates(t => [...t, tpl])}
         />
       )}
       {projectMenu && (
@@ -2831,6 +3677,7 @@ export default function App() {
           onArchive={handleArchiveProject}
           onDelete={handleDeleteProject}
           onRename={handleRenameProject}
+          onSaveAsTemplate={handleSaveAsTemplate}
         />
       )}
       {showImport && (
