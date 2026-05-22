@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from "react";
+import React, { useState, useRef, useEffect, useCallback } from "react";
 
 // --- PEOPLE ───────────────────────────────────────────────────────────────────
 const initialPeople = [
@@ -556,7 +556,7 @@ function CheckButton({ isDone, onClick }) {
 }
 
 // --- TASK EDIT MODAL ──────────────────────────────────────────────────────────
-function TaskModal({ item, projectColor, allItems, onClose, onSave, allPeople }) {
+function TaskModal({ item, projectColor, allItems, onClose, onSave, allPeople, onDelete, holidays = [] }) {
   const [form, setForm] = useState({ ...item });
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
   const togglePerson = (id) => set("assignees", form.assignees.includes(id)
@@ -564,7 +564,55 @@ function TaskModal({ item, projectColor, allItems, onClose, onSave, allPeople })
   const toggleDep = (id) => set("dependencies", (form.dependencies || []).includes(id)
     ? (form.dependencies || []).filter(x => x !== id) : [...(form.dependencies || []), id]);
 
-  const duration = form.start && form.end ? durDays(form.start, form.end) : "—";
+  const holidaySet = new Set(holidays.map(h => h.date));
+
+  // Advance a date string past weekends and holidays
+  const nextWorkDay = (dateStr) => {
+    if (!dateStr) return dateStr;
+    let d = new Date(dateStr + "T00:00:00");
+    while (d.getDay() === 0 || d.getDay() === 6 || holidaySet.has(d.toISOString().slice(0,10))) {
+      d = new Date(d.getTime() + 86400000);
+    }
+    return d.toISOString().slice(0,10);
+  };
+
+  // Add n calendar days, then snap to next working day
+  const addDays = (dateStr, n) => {
+    const d = new Date(dateStr + "T00:00:00");
+    d.setDate(d.getDate() + Math.max(0, n - 1));
+    return nextWorkDay(d.toISOString().slice(0,10));
+  };
+
+  // Count calendar days inclusive (what the user sees as "duration")
+  const calcDuration = (s, e) => {
+    if (!s || !e) return 1;
+    return Math.max(1, Math.ceil((parseDate(e) - parseDate(s)) / 86400000) + 1);
+  };
+
+  const duration = calcDuration(form.start, form.end);
+
+  // When Start changes: preserve duration, recalculate End
+  const handleStartChange = (newStart) => {
+    const dur = calcDuration(form.start, form.end);
+    const clean = nextWorkDay(newStart);
+    const newEnd = addDays(clean, dur);
+    setForm(f => ({ ...f, start: clean, end: newEnd }));
+  };
+
+  // When End changes: just update end (duration shown updates automatically)
+  const handleEndChange = (newEnd) => {
+    const clean = nextWorkDay(newEnd);
+    // Ensure end >= start
+    const newStart = clean < form.start ? clean : form.start;
+    setForm(f => ({ ...f, start: newStart, end: clean }));
+  };
+
+  // When Duration changes: keep Start, recalculate End
+  const handleDurationChange = (val) => {
+    const days = Math.max(1, parseInt(val) || 1);
+    const newEnd = addDays(form.start, days);
+    setForm(f => ({ ...f, end: newEnd }));
+  };
 
   return (
     <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.3)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000, backdropFilter: "blur(6px)" }}
@@ -604,19 +652,31 @@ function TaskModal({ item, projectColor, allItems, onClose, onSave, allPeople })
               </div>
             )}
           </div>
-          {/* Dates + Duration */}
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 0.6fr", gap: 14 }}>
-            {[["Start Date", "start"], ["End Date", "end"]].map(([label, key]) => (
-              <div key={key}>
-                <div style={labelStyle}>{label}</div>
-                <input type="date" value={form[key]} onChange={e => set(key, e.target.value)} style={{ ...selectStyle, width: "100%" }} />
+          {/* Dates + Duration — all linked */}
+          <div>
+            <div style={{ fontSize: 10, color: "#6b7280", fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", marginBottom: 8 }}>
+              Dates &amp; Duration <span style={{ fontWeight: 400, color: "#9ca3af", fontSize: 9 }}>— editing one field auto-updates the others · holidays &amp; weekends skipped</span>
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 0.6fr", gap: 12 }}>
+              <div>
+                <div style={labelStyle}>Start Date</div>
+                <input type="date" value={form.start} onChange={e => handleStartChange(e.target.value)}
+                  style={{ ...selectStyle, width: "100%" }} />
               </div>
-            ))}
-            <div>
-              <div style={labelStyle}>Duration</div>
-              <div style={{ ...selectStyle, background: "rgba(0,0,0,0.05)", color: "#4b5563", display: "flex", alignItems: "center" }}>
-                {duration} {typeof duration === "number" ? "days" : ""}
+              <div>
+                <div style={labelStyle}>End Date</div>
+                <input type="date" value={form.end} onChange={e => handleEndChange(e.target.value)}
+                  style={{ ...selectStyle, width: "100%" }} />
               </div>
+              <div>
+                <div style={labelStyle}>Duration (days)</div>
+                <input type="number" min={1} value={duration}
+                  onChange={e => handleDurationChange(e.target.value)}
+                  style={{ ...selectStyle, width: "100%", textAlign: "center" }} />
+              </div>
+            </div>
+            <div style={{ fontSize: 10, color: "#9ca3af", marginTop: 5 }}>
+              {form.start && form.end && `${fmt(parseDate(form.start))} → ${fmt(parseDate(form.end))} · ${duration} day${duration !== 1 ? "s" : ""}`}
             </div>
           </div>
           {/* Progress */}
@@ -665,9 +725,17 @@ function TaskModal({ item, projectColor, allItems, onClose, onSave, allPeople })
           )}
         </div>
         {/* Footer */}
-        <div style={{ borderTop: "1px solid rgba(0,0,0,0.07)", padding: "14px 22px", display: "flex", justifyContent: "flex-end", gap: 10 }}>
-          <button onClick={onClose} style={cancelBtnStyle}>Cancel</button>
-          <button onClick={() => { onSave(form); onClose(); }} style={{ ...cancelBtnStyle, background: projectColor, color: "#000", border: "none", fontWeight: 700 }}>Save Changes</button>
+        <div style={{ borderTop: "1px solid rgba(0,0,0,0.07)", padding: "14px 22px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          {onDelete ? (
+            <button onClick={() => { if (window.confirm("Delete this item?")) { onDelete(); onClose(); } }} style={{
+              background: "none", border: "1px solid rgba(248,113,113,0.3)", borderRadius: 6,
+              color: "#f87171", padding: "7px 14px", cursor: "pointer", fontSize: 12, fontFamily: "inherit",
+            }}>Delete</button>
+          ) : <div />}
+          <div style={{ display: "flex", gap: 10 }}>
+            <button onClick={onClose} style={cancelBtnStyle}>Cancel</button>
+            <button onClick={() => { onSave(form); onClose(); }} style={{ ...cancelBtnStyle, background: projectColor, color: "#000", border: "none", fontWeight: 700 }}>Save Changes</button>
+          </div>
         </div>
       </div>
     </div>
@@ -678,10 +746,83 @@ const selectStyle = { width: "100%", background: "#f7f8fa", border: "1px solid r
 const cancelBtnStyle = { background: "rgba(0,0,0,0.07)", border: "1px solid rgba(0,0,0,0.09)", borderRadius: 6, color: "#4b5563", padding: "7px 16px", cursor: "pointer", fontFamily: "inherit", fontSize: 12 };
 
 // --- DASHBOARD ────────────────────────────────────────────────────────────────
-function DashboardView({ projects, people, onEditItem, onAddDeliverable, onAddSubtask }) {
+// ─── DASHBOARD ADD BUTTON ────────────────────────────────────────────────────
+function DashboardAddButton({ projects, onAddDeliverable, onNewProject }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div style={{ padding: "14px 18px", borderBottom: "1px solid rgba(0,0,0,0.06)", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+      <div style={{ fontSize: 10, fontWeight: 700, color: "#6b7280", letterSpacing: "0.1em", textTransform: "uppercase" }}>All Deliverables</div>
+      <div style={{ position: "relative" }}>
+        <button onClick={() => setOpen(o => !o)} style={{
+          display: "flex", alignItems: "center", gap: 5,
+          background: "rgba(245,158,11,0.1)", border: "1px solid rgba(245,158,11,0.4)",
+          color: "#d97706", borderRadius: 6, padding: "5px 12px", cursor: "pointer",
+          fontSize: 11, fontWeight: 800, fontFamily: "inherit",
+        }}>+ Add {open ? "▲" : "▼"}</button>
+        {open && (
+          <div style={{
+            position: "absolute", right: 0, top: "calc(100% + 4px)", zIndex: 100,
+            background: "#ffffff", border: "1px solid rgba(0,0,0,0.1)", borderRadius: 8,
+            boxShadow: "0 4px 16px rgba(0,0,0,0.1)", minWidth: 200, overflow: "hidden",
+          }}>
+            <div style={{ padding: "8px 12px", fontSize: 10, fontWeight: 700, color: "#9ca3af", letterSpacing: "0.08em", borderBottom: "1px solid rgba(0,0,0,0.06)" }}>NEW PROJECT</div>
+            <button onClick={() => { onNewProject(); setOpen(false); }} style={{
+              display: "flex", alignItems: "center", gap: 8, width: "100%",
+              padding: "10px 14px", background: "none", border: "none", borderBottom: "1px solid rgba(0,0,0,0.06)",
+              cursor: "pointer", fontSize: 12, fontWeight: 600, color: "#1f2937", fontFamily: "inherit", textAlign: "left",
+            }}
+              onMouseEnter={e => e.currentTarget.style.background = "rgba(0,0,0,0.04)"}
+              onMouseLeave={e => e.currentTarget.style.background = "none"}
+            >◈ Create new project</button>
+            <div style={{ padding: "8px 12px", fontSize: 10, fontWeight: 700, color: "#9ca3af", letterSpacing: "0.08em", borderBottom: "1px solid rgba(0,0,0,0.06)" }}>ADD TO EXISTING PROJECT</div>
+            {projects.map(proj => (
+              <button key={proj.id} onClick={() => { onAddDeliverable(proj); setOpen(false); }} style={{
+                display: "flex", alignItems: "center", gap: 8, width: "100%",
+                padding: "9px 14px", background: "none", border: "none", borderBottom: "1px solid rgba(0,0,0,0.04)",
+                cursor: "pointer", fontSize: 12, fontWeight: 500, color: "#374151", fontFamily: "inherit", textAlign: "left",
+              }}
+                onMouseEnter={e => e.currentTarget.style.background = "rgba(0,0,0,0.04)"}
+                onMouseLeave={e => e.currentTarget.style.background = "none"}
+              >
+                <span style={{ width: 8, height: 8, borderRadius: "50%", background: proj.color, display: "inline-block", flexShrink: 0 }} />
+                {proj.name}
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function DashboardView({ projects, people, onEditItem, onAddDeliverable, onAddSubtask, onNewProject }) {
   const allDeliverables = projects.flatMap(p => p.deliverables.map(d => ({ ...d, projectId: p.id, projectName: p.name, projectColor: p.color })));
   const allSubtasks = projects.flatMap(p => p.deliverables.flatMap(d => d.subtasks.map(s => ({ ...s, projectId: p.id, projectName: p.name, projectColor: p.color, deliverableId: d.id }))));
   const allItems = [...allDeliverables, ...allSubtasks];
+  const [sortCol, setSortCol] = useState("start");
+  const [sortDir, setSortDir] = useState("asc");
+  const toggleSort = (col) => { if (sortCol === col) setSortDir(d => d === "asc" ? "desc" : "asc"); else { setSortCol(col); setSortDir("asc"); } };
+  const sortedDeliverables = [...allDeliverables].sort((a, b) => {
+    let av, bv;
+    switch(sortCol) {
+      case "title":    av = a.title;       bv = b.title; break;
+      case "project":  av = a.projectName; bv = b.projectName; break;
+      case "status":   av = a.status;      bv = b.status; break;
+      case "priority": av = ["Low","Medium","High","Critical"].indexOf(a.priority); bv = ["Low","Medium","High","Critical"].indexOf(b.priority); break;
+      case "start":    av = a.start || ""; bv = b.start || ""; break;
+      case "end":      av = a.end || "";   bv = b.end || ""; break;
+      case "dur":      av = durDays(a.start, a.end); bv = durDays(b.start, b.end); break;
+      case "progress": av = a.progress;    bv = b.progress; break;
+      default:         av = ""; bv = "";
+    }
+    const r = typeof av === "number" ? av - bv : String(av || "").localeCompare(String(bv || ""));
+    return sortDir === "asc" ? r : -r;
+  });
+  const SortTh = ({ col, label }) => (
+    <th onClick={() => toggleSort(col)} style={{ padding: "9px 14px", textAlign: "left", fontSize: 10, fontWeight: 700, color: sortCol === col ? "#d97706" : "#6b7280", letterSpacing: "0.07em", textTransform: "uppercase", cursor: "pointer", userSelect: "none", whiteSpace: "nowrap" }}>
+      {label} {sortCol === col ? (sortDir === "asc" ? "↑" : "↓") : ""}
+    </th>
+  );
 
   const statusCounts = STATUSES.reduce((a, s) => ({ ...a, [s]: allItems.filter(t => t.status === s).length }), {});
   const total = allItems.length;
@@ -803,62 +944,103 @@ function DashboardView({ projects, people, onEditItem, onAddDeliverable, onAddSu
       </div>
       {/* Task table */}
       <div style={{ background: "#ffffff", border: "1px solid rgba(0,0,0,0.07)", borderRadius: 10, overflow: "hidden" }}>
-        <div style={{ padding: "14px 18px", borderBottom: "1px solid rgba(0,0,0,0.06)", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-          <SectionHeader noMargin>All Deliverables</SectionHeader>
-          <div style={{ display: "flex", gap: 8 }}>
-            {projects.map(proj => (
-              <button key={proj.id} onClick={() => onAddDeliverable(proj)} style={{
-                background: proj.color + "12", border: `1px solid ${proj.color}40`,
-                color: proj.color, borderRadius: 5, padding: "4px 10px",
-                cursor: "pointer", fontSize: 10, fontWeight: 800, fontFamily: "inherit",
-              }}>+ {proj.name.length > 18 ? proj.name.slice(0,18)+"…" : proj.name}</button>
-            ))}
-          </div>
-        </div>
+        <DashboardAddButton projects={projects} onAddDeliverable={onAddDeliverable} onNewProject={() => {
+          // bubble up — we need a callback
+          if (onNewProject) onNewProject();
+        }} />
         <table style={{ width: "100%", borderCollapse: "collapse" }}>
           <thead>
             <tr style={{ borderBottom: "1px solid rgba(0,0,0,0.06)" }}>
-              {["Deliverable","Project","Status","Priority","Assignees","Start","End","Dur.","Progress",""].map((h, i) => (
-                <th key={i} style={{ padding: "9px 14px", textAlign: "left", fontSize: 10, fontWeight: 700, color: "#6b7280", letterSpacing: "0.07em", textTransform: "uppercase" }}>{h}</th>
-              ))}
+              <SortTh col="title" label="Deliverable" />
+              <SortTh col="project" label="Project" />
+              <SortTh col="status" label="Status" />
+              <SortTh col="priority" label="Priority" />
+              <th style={{ padding: "9px 14px", textAlign: "left", fontSize: 10, fontWeight: 700, color: "#6b7280", letterSpacing: "0.07em", textTransform: "uppercase" }}>Assignees</th>
+              <SortTh col="start" label="Start" />
+              <SortTh col="end" label="End" />
+              <SortTh col="dur" label="Dur." />
+              <SortTh col="progress" label="Progress" />
+              <th></th>
             </tr>
           </thead>
           <tbody>
-            {[...allDeliverables]
-              .filter(d => d.status !== "Done")
-              .sort((a, b) => a.start.localeCompare(b.start))
-              .map(d => {
+            {sortedDeliverables.map(d => {
               const proj = projects.find(p => p.id === d.projectId);
               return (
-                <tr key={d.id} style={{ borderBottom: "1px solid rgba(0,0,0,0.04)" }}
-                  onMouseEnter={e => e.currentTarget.style.background = "rgba(0,0,0,0.025)"}
-                  onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
-                  <td style={{ padding: "11px 14px", fontSize: 12, fontWeight: 700, color: d.status === "Done" ? "#9ca3af" : "#1f2937", textDecoration: d.status === "Done" ? "line-through" : "none", cursor: "pointer" }} onClick={() => onEditItem(d)}>{d.title}</td>
-                  <td style={{ padding: "11px 14px" }}><span style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 11, color: "#6b7280" }}><span style={{ width: 5, height: 5, borderRadius: "50%", background: d.projectColor, display: "inline-block" }} />{d.projectName}</span></td>
-                  <td style={{ padding: "11px 14px" }}><StatusBadge status={d.status} small /></td>
-                  <td style={{ padding: "11px 14px" }}><PriorityDot priority={d.priority} /></td>
-                  <td style={{ padding: "11px 14px" }}><div style={{ display: "flex" }}>{d.assignees.map(id => { const p = people.find(x => x.id === id); return p ? <div key={id} style={{ marginRight: -5 }}><Avatar person={p} size={22} /></div> : null; })}</div></td>
-                  <td style={{ padding: "11px 14px", fontSize: 11, color: "#6b7280" }}>{fmt(parseDate(d.start))}</td>
-                  <td style={{ padding: "11px 14px", fontSize: 11, color: "#6b7280" }}>{fmt(parseDate(d.end))}</td>
-                  <td style={{ padding: "11px 14px", fontSize: 11, color: "#6b7280" }}>{durDays(d.start, d.end)}d</td>
-                  <td style={{ padding: "11px 14px", width: 110 }}>
-                    <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                      <ProgressBar value={d.progress} color={d.projectColor} />
-                      <span style={{ fontSize: 10, color: "#6b7280", minWidth: 26 }}>{d.progress}%</span>
-                    </div>
-                  </td>
-                  <td style={{ padding: "11px 14px", whiteSpace: "nowrap" }}>
-                    <button onClick={() => onAddSubtask(proj, d)} style={{
-                      background: "none", border: `1px solid rgba(0,0,0,0.12)`, borderRadius: 4,
-                      color: "#6b7280", padding: "2px 8px", cursor: "pointer",
-                      fontSize: 10, fontWeight: 700, fontFamily: "inherit",
-                      transition: "all 0.12s",
-                    }}
-                      onMouseEnter={e => { e.currentTarget.style.borderColor = d.projectColor; e.currentTarget.style.color = d.projectColor; }}
-                      onMouseLeave={e => { e.currentTarget.style.borderColor = "rgba(0,0,0,0.12)"; e.currentTarget.style.color = "#6b7280"; }}
-                    >+ Subtask</button>
-                  </td>
-                </tr>
+                <React.Fragment key={d.id}>
+                  {/* Deliverable row */}
+                  <tr style={{ borderBottom: "none" }}
+                    onMouseEnter={e => e.currentTarget.style.background = "rgba(0,0,0,0.02)"}
+                    onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
+                    <td style={{ padding: "10px 14px", fontSize: 12, fontWeight: 700, color: d.status === "Done" ? "#9ca3af" : "#1f2937", textDecoration: d.status === "Done" ? "line-through" : "none", cursor: "pointer" }} onClick={() => onEditItem(d)}>{d.title}</td>
+                    <td style={{ padding: "10px 14px" }}><span style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 11, color: "#6b7280" }}><span style={{ width: 5, height: 5, borderRadius: "50%", background: d.projectColor, display: "inline-block" }} />{d.projectName}</span></td>
+                    <td style={{ padding: "10px 14px" }}><StatusBadge status={d.status} small /></td>
+                    <td style={{ padding: "10px 14px" }}><PriorityDot priority={d.priority} /></td>
+                    <td style={{ padding: "10px 14px" }}><div style={{ display: "flex" }}>{d.assignees.map(id => { const p = people.find(x => x.id === id); return p ? <div key={id} style={{ marginRight: -5 }}><Avatar person={p} size={22} /></div> : null; })}</div></td>
+                    <td style={{ padding: "10px 14px", fontSize: 11, color: "#6b7280" }}>{fmt(parseDate(d.start))}</td>
+                    <td style={{ padding: "10px 14px", fontSize: 11, color: "#6b7280" }}>{fmt(parseDate(d.end))}</td>
+                    <td style={{ padding: "10px 14px", fontSize: 11, color: "#6b7280" }}>{durDays(d.start, d.end)}d</td>
+                    <td style={{ padding: "10px 14px", width: 110 }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                        <ProgressBar value={d.progress} color={d.projectColor} />
+                        <span style={{ fontSize: 10, color: "#6b7280", minWidth: 26 }}>{d.progress}%</span>
+                      </div>
+                    </td>
+                    <td style={{ padding: "10px 14px", whiteSpace: "nowrap" }}>
+                      <button onClick={() => onAddSubtask(proj, d)} style={{
+                        background: "none", border: "1px solid rgba(0,0,0,0.12)", borderRadius: 4,
+                        color: "#6b7280", padding: "2px 8px", cursor: "pointer",
+                        fontSize: 10, fontWeight: 700, fontFamily: "inherit", transition: "all 0.12s",
+                      }}
+                        onMouseEnter={e => { e.currentTarget.style.borderColor = d.projectColor; e.currentTarget.style.color = d.projectColor; }}
+                        onMouseLeave={e => { e.currentTarget.style.borderColor = "rgba(0,0,0,0.12)"; e.currentTarget.style.color = "#6b7280"; }}
+                      >+ Subtask</button>
+                    </td>
+                  </tr>
+
+                  {/* Existing subtask rows */}
+                  {(d.subtasks || []).map(sub => (
+                    <tr key={sub.id} style={{ background: "rgba(0,0,0,0.015)", borderBottom: "none" }}
+                      onMouseEnter={e => e.currentTarget.style.background = "rgba(0,0,0,0.035)"}
+                      onMouseLeave={e => e.currentTarget.style.background = "rgba(0,0,0,0.015)"}>
+                      <td style={{ padding: "6px 14px 6px 28px", fontSize: 11, color: sub.status === "Done" ? "#9ca3af" : "#374151", textDecoration: sub.status === "Done" ? "line-through" : "none", cursor: "pointer" }}
+                        onClick={() => onEditItem({ ...sub, projectId: d.projectId, projectName: d.projectName, projectColor: d.projectColor, deliverableId: d.id })}>
+                        <span style={{ display: "flex", alignItems: "center", gap: 7 }}>
+                          <span style={{ width: 2, height: 12, background: d.projectColor + "80", borderRadius: 1, flexShrink: 0 }} />
+                          <span style={{ width: 5, height: 5, borderRadius: "50%", background: (statusMeta[sub.status] || statusMeta["Not Started"]).color, flexShrink: 0 }} />
+                          {sub.title}
+                        </span>
+                      </td>
+                      <td colSpan={2} style={{ padding: "6px 14px" }}><StatusBadge status={sub.status} small /></td>
+                      <td style={{ padding: "6px 14px" }}><PriorityDot priority={sub.priority} /></td>
+                      <td style={{ padding: "6px 14px" }}><div style={{ display: "flex" }}>{(sub.assignees || []).map(id => { const p = people.find(x => x.id === id); return p ? <div key={id} style={{ marginRight: -5 }}><Avatar person={p} size={20} /></div> : null; })}</div></td>
+                      <td style={{ padding: "6px 14px", fontSize: 11, color: "#9ca3af" }}>{sub.start ? fmt(parseDate(sub.start)) : "—"}</td>
+                      <td style={{ padding: "6px 14px", fontSize: 11, color: "#9ca3af" }}>{sub.end ? fmt(parseDate(sub.end)) : "—"}</td>
+                      <td style={{ padding: "6px 14px", fontSize: 11, color: "#9ca3af" }}>{sub.start && sub.end ? durDays(sub.start, sub.end) + "d" : "—"}</td>
+                      <td style={{ padding: "6px 14px", width: 110 }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                          <ProgressBar value={sub.progress || 0} color={d.projectColor} height={3} />
+                          <span style={{ fontSize: 10, color: "#9ca3af", minWidth: 26 }}>{sub.progress || 0}%</span>
+                        </div>
+                      </td>
+                      <td style={{ padding: "6px 14px" }} />
+                    </tr>
+                  ))}
+
+                  {/* + Add subtask row at the bottom */}
+                  <tr style={{ borderBottom: "1px solid rgba(0,0,0,0.06)", background: "rgba(0,0,0,0.01)" }}>
+                    <td colSpan={10} style={{ padding: "4px 14px 6px 28px" }}>
+                      <button onClick={() => onAddSubtask(proj, d)} style={{
+                        background: "none", border: "1px dashed rgba(0,0,0,0.13)", borderRadius: 4,
+                        color: "#9ca3af", padding: "2px 12px", cursor: "pointer",
+                        fontSize: 10, fontFamily: "inherit", transition: "all 0.12s",
+                      }}
+                        onMouseEnter={e => { e.currentTarget.style.borderColor = d.projectColor; e.currentTarget.style.color = d.projectColor; }}
+                        onMouseLeave={e => { e.currentTarget.style.borderColor = "rgba(0,0,0,0.13)"; e.currentTarget.style.color = "#9ca3af"; }}
+                      >+ Add subtask</button>
+                    </td>
+                  </tr>
+                </React.Fragment>
               );
             })}
           </tbody>
@@ -909,7 +1091,7 @@ function buildRowIndex(projects) {
 function cascadeDates(projects, changedId, newEnd, holidays = []) {
   const holidaySet = new Set(holidays.map(h => h.date));
 
-  // Advance a date string to the next working day (skip weekends + holidays)
+  // Advance a date to the next working day (skip weekends + holidays)
   function nextWorkingDay(dateStr) {
     let d = new Date(dateStr + "T00:00:00");
     while (holidaySet.has(d.toISOString().slice(0,10)) || d.getDay() === 0 || d.getDay() === 6) {
@@ -930,7 +1112,7 @@ function cascadeDates(projects, changedId, newEnd, holidays = []) {
     return d.toISOString().slice(0,10);
   }
 
-  // Count working days between two date strings (inclusive of start)
+  // Count working days between two date strings (inclusive)
   function workingDaysDuration(startStr, endStr) {
     let d = new Date(startStr + "T00:00:00");
     const end = new Date(endStr + "T00:00:00");
@@ -943,6 +1125,7 @@ function cascadeDates(projects, changedId, newEnd, holidays = []) {
     return Math.max(1, count);
   }
 
+  // Build a flat map of all items
   const itemMap = {};
   projects.forEach(proj => {
     proj.deliverables.forEach(del => {
@@ -952,18 +1135,23 @@ function cascadeDates(projects, changedId, newEnd, holidays = []) {
   });
 
   const rowIndex = buildRowIndex(projects);
-  function depsTextToIds(depsText) {
-    if (!depsText) return [];
-    return depsText.split(',').map(s => s.trim()).filter(Boolean).map(num => {
-      const entry = rowIndex.reverse[parseInt(num)];
-      return entry ? entry.id : null;
-    }).filter(Boolean);
+
+  // Get dependency IDs from either the dependencies[] array or depsText string
+  function getDeps(item) {
+    // Prefer the explicit dependencies[] array
+    if (item.dependencies && item.dependencies.length > 0) return item.dependencies;
+    // Fall back to depsText numeric row numbers
+    if (item.depsText) {
+      return item.depsText.split(',').map(s => s.trim()).filter(Boolean).map(num => {
+        const entry = rowIndex.reverse[parseInt(num)];
+        return entry ? entry.id : null;
+      }).filter(Boolean);
+    }
+    return [];
   }
 
-  // Apply the direct change — also ensure newEnd itself isn't a holiday
-  const adjustedEnd = nextWorkingDay(newEnd) !== newEnd
-    ? (() => { let d = new Date(newEnd + "T00:00:00"); while (holidaySet.has(d.toISOString().slice(0,10)) || d.getDay()===0 || d.getDay()===6) d = new Date(d.getTime() + 86400000); return d.toISOString().slice(0,10); })()
-    : newEnd;
+  // Sanitize the changed item's end — push off holidays/weekends
+  const adjustedEnd = nextWorkingDay(newEnd);
   itemMap[changedId] = { ...itemMap[changedId], end: adjustedEnd };
 
   const triggered = new Set([changedId]);
@@ -972,7 +1160,7 @@ function cascadeDates(projects, changedId, newEnd, holidays = []) {
   while (anyChange) {
     anyChange = false;
     Object.values(itemMap).forEach(item => {
-      const deps = depsTextToIds(item.depsText || '');
+      const deps = getDeps(item);
       if (!deps.length || !deps.some(d => triggered.has(d))) return;
 
       const latestPredEnd = deps
@@ -1019,7 +1207,7 @@ function dayOffset(dateStr) {
   return Math.ceil((parseDate(dateStr) - TIMELINE_START) / 86400000);
 }
 
-function TimelineView({ projects, people, onEditItem, onAddDeliverable, onAddSubtask, onMarkDone, onSaveItem, holidays = [] }) {
+function TimelineView({ projects, people, onEditItem, onAddDeliverable, onAddSubtask, onMarkDone, onSaveItem, holidays = [], onInsertSubtask, onReorderSubtasks, onDeleteSubtask }) {
   const [collapsed, setCollapsed] = useState(() => {
     try { return JSON.parse(localStorage.getItem('planr_collapsed') || '{}'); } catch { return {}; }
   });
@@ -1030,6 +1218,9 @@ function TimelineView({ projects, people, onEditItem, onAddDeliverable, onAddSub
   });
   const scrollRef = useRef(null);
   const containerRef = useRef(null);
+  const [selectedProjects, setSelectedProjects] = useState([]);
+  const toggleProjFilter = (id) => setSelectedProjects(s => s.includes(id) ? s.filter(x => x !== id) : [...s, id]);
+  const visibleProjects = selectedProjects.length === 0 ? projects : projects.filter(p => selectedProjects.includes(p.id));
   const [DAY_W, setDayW] = useState(24);
   const [colWidths, setColWidths] = useState({ ...COL_DEFAULTS });
   const LEFT_W = Object.values(colWidths).reduce((a, b) => a + b, 0);
@@ -1095,6 +1286,25 @@ function TimelineView({ projects, people, onEditItem, onAddDeliverable, onAddSub
   ]));
 
   return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+    {/* Project filter pills */}
+    <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
+      <span style={{ fontSize: 11, color: "#6b7280", fontWeight: 600 }}>Show:</span>
+      <div onClick={() => setSelectedProjects([])} style={{
+        padding: "3px 10px", borderRadius: 12, cursor: "pointer", fontSize: 11, fontWeight: 700,
+        background: selectedProjects.length === 0 ? "rgba(0,0,0,0.1)" : "transparent",
+        border: `1px solid ${selectedProjects.length === 0 ? "rgba(0,0,0,0.2)" : "rgba(0,0,0,0.1)"}`,
+        color: selectedProjects.length === 0 ? "#111827" : "#6b7280",
+      }}>All Projects</div>
+      {projects.map(p => (
+        <div key={p.id} onClick={() => toggleProjFilter(p.id)} style={{
+          padding: "3px 10px", borderRadius: 12, cursor: "pointer", fontSize: 11, fontWeight: 700,
+          background: selectedProjects.includes(p.id) ? p.color + "18" : "transparent",
+          border: `1px solid ${selectedProjects.includes(p.id) ? p.color + "80" : "rgba(0,0,0,0.1)"}`,
+          color: selectedProjects.includes(p.id) ? p.color : "#6b7280",
+        }}>{p.name}</div>
+      ))}
+    </div>
     <div ref={containerRef} style={{ background: "#eceef2", border: "1px solid rgba(0,0,0,0.07)", borderRadius: 10, overflow: "hidden", fontFamily: "inherit" }}>
       {/* Sticky header row — month labels */}
       <div style={{ display: "flex", borderBottom: "1px solid rgba(0,0,0,0.07)", background: "#f5f6f8", position: "sticky", top: 0, zIndex: 20 }}>
@@ -1126,18 +1336,20 @@ function TimelineView({ projects, people, onEditItem, onAddDeliverable, onAddSub
 
       {/* Body — synced horizontal scroll */}
       <TimelineBody
-        projects={projects} people={people} collapsed={collapsed} toggle={toggle}
+        projects={visibleProjects} people={people} collapsed={collapsed} toggle={toggle}
         weeks={weeks} todayOff={todayOff} allItemsFlat={allItemsFlat}
         onEditItem={onEditItem} headerScrollRef={scrollRef}
         onAddDeliverable={onAddDeliverable} onAddSubtask={onAddSubtask}
         onMarkDone={onMarkDone} onSaveItem={onSaveItem} rowIndex={rowIndex} DAY_W={DAY_W}
         colWidths={colWidths} LEFT_W={LEFT_W} holidays={holidays}
+        onInsertSubtask={onInsertSubtask} onReorderSubtasks={onReorderSubtasks} onDeleteSubtask={onDeleteSubtask}
       />
+    </div>
     </div>
   );
 }
 
-function TimelineBody({ projects, people, collapsed, toggle, weeks, todayOff, allItemsFlat, onEditItem, headerScrollRef, onAddDeliverable, onAddSubtask, onMarkDone, onSaveItem, rowIndex, DAY_W, colWidths, LEFT_W, holidays = [] }) {
+function TimelineBody({ projects, people, collapsed, toggle, weeks, todayOff, allItemsFlat, onEditItem, headerScrollRef, onAddDeliverable, onAddSubtask, onMarkDone, onSaveItem, rowIndex, DAY_W, colWidths, LEFT_W, holidays = [], onInsertSubtask, onReorderSubtasks, onDeleteSubtask }) {
   const bodyRef = useRef(null);
 
   const syncScroll = (e) => {
@@ -1168,7 +1380,8 @@ function TimelineBody({ projects, people, collapsed, toggle, weeks, todayOff, al
           <ProjectSection key={proj.id} proj={proj} people={people} collapsed={collapsed} toggle={toggle}
             weeks={weeks} todayOff={todayOff} allItemsFlat={allItemsFlat} onEditItem={onEditItem}
             onAddDeliverable={onAddDeliverable} onAddSubtask={onAddSubtask} onMarkDone={onMarkDone}
-            onSaveItem={onSaveItem} rowIndex={rowIndex} DAY_W={DAY_W} colWidths={colWidths} LEFT_W={LEFT_W} />
+            onSaveItem={onSaveItem} rowIndex={rowIndex} DAY_W={DAY_W} colWidths={colWidths} LEFT_W={LEFT_W}
+            onInsertSubtask={onInsertSubtask} onReorderSubtasks={onReorderSubtasks} onDeleteSubtask={onDeleteSubtask} />
         ))}
         {/* Today footer */}
         <div style={{ display: "flex", height: 22, background: "#e8eaee", borderTop: "1px solid rgba(0,0,0,0.06)" }}>
@@ -1182,7 +1395,7 @@ function TimelineBody({ projects, people, collapsed, toggle, weeks, todayOff, al
   );
 }
 
-function ProjectSection({ proj, people, collapsed, toggle, weeks, todayOff, allItemsFlat, onEditItem, onAddDeliverable, onAddSubtask, onMarkDone, onSaveItem, rowIndex, DAY_W, colWidths, LEFT_W }) {
+function ProjectSection({ proj, people, collapsed, toggle, weeks, todayOff, allItemsFlat, onEditItem, onAddDeliverable, onAddSubtask, onMarkDone, onSaveItem, rowIndex, DAY_W, colWidths, LEFT_W, onInsertSubtask, onReorderSubtasks, onDeleteSubtask }) {
   const isProjCollapsed = !!collapsed[proj.id];
 
   // Span the whole project across the chart for the summary bar
@@ -1252,7 +1465,8 @@ function ProjectSection({ proj, people, collapsed, toggle, weeks, todayOff, allI
           collapsed={collapsed} toggle={toggle} weeks={weeks} todayOff={todayOff}
           allItemsFlat={allItemsFlat} onEditItem={onEditItem}
           onAddSubtask={() => onAddSubtask(proj, del)} onMarkDone={onMarkDone}
-          onSaveItem={onSaveItem} rowIndex={rowIndex} DAY_W={DAY_W} colWidths={colWidths} LEFT_W={LEFT_W} />
+          onSaveItem={onSaveItem} rowIndex={rowIndex} DAY_W={DAY_W} colWidths={colWidths} LEFT_W={LEFT_W}
+          onInsertSubtask={onInsertSubtask} onReorderSubtasks={onReorderSubtasks} onDeleteSubtask={onDeleteSubtask} />
       ))}
 
       {/* Empty state */}
@@ -1271,16 +1485,109 @@ function ProjectSection({ proj, people, collapsed, toggle, weeks, todayOff, allI
   );
 }
 
-function DeliverableRow({ del, proj, people, collapsed, toggle, weeks, todayOff, allItemsFlat, onEditItem, onAddSubtask, onMarkDone, onSaveItem, rowIndex, DAY_W, colWidths, LEFT_W }) {
+
+// ─── CONTEXT MENU ────────────────────────────────────────────────────────────
+function ContextMenu({ x, y, items, onClose }) {
+  const ref = useRef(null);
+  useEffect(() => {
+    const handler = (e) => { if (ref.current && !ref.current.contains(e.target)) onClose(); };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, []);
+  return (
+    <div ref={ref} style={{
+      position: 'fixed', left: x, top: y, zIndex: 2000,
+      background: '#ffffff', border: '1px solid rgba(0,0,0,0.12)', borderRadius: 8,
+      boxShadow: '0 4px 20px rgba(0,0,0,0.15)', minWidth: 180, overflow: 'hidden',
+    }}>
+      {items.map((item, i) => item === 'divider'
+        ? <div key={i} style={{ height: 1, background: 'rgba(0,0,0,0.06)', margin: '2px 0' }} />
+        : (
+          <button key={i} onClick={() => { item.action(); onClose(); }} style={{
+            display: 'flex', alignItems: 'center', gap: 8, width: '100%',
+            padding: '9px 14px', background: 'none', border: 'none',
+            cursor: 'pointer', fontSize: 12, fontWeight: 500, color: item.danger ? '#f87171' : '#1f2937',
+            fontFamily: 'inherit', textAlign: 'left',
+          }}
+            onMouseEnter={e => e.currentTarget.style.background = 'rgba(0,0,0,0.04)'}
+            onMouseLeave={e => e.currentTarget.style.background = 'none'}
+          >
+            <span style={{ fontSize: 13, color: item.danger ? '#f87171' : '#6b7280', width: 16 }}>{item.icon}</span>
+            {item.label}
+          </button>
+        )
+      )}
+    </div>
+  );
+}
+
+function DeliverableRow({ del, proj, people, collapsed, toggle, weeks, todayOff, allItemsFlat, onEditItem, onAddSubtask, onMarkDone, onSaveItem, rowIndex, DAY_W, colWidths, LEFT_W, onInsertSubtask, onReorderSubtasks, onDeleteSubtask }) {
   const isCollapsed = collapsed[del.id];
   const rowNum = rowIndex.index[del.id] || "?";
   const startOff = dayOffset(del.start);
   const endOff   = dayOffset(del.end);
   const barW = Math.max((endOff - startOff) * DAY_W, 8);
 
-  const save = (patch) => onSaveItem({ ...del, projectId: proj.id, projectName: proj.name, projectColor: proj.color, ...patch });
+  const save = (patch) => {
+    const merged = { ...del, ...patch };
+    // Keep dependencies[] in sync with depsText when depsText changes
+    if ('depsText' in patch && rowIndex) {
+      const ids = (patch.depsText || '').split(',').map(s => s.trim()).filter(Boolean)
+        .map(num => { const e = rowIndex.reverse[parseInt(num)]; return e ? e.id : null; })
+        .filter(Boolean);
+      merged.dependencies = ids;
+    }
+    onSaveItem({ ...merged, projectId: proj.id, projectName: proj.name, projectColor: proj.color });
+  };
 
   const depsDisplay = (del.depsText || "");
+  const [ctxMenu, setCtxMenu] = useState(null);
+  const [dragState, setDragState] = useState({ dragIdx: null, overIdx: null });
+  const dragRef = useRef(null); // { startY, idx, rowHeight }
+
+  const handleSubtaskContextMenu = (e, subIdx) => {
+    e.preventDefault();
+    setCtxMenu({ x: e.clientX, y: e.clientY, subIdx });
+  };
+
+  const startDrag = (e, idx) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    const rowEls = e.currentTarget.closest('[data-subtask-list]')?.querySelectorAll('[data-subtask-row]');
+    const rowH = rowEls?.[0]?.getBoundingClientRect().height || 32;
+    dragRef.current = { startY: e.clientY, idx, rowH };
+    setDragState({ dragIdx: idx, overIdx: idx });
+
+    const onMove = (ev) => {
+      if (!dragRef.current) return;
+      const dy = ev.clientY - dragRef.current.startY;
+      const newOver = Math.max(0, Math.min(del.subtasks.length - 1,
+        dragRef.current.idx + Math.round(dy / dragRef.current.rowH)));
+      setDragState(s => s.overIdx !== newOver ? { ...s, overIdx: newOver } : s);
+    };
+
+    const onUp = () => {
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+      if (dragRef.current) {
+        const { idx: from } = dragRef.current;
+        setDragState(s => {
+          const to = s.overIdx;
+          if (to !== null && to !== from) {
+            const newOrder = [...del.subtasks];
+            const [moved] = newOrder.splice(from, 1);
+            newOrder.splice(to, 0, moved);
+            onReorderSubtasks(proj.id, del.id, newOrder);
+          }
+          return { dragIdx: null, overIdx: null };
+        });
+        dragRef.current = null;
+      }
+    };
+
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
+  };
   const depArrows = (del.dependencies || []).map(depId => {
     const dep = allItemsFlat.find(x => x.id === depId);
     if (!dep) return null;
@@ -1310,7 +1617,7 @@ function DeliverableRow({ del, proj, people, collapsed, toggle, weeks, todayOff,
               {isCollapsed ? "▸" : "▾"}
             </button>
             <div style={{ width: 3, height: 14, background: proj.color, borderRadius: 1, flexShrink: 0 }} />
-            <span style={{ fontSize: 11, fontWeight: 700, color: del.status === "Done" ? "#9ca3af" : "#111827", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1, textDecoration: del.status === "Done" ? "line-through" : "none" }} title={del.title}>{del.title}</span>
+            <span onClick={() => onEditItem({ ...del, projectId: proj.id, projectName: proj.name, projectColor: proj.color })} style={{ fontSize: 11, fontWeight: 700, color: del.status === "Done" ? "#9ca3af" : "#111827", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1, textDecoration: del.status === "Done" ? "line-through" : "none", cursor: "pointer" }} title={"Click to edit: " + del.title}>{del.title}</span>
             <button onClick={onAddSubtask} title="Add subtask" style={{ background: "none", border: "none", color: "#9ca3af", cursor: "pointer", fontSize: 13, lineHeight: 1, padding: "0 2px", flexShrink: 0 }}
               onMouseEnter={e => e.currentTarget.style.color = proj.color}
               onMouseLeave={e => e.currentTarget.style.color = "#9ca3af"}
@@ -1372,11 +1679,50 @@ function DeliverableRow({ del, proj, people, collapsed, toggle, weeks, todayOff,
         </div>
       </div>
 
-      {!isCollapsed && del.subtasks.map(sub => (
-        <SubtaskRow key={sub.id} sub={sub} del={del} proj={proj} people={people}
-          weeks={weeks} todayOff={todayOff} allItemsFlat={allItemsFlat} onEditItem={onEditItem}
-          onMarkDone={onMarkDone} onSaveItem={onSaveItem} rowIndex={rowIndex} DAY_W={DAY_W} colWidths={colWidths} LEFT_W={LEFT_W} />
-      ))}
+      {!isCollapsed && (
+        <div data-subtask-list>
+          {del.subtasks.map((sub, subIdx) => (
+            <div key={sub.id}
+              data-subtask-row
+              onContextMenu={e => handleSubtaskContextMenu(e, subIdx)}
+              style={{
+                opacity: dragState.dragIdx === subIdx ? 0.35 : 1,
+                outline: dragState.overIdx === subIdx && dragState.dragIdx !== null && dragState.dragIdx !== subIdx
+                  ? '2px solid #f59e0b' : 'none',
+                outlineOffset: -2,
+                transition: 'opacity 0.1s',
+                cursor: dragState.dragIdx !== null ? 'grabbing' : 'default',
+              }}
+            >
+              <SubtaskRow sub={sub} del={del} proj={proj} people={people}
+                weeks={weeks} todayOff={todayOff} allItemsFlat={allItemsFlat} onEditItem={onEditItem}
+                onMarkDone={onMarkDone} onSaveItem={onSaveItem} rowIndex={rowIndex} DAY_W={DAY_W} colWidths={colWidths} LEFT_W={LEFT_W}
+                onInsertSubtask={onInsertSubtask} onReorderSubtasks={onReorderSubtasks} onDeleteSubtask={onDeleteSubtask}
+                onDragHandlePointerDown={(e) => startDrag(e, subIdx)} />
+            </div>
+          ))}
+        </div>
+      )}
+      {/* Context menu */}
+      {ctxMenu && (
+        <ContextMenu x={ctxMenu.x} y={ctxMenu.y} onClose={() => setCtxMenu(null)} items={[
+          { icon: '↑', label: 'Insert subtask above', action: () => {
+            const afterId = ctxMenu.subIdx > 0 ? del.subtasks[ctxMenu.subIdx - 1].id : null;
+            const newSub = { id: 's_' + Date.now(), title: 'New subtask', status: 'Not Started', priority: 'Medium', assignees: [], start: del.start, end: del.end, progress: 0, dependencies: [], department: '' };
+            onInsertSubtask(proj.id, del.id, afterId, newSub);
+          }},
+          { icon: '↓', label: 'Insert subtask below', action: () => {
+            const afterId = del.subtasks[ctxMenu.subIdx]?.id || null;
+            const newSub = { id: 's_' + Date.now(), title: 'New subtask', status: 'Not Started', priority: 'Medium', assignees: [], start: del.start, end: del.end, progress: 0, dependencies: [], department: '' };
+            onInsertSubtask(proj.id, del.id, afterId, newSub);
+          }},
+          'divider',
+          { icon: '⊗', label: 'Delete subtask', danger: true, action: () => {
+            const sub = del.subtasks[ctxMenu.subIdx];
+            if (sub && window.confirm('Delete "' + sub.title + '"?')) onDeleteSubtask(proj.id, del.id, sub.id);
+          }},
+        ]} />
+      )}
       {!isCollapsed && del.subtasks.length === 0 && (
         <div style={{ display: "flex", height: 30, alignItems: "center", background: "rgba(0,0,0,0.02)", borderBottom: "1px solid rgba(0,0,0,0.03)" }}>
           <div style={{ width: LEFT_W, flexShrink: 0, paddingLeft: 36, borderRight: "1px solid rgba(0,0,0,0.05)" }}>
@@ -1389,14 +1735,23 @@ function DeliverableRow({ del, proj, people, collapsed, toggle, weeks, todayOff,
   );
 }
 
-function SubtaskRow({ sub, del, proj, people, weeks, todayOff, allItemsFlat, onEditItem, onMarkDone, onSaveItem, rowIndex, DAY_W, colWidths, LEFT_W }) {
+function SubtaskRow({ sub, del, proj, people, weeks, todayOff, allItemsFlat, onEditItem, onMarkDone, onSaveItem, rowIndex, DAY_W, colWidths, LEFT_W, onInsertSubtask, onReorderSubtasks, onDeleteSubtask, onDragHandlePointerDown }) {
   const m = statusMeta[sub.status] || statusMeta["Not Started"];
   const rowNum = rowIndex.index[sub.id] || "?";
   const startOff = dayOffset(sub.start);
   const endOff   = dayOffset(sub.end);
   const barW = Math.max((endOff - startOff) * DAY_W, 6);
 
-  const save = (patch) => onSaveItem({ ...sub, projectId: proj.id, projectName: proj.name, projectColor: proj.color, deliverableId: del.id, ...patch });
+  const save = (patch) => {
+    const merged = { ...sub, ...patch };
+    if ('depsText' in patch && rowIndex) {
+      const ids = (patch.depsText || '').split(',').map(s => s.trim()).filter(Boolean)
+        .map(num => { const e = rowIndex.reverse[parseInt(num)]; return e ? e.id : null; })
+        .filter(Boolean);
+      merged.dependencies = ids;
+    }
+    onSaveItem({ ...merged, projectId: proj.id, projectName: proj.name, projectColor: proj.color, deliverableId: del.id });
+  };
 
   const depArrows = (sub.dependencies || []).map(depId => {
     const dep = allItemsFlat.find(x => x.id === depId);
@@ -1418,12 +1773,14 @@ function SubtaskRow({ sub, del, proj, people, weeks, todayOff, allItemsFlat, onE
       <LeftCell width={colWidths.title}>
         <div style={{ display: "flex", alignItems: "center", gap: 5, paddingLeft: 18 }}>
           <div style={{ width: 10, height: 1, background: "rgba(0,0,0,0.1)", flexShrink: 0 }} />
+          {/* Drag handle */}
+          <span onPointerDown={onDragHandlePointerDown} style={{ cursor: "grab", color: "#9ca3af", fontSize: 13, flexShrink: 0, lineHeight: 1, paddingRight: 2, touchAction: "none", userSelect: "none" }} title="Drag to reorder">⠿</span>
           <CheckButton isDone={sub.status === "Done"} onClick={() => onMarkDone(proj.id, del.id, sub.id)} />
           {sub.status === "Not Started" && (
             <button onClick={e => { e.stopPropagation(); save({ status: "In Progress" }); }} title="Start task"
               style={{ background: "none", border: "none", cursor: "pointer", color: "#34d399", fontSize: 10, padding: 0, lineHeight: 1, flexShrink: 0 }}>▶</button>
           )}
-          <span style={{ fontSize: 11, color: sub.status === "Done" ? "#9ca3af" : "#374151", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", textDecoration: sub.status === "Done" ? "line-through" : "none", flex: 1 }} title={sub.title}>{sub.title}</span>
+          <span onClick={() => onEditItem({ ...sub, projectId: proj.id, projectName: proj.name, projectColor: proj.color, deliverableId: del.id })} style={{ fontSize: 11, color: sub.status === "Done" ? "#9ca3af" : "#374151", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", textDecoration: sub.status === "Done" ? "line-through" : "none", flex: 1, cursor: "pointer" }} title={"Click to edit · Right-click for options"}>{sub.title}</span>
         </div>
       </LeftCell>
 
@@ -1613,6 +1970,30 @@ function PeopleView({ projects, people, onEditItem, onMarkDone, onSaveItem, holi
   const allDeliverables = projects.flatMap(p => p.deliverables.map(d => ({ ...d, projectId: p.id, projectName: p.name, projectColor: p.color })));
   const allSubtasks = projects.flatMap(p => p.deliverables.flatMap(d => d.subtasks.map(s => ({ ...s, projectId: p.id, projectName: p.name, projectColor: p.color, deliverableId: d.id }))));
   const allItems = [...allDeliverables, ...allSubtasks];
+  const [sortCol, setSortCol] = useState("start");
+  const [sortDir, setSortDir] = useState("asc");
+  const toggleSort = (col) => { if (sortCol === col) setSortDir(d => d === "asc" ? "desc" : "asc"); else { setSortCol(col); setSortDir("asc"); } };
+  const sortedDeliverables = [...allDeliverables].sort((a, b) => {
+    let av, bv;
+    switch(sortCol) {
+      case "title":    av = a.title;       bv = b.title; break;
+      case "project":  av = a.projectName; bv = b.projectName; break;
+      case "status":   av = a.status;      bv = b.status; break;
+      case "priority": av = ["Low","Medium","High","Critical"].indexOf(a.priority); bv = ["Low","Medium","High","Critical"].indexOf(b.priority); break;
+      case "start":    av = a.start || ""; bv = b.start || ""; break;
+      case "end":      av = a.end || "";   bv = b.end || ""; break;
+      case "dur":      av = durDays(a.start, a.end); bv = durDays(b.start, b.end); break;
+      case "progress": av = a.progress;    bv = b.progress; break;
+      default:         av = ""; bv = "";
+    }
+    const r = typeof av === "number" ? av - bv : String(av || "").localeCompare(String(bv || ""));
+    return sortDir === "asc" ? r : -r;
+  });
+  const SortTh = ({ col, label }) => (
+    <th onClick={() => toggleSort(col)} style={{ padding: "9px 14px", textAlign: "left", fontSize: 10, fontWeight: 700, color: sortCol === col ? "#d97706" : "#6b7280", letterSpacing: "0.07em", textTransform: "uppercase", cursor: "pointer", userSelect: "none", whiteSpace: "nowrap" }}>
+      {label} {sortCol === col ? (sortDir === "asc" ? "↑" : "↓") : ""}
+    </th>
+  );
   const [selected, setSelected] = useState(people[0]?.id || "");
 
   const person = people.find(p => p.id === selected);
@@ -1916,11 +2297,15 @@ function getCurrentTask(del) {
   return "Complete";
 }
 
-function StatusView({ projects, people, statusNotes, onUpdateNote, onAddDeliverable, onAddSubtask, onSaveTrackOverride }) {
+function StatusView({ projects, people, statusNotes, onUpdateNote, onAddDeliverable, onAddSubtask, onSaveTrackOverride, onEditItem }) {
   const [editingNote, setEditingNote] = useState(null); // { projId, delId }
   const [noteText, setNoteText] = useState("");
   const [filterProj, setFilterProj] = useState("all");
   const [filterTrack, setFilterTrack] = useState("all");
+  const [hideCompleted, setHideCompleted] = useState(true);
+  const [statusSortCol, setStatusSortCol] = useState("end");
+  const [statusSortDir, setStatusSortDir] = useState("asc");
+  const toggleStatusSort = (col) => { if (statusSortCol === col) setStatusSortDir(d => d === "asc" ? "desc" : "asc"); else { setStatusSortCol(col); setStatusSortDir("asc"); } };
 
   const openNote = (projId, delId) => {
     const key = `${projId}::${delId}`;
@@ -1947,10 +2332,26 @@ function StatusView({ projects, people, statusNotes, onUpdateNote, onAddDelivera
     })
   );
 
-  const filtered = rows.filter(r =>
-    (filterProj === "all" || r.proj.id === filterProj) &&
-    (filterTrack === "all" || r.track === filterTrack)
-  );
+  const filtered = rows
+    .filter(r =>
+      (filterProj === "all" || r.proj.id === filterProj) &&
+      (filterTrack === "all" || r.track === filterTrack) &&
+      (!hideCompleted || r.track !== "done")
+    )
+    .sort((a, b) => {
+      let av, bv;
+      if (statusSortCol === "client") { av = a.proj.client || ""; bv = b.proj.client || ""; }
+      else if (statusSortCol === "project") { av = a.proj.name; bv = b.proj.name; }
+      else if (statusSortCol === "deliverable") { av = a.del.title; bv = b.del.title; }
+      else if (statusSortCol === "track") { av = a.track; bv = b.track; }
+      else if (statusSortCol === "assigned") { av = a.assigneeNames; bv = b.assigneeNames; }
+      else if (statusSortCol === "start") { av = a.del.start; bv = b.del.start; }
+      else if (statusSortCol === "end") { av = a.del.end; bv = b.del.end; }
+      else if (statusSortCol === "due") { av = a.del.end; bv = b.del.end; }
+      else { av = ""; bv = ""; }
+      const r2 = String(av).localeCompare(String(bv));
+      return statusSortDir === "asc" ? r2 : -r2;
+    });
 
   const trackCounts = rows.reduce((acc, r) => {
     acc[r.track] = (acc[r.track] || 0) + 1; return acc;
@@ -1977,8 +2378,12 @@ function StatusView({ projects, people, statusNotes, onUpdateNote, onAddDelivera
             </div>
           );
         })}
-        {/* project filter */}
-        <div style={{ marginLeft: "auto" }}>
+        {/* hide completed toggle + project filter */}
+        <div style={{ marginLeft: "auto", display: "flex", gap: 8, alignItems: "center" }}>
+          <label style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 11, color: "#6b7280", cursor: "pointer", userSelect: "none" }}>
+            <input type="checkbox" checked={hideCompleted} onChange={e => setHideCompleted(e.target.checked)} />
+            Hide completed
+          </label>
           <select value={filterProj} onChange={e => setFilterProj(e.target.value)}
             style={{ ...selectStyle, width: "auto", fontSize: 11, padding: "5px 10px" }}>
             <option value="all">All Projects</option>
@@ -1990,9 +2395,12 @@ function StatusView({ projects, people, statusNotes, onUpdateNote, onAddDelivera
       {/* ── Status table ── */}
       <div style={{ background: "#ffffff", border: "1px solid rgba(0,0,0,0.07)", borderRadius: 10, overflow: "hidden" }}>
         {/* Header */}
-        <div style={{ display: "grid", gridTemplateColumns: "120px 160px 170px 170px 90px 80px 90px 100px 1fr 90px", gap: 0, borderBottom: "1px solid rgba(0,0,0,0.07)", background: "#eceef2" }}>
-          {["Client","Project","Deliverable","Current Task","Track","Dept","Team","Notes",""].map((h, i) => (
-            <div key={h} style={{ padding: "10px 14px", fontSize: 10, fontWeight: 700, color: "#6b7280", letterSpacing: "0.08em", textTransform: "uppercase", borderRight: i < 6 ? "1px solid rgba(0,0,0,0.06)" : "none" }}>{h}</div>
+        <div style={{ display: "grid", gridTemplateColumns: "minmax(80px,1fr) minmax(100px,1.3fr) minmax(110px,1.4fr) minmax(110px,1.4fr) minmax(80px,0.7fr) minmax(60px,0.6fr) minmax(70px,0.6fr) minmax(70px,0.7fr) minmax(120px,2fr) minmax(70px,0.7fr)", gap: 0, borderBottom: "1px solid rgba(0,0,0,0.07)", background: "#eceef2" }}>
+          {[["Client","client"],["Project","project"],["Deliverable","deliverable"],["Current Task",null],["Track","track"],["Dept",null],["Due","due"],["Team","assigned"],["Notes",null],["",null]].map(([h, col], i) => (
+            <div key={i} onClick={col ? () => toggleStatusSort(col) : undefined}
+              style={{ padding: "7px 10px", fontSize: 9, fontWeight: 700, color: col ? (statusSortCol === col ? "#d97706" : "#6b7280") : "#6b7280", letterSpacing: "0.06em", textTransform: "uppercase", borderRight: i < 6 ? "1px solid rgba(0,0,0,0.06)" : "none", cursor: col ? "pointer" : "default", userSelect: "none", whiteSpace: "nowrap" }}>
+              {h}{col && statusSortCol === col ? (statusSortDir === "asc" ? " ↑" : " ↓") : ""}
+            </div>
           ))}
         </div>
 
@@ -2006,7 +2414,7 @@ function StatusView({ projects, people, statusNotes, onUpdateNote, onAddDelivera
           const isDone = track === "done";
           return (
             <div key={key} style={{
-              display: "grid", gridTemplateColumns: "120px 160px 170px 170px 90px 80px 90px 100px 1fr 90px",
+              display: "grid", gridTemplateColumns: "minmax(80px,1fr) minmax(100px,1.3fr) minmax(110px,1.4fr) minmax(110px,1.4fr) minmax(80px,0.7fr) minmax(60px,0.6fr) minmax(70px,0.6fr) minmax(70px,0.7fr) minmax(120px,2fr) minmax(70px,0.7fr)",
               borderBottom: i < filtered.length - 1 ? "1px solid rgba(0,0,0,0.05)" : "none",
               opacity: isDone ? 0.5 : 1, transition: "opacity 0.15s",
             }}
@@ -2026,9 +2434,11 @@ function StatusView({ projects, people, statusNotes, onUpdateNote, onAddDelivera
                 </div>
               </Cell>
 
-              {/* Deliverable */}
+              {/* Deliverable — click to edit */}
               <Cell border>
-                <span style={{ fontSize: 12, fontWeight: 700, color: isDone ? "#9ca3af" : "#111827", textDecoration: isDone ? "line-through" : "none", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{del.title}</span>
+                <span onClick={() => onEditItem && onEditItem({ ...del, projectId: proj.id, projectName: proj.name, projectColor: proj.color })}
+                  style={{ fontSize: 12, fontWeight: 700, color: isDone ? "#9ca3af" : "#111827", textDecoration: isDone ? "line-through" : "none", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", cursor: onEditItem ? "pointer" : "default", textUnderlineOffset: 2 }}
+                  title="Click to edit">{del.title}</span>
                 <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 2 }}>
                   <div style={{ flex: 1, height: 3, background: "rgba(0,0,0,0.07)", borderRadius: 2, overflow: "hidden" }}>
                     <div style={{ width: `${del.progress}%`, height: "100%", background: proj.color, borderRadius: 2 }} />
@@ -2037,16 +2447,19 @@ function StatusView({ projects, people, statusNotes, onUpdateNote, onAddDelivera
                 </div>
               </Cell>
 
-              {/* Current Task */}
+              {/* Current Task — click to edit active subtask or deliverable */}
               <Cell border>
-                <span style={{ fontSize: 11, color: isDone ? "#9ca3af" : "#374151", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                <span onClick={() => {
+                  if (!onEditItem) return;
+                  const activeSub = del.subtasks.find(s => s.status === "In Progress") || del.subtasks.find(s => s.status === "Not Started");
+                  if (activeSub) {
+                    onEditItem({ ...activeSub, projectId: proj.id, projectName: proj.name, projectColor: proj.color, deliverableId: del.id });
+                  } else {
+                    onEditItem({ ...del, projectId: proj.id, projectName: proj.name, projectColor: proj.color });
+                  }
+                }} style={{ fontSize: 11, color: isDone ? "#9ca3af" : "#374151", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", cursor: onEditItem ? "pointer" : "default" }} title="Click to edit">
                   {isDone ? "✓ Complete" : currentTask}
                 </span>
-                {!isDone && (
-                  <span style={{ fontSize: 9, color: "#9ca3af", marginTop: 2 }}>
-                    Due {fmt(parseDate(del.end))}
-                  </span>
-                )}
               </Cell>
 
               {/* Track — with manual override */}
@@ -2085,6 +2498,13 @@ function StatusView({ projects, people, statusNotes, onUpdateNote, onAddDelivera
                   ? <DeptBadge dept={del.department} />
                   : <span style={{ fontSize: 10, color: "#9ca3af" }}>—</span>
                 }
+              </Cell>
+
+              {/* Due Date */}
+              <Cell border>
+                <span style={{ fontSize: 11, fontWeight: 600, color: del.end && parseDate(del.end) < TODAY_DATE && del.status !== "Done" ? "#f87171" : "#374151", whiteSpace: "nowrap" }}>
+                  {del.end ? fmt(parseDate(del.end)) : "—"}
+                </span>
               </Cell>
 
               {/* Team */}
@@ -3121,7 +3541,7 @@ function NewProjectModal({ onClose, onAdd, existingColors }) {
 }
 
 // --- NEW DELIVERABLE MODAL ────────────────────────────────────────────────────
-function NewDeliverableModal({ project, onClose, onAdd, allPeople }) {
+function NewDeliverableModal({ project, onClose, onAdd, allPeople, savedTemplates = [] }) {
   const today = "2026-05-20";
   const weekOut = "2026-05-27";
   const [form, setForm] = useState({
@@ -3131,12 +3551,33 @@ function NewDeliverableModal({ project, onClose, onAdd, allPeople }) {
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
   const togglePerson = (id) => set("assignees", form.assignees.includes(id) ? form.assignees.filter(x => x !== id) : [...form.assignees, id]);
   const [error, setError] = useState("");
+  const [keepOpen, setKeepOpen] = useState(false);
+
+  const allTemplates = [...(typeof BUILT_IN_TEMPLATES !== "undefined" ? BUILT_IN_TEMPLATES : []), ...(savedTemplates || [])];
+  const subtaskTemplates = allTemplates.flatMap(t =>
+    (t.deliverables || []).flatMap(d => (d.subtasks || []).length > 0 ? [{ label: `${t.name} — ${d.title}`, subtasks: d.subtasks }] : [])
+  );
+
+  const applyTemplate = (tpl) => {
+    setForm(f => ({ ...f, title: tpl.label.split(" — ")[1] || f.title }));
+    setSelectedSubtaskTemplate(tpl);
+  };
+  const [selectedSubtaskTemplate, setSelectedSubtaskTemplate] = useState(null);
 
   const handleAdd = () => {
     if (!form.title.trim()) { setError("Title is required."); return; }
     const id = "d_" + Date.now();
-    onAdd(project.id, { ...form, id, title: form.title.trim(), subtasks: [] });
-    onClose();
+    const subtasks = selectedSubtaskTemplate
+      ? selectedSubtaskTemplate.subtasks.map((s, i) => ({ ...s, id: "s_" + Date.now() + i }))
+      : [];
+    onAdd(project.id, { ...form, id, title: form.title.trim(), subtasks });
+    if (keepOpen) {
+      setForm({ title: "", status: "Not Started", priority: "Medium", assignees: [], start: today, end: weekOut, progress: 0, dependencies: [], department: "" });
+      setSelectedSubtaskTemplate(null);
+      setError("");
+    } else {
+      onClose();
+    }
   };
 
   const duration = form.start && form.end ? durDays(form.start, form.end) : "—";
@@ -3145,6 +3586,33 @@ function NewDeliverableModal({ project, onClose, onAdd, allPeople }) {
     <Overlay onClose={onClose}>
       <ModalShell title={<span>New Deliverable <span style={{ color: project.color, fontWeight: 400 }}>— {project.name}</span></span>} onClose={onClose} accentColor={project.color} width={540}>
         <div style={{ padding: 22, display: "flex", flexDirection: "column", gap: 16 }}>
+          {/* Template picker */}
+          {subtaskTemplates.length > 0 && (
+            <div>
+              <div style={labelStyle}>Start from template (optional)</div>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                <div onClick={() => setSelectedSubtaskTemplate(null)} style={{
+                  padding: "4px 10px", borderRadius: 5, cursor: "pointer", fontSize: 11, fontWeight: 600,
+                  border: `1px solid ${!selectedSubtaskTemplate ? project.color : "rgba(0,0,0,0.1)"}`,
+                  background: !selectedSubtaskTemplate ? project.color + "15" : "transparent",
+                  color: !selectedSubtaskTemplate ? project.color : "#6b7280",
+                }}>Blank</div>
+                {subtaskTemplates.slice(0, 6).map((tpl, i) => (
+                  <div key={i} onClick={() => applyTemplate(tpl)} style={{
+                    padding: "4px 10px", borderRadius: 5, cursor: "pointer", fontSize: 11, fontWeight: 600,
+                    border: `1px solid ${selectedSubtaskTemplate === tpl ? project.color : "rgba(0,0,0,0.1)"}`,
+                    background: selectedSubtaskTemplate === tpl ? project.color + "15" : "transparent",
+                    color: selectedSubtaskTemplate === tpl ? project.color : "#6b7280",
+                  }}>{tpl.label.split(" — ")[1] || tpl.label}</div>
+                ))}
+              </div>
+              {selectedSubtaskTemplate && (
+                <div style={{ marginTop: 6, fontSize: 10, color: "#6b7280" }}>
+                  Includes {selectedSubtaskTemplate.subtasks.length} subtasks: {selectedSubtaskTemplate.subtasks.map(s => s.title).join(", ")}
+                </div>
+              )}
+            </div>
+          )}
           <div>
             <div style={labelStyle}>Deliverable Title</div>
             <input autoFocus value={form.title} onChange={e => { set("title", e.target.value); setError(""); }}
@@ -3199,7 +3667,16 @@ function NewDeliverableModal({ project, onClose, onAdd, allPeople }) {
             </div>
           </div>
         </div>
-        <ModalFooter onClose={onClose} onSave={handleAdd} saveLabel="Add Deliverable" color={project.color} />
+        <div style={{ borderTop: "1px solid rgba(0,0,0,0.07)", padding: "14px 20px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11, color: "#6b7280", cursor: "pointer" }}>
+            <input type="checkbox" checked={keepOpen} onChange={e => setKeepOpen(e.target.checked)} />
+            Add another
+          </label>
+          <div style={{ display: "flex", gap: 10 }}>
+            <button onClick={onClose} style={cancelBtnStyle}>Cancel</button>
+            <button onClick={handleAdd} style={{ ...cancelBtnStyle, background: project.color, color: "#000", border: "none", fontWeight: 800 }}>Add Deliverable</button>
+          </div>
+        </div>
       </ModalShell>
     </Overlay>
   );
@@ -3215,11 +3692,17 @@ function NewSubtaskModal({ project, deliverable, onClose, onAdd, allPeople }) {
   const togglePerson = (id) => set("assignees", form.assignees.includes(id) ? form.assignees.filter(x => x !== id) : [...form.assignees, id]);
   const [error, setError] = useState("");
 
+  const [keepOpen, setKeepOpen] = useState(false);
   const handleAdd = () => {
     if (!form.title.trim()) { setError("Title is required."); return; }
     const id = "s_" + Date.now();
     onAdd(project.id, deliverable.id, { ...form, id, title: form.title.trim() });
-    onClose();
+    if (keepOpen) {
+      setForm({ title: "", status: "Not Started", priority: "Medium", assignees: form.assignees, start: form.start, end: form.end, progress: 0, dependencies: [], department: form.department });
+      setError("");
+    } else {
+      onClose();
+    }
   };
 
   return (
@@ -3276,7 +3759,16 @@ function NewSubtaskModal({ project, deliverable, onClose, onAdd, allPeople }) {
             </div>
           </div>
         </div>
-        <ModalFooter onClose={onClose} onSave={handleAdd} saveLabel="Add Subtask" color={project.color} />
+        <div style={{ borderTop: "1px solid rgba(0,0,0,0.07)", padding: "14px 20px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11, color: "#6b7280", cursor: "pointer" }}>
+            <input type="checkbox" checked={keepOpen} onChange={e => setKeepOpen(e.target.checked)} />
+            Add another
+          </label>
+          <div style={{ display: "flex", gap: 10 }}>
+            <button onClick={onClose} style={cancelBtnStyle}>Cancel</button>
+            <button onClick={handleAdd} style={{ ...cancelBtnStyle, background: project.color, color: "#000", border: "none", fontWeight: 800 }}>Add Subtask</button>
+          </div>
+        </div>
       </ModalShell>
     </Overlay>
   );
@@ -3322,6 +3814,7 @@ export default function App() {
   const [showNewProject, setShowNewProject] = useState(false);
   const [showImport, setShowImport] = useState(false);
   const [showTeamSettings, setShowTeamSettings] = useState(false);
+  const [showSettingsMenu, setShowSettingsMenu] = useState(false);
   const [showTemplates, setShowTemplates] = useState(false);
   const [savedTemplates, setSavedTemplates] = useState([]);
   const [showHolidays, setShowHolidays] = useState(false);
@@ -3338,21 +3831,78 @@ export default function App() {
 
   const handleSaveItem = (updated) => {
     setProjects(projs => {
-      // First apply the direct update
+      const original = projs.flatMap(p => [...p.deliverables, ...p.deliverables.flatMap(d => d.subtasks)]).find(x => x.id === updated.id);
+      const holidaySet = new Set(holidays.map(h => h.date));
+
+      // Helper: advance a date past weekends and holidays
+      const nextWorkDay = (dateStr) => {
+        if (!dateStr) return dateStr;
+        let d = new Date(dateStr + "T00:00:00");
+        while (d.getDay() === 0 || d.getDay() === 6 || holidaySet.has(d.toISOString().slice(0,10))) {
+          d = new Date(d.getTime() + 86400000);
+        }
+        return d.toISOString().slice(0,10);
+      };
+
+      // Sanitize start/end — push off weekends and holidays automatically
+      const cleanStart = nextWorkDay(updated.start);
+      const cleanEnd   = nextWorkDay(updated.end);
+      const sanitized  = { ...updated, start: cleanStart, end: cleanEnd };
+
+      // Apply the direct update
       let newProjs = projs.map(proj => {
-        if (proj.id !== updated.projectId) return proj;
+        if (proj.id !== sanitized.projectId) return proj;
         return {
           ...proj,
           deliverables: proj.deliverables.map(del => {
-            if (del.id === updated.id) return { ...del, ...updated };
-            return { ...del, subtasks: del.subtasks.map(s => s.id === updated.id ? { ...s, ...updated } : s) };
+            if (del.id === sanitized.id) return { ...del, ...sanitized };
+            return { ...del, subtasks: del.subtasks.map(s => s.id === sanitized.id ? { ...s, ...sanitized } : s) };
           }),
         };
       });
-      // If end date changed, cascade to dependents
-      const original = projs.flatMap(p => [...p.deliverables, ...p.deliverables.flatMap(d => d.subtasks)]).find(x => x.id === updated.id);
-      if (original && original.end !== updated.end) {
-        newProjs = cascadeDates(newProjs, updated.id, updated.end, holidays);
+
+      // Cascade if end date changed
+      if (original && original.end !== sanitized.end) {
+        newProjs = cascadeDates(newProjs, sanitized.id, sanitized.end, holidays);
+      }
+
+      // If dependencies were added, push THIS item's start to after its last predecessor
+      const newDeps = sanitized.dependencies || [];
+      const oldDeps = original ? (original.dependencies || []) : [];
+      const addedDeps = newDeps.filter(d => !oldDeps.includes(d));
+      if (addedDeps.length > 0) {
+        const allItems = newProjs.flatMap(p => [...p.deliverables, ...p.deliverables.flatMap(d => d.subtasks)]);
+        const predEnds = addedDeps.map(depId => allItems.find(x => x.id === depId)).filter(Boolean).map(x => x.end);
+        if (predEnds.length > 0) {
+          const latestPred = predEnds.sort().pop();
+          const dayAfter = new Date(parseDate(latestPred).getTime() + 86400000).toISOString().slice(0,10);
+          let ns = new Date(dayAfter + "T00:00:00");
+          while (ns.getDay() === 0 || ns.getDay() === 6 || holidaySet.has(ns.toISOString().slice(0,10))) {
+            ns = new Date(ns.getTime() + 86400000);
+          }
+          const newStart = ns.toISOString().slice(0,10);
+          const dur = Math.max(1, durDays(sanitized.start, sanitized.end));
+          let ne = new Date(ns.getTime());
+          let added = 0;
+          while (added < dur - 1) {
+            ne = new Date(ne.getTime() + 86400000);
+            if (ne.getDay() !== 0 && ne.getDay() !== 6 && !holidaySet.has(ne.toISOString().slice(0,10))) added++;
+          }
+          const newEnd = ne.toISOString().slice(0,10);
+          if (newStart !== sanitized.start || newEnd !== sanitized.end) {
+            newProjs = newProjs.map(proj => {
+              if (proj.id !== sanitized.projectId) return proj;
+              return {
+                ...proj,
+                deliverables: proj.deliverables.map(del => {
+                  if (del.id === sanitized.id) return { ...del, start: newStart, end: newEnd };
+                  return { ...del, subtasks: del.subtasks.map(s => s.id === sanitized.id ? { ...s, start: newStart, end: newEnd } : s) };
+                }),
+              };
+            });
+            newProjs = cascadeDates(newProjs, sanitized.id, newEnd, holidays);
+          }
+        }
       }
       return newProjs;
     });
@@ -3399,6 +3949,41 @@ export default function App() {
     setProjects(projs => projs.map(p => p.id !== projectId ? p : {
       ...p,
       deliverables: p.deliverables.map(d => d.id !== deliverableId ? d : { ...d, subtasks: [...d.subtasks, sub] }),
+    }));
+  };
+
+  const handleDeleteDeliverable = (projectId, deliverableId) => {
+    setProjects(projs => projs.map(p => p.id !== projectId ? p : {
+      ...p, deliverables: p.deliverables.filter(d => d.id !== deliverableId),
+    }));
+  };
+
+  const handleDeleteSubtask = (projectId, deliverableId, subtaskId) => {
+    setProjects(projs => projs.map(p => p.id !== projectId ? p : {
+      ...p,
+      deliverables: p.deliverables.map(d => d.id !== deliverableId ? d : {
+        ...d, subtasks: d.subtasks.filter(s => s.id !== subtaskId),
+      }),
+    }));
+  };
+
+  const handleInsertSubtask = (projectId, deliverableId, afterSubtaskId, newSub) => {
+    setProjects(projs => projs.map(p => p.id !== projectId ? p : {
+      ...p,
+      deliverables: p.deliverables.map(d => {
+        if (d.id !== deliverableId) return d;
+        const idx = afterSubtaskId ? d.subtasks.findIndex(s => s.id === afterSubtaskId) : -1;
+        const updated = [...d.subtasks];
+        updated.splice(idx + 1, 0, newSub);
+        return { ...d, subtasks: updated };
+      }),
+    }));
+  };
+
+  const handleReorderSubtasks = (projectId, deliverableId, newOrder) => {
+    setProjects(projs => projs.map(p => p.id !== projectId ? p : {
+      ...p,
+      deliverables: p.deliverables.map(d => d.id !== deliverableId ? d : { ...d, subtasks: newOrder }),
     }));
   };
 
@@ -3453,13 +4038,14 @@ export default function App() {
     { id: "timeline",  label: "Timeline",  icon: "▬" },
     { id: "people",    label: "By Person", icon: "◎" },
     { id: "status",    label: "Status",    icon: "◉" },
+    { id: "archived",  label: "Archive",   icon: "⊡" },
   ];
 
   return (
-    <div style={{ minHeight: "100vh", background: "#f5f6f8", color: "#111827", fontFamily: "Arial, Helvetica, sans-serif", display: "flex", flexDirection: "column" }}>
+    <div style={{ minHeight: "100vh", background: "#f5f6f8", color: "#111827", fontFamily: "Arial, Helvetica, sans-serif", display: "flex", flexDirection: "column", width: "100vw", overflowX: "hidden" }}>
       <style>{`
         
-        * { box-sizing: border-box; margin: 0; padding: 0; }
+        * { box-sizing: border-box; margin: 0; padding: 0; } html, body, #root { width: 100%; max-width: 100vw; overflow-x: hidden; }
         ::-webkit-scrollbar { width: 5px; height: 5px; }
         ::-webkit-scrollbar-track { background: #e8eaee; }
         ::-webkit-scrollbar-thumb { background: #c4c9d4; border-radius: 3px; }
@@ -3470,7 +4056,7 @@ export default function App() {
       `}</style>
 
       {/* Nav */}
-      <header style={{ borderBottom: "1px solid rgba(0,0,0,0.07)", padding: "0 24px", display: "flex", alignItems: "center", height: 52, flexShrink: 0, background: "#f5f6f8" }}>
+      <header style={{ borderBottom: "1px solid rgba(0,0,0,0.07)", padding: "0 20px", display: "flex", alignItems: "center", height: 52, flexShrink: 0, background: "#f5f6f8", width: "100%", boxSizing: "border-box" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 9, marginRight: 36 }}>
           <div style={{ width: 26, height: 26, background: "#f59e0b", borderRadius: 5, display: "flex", alignItems: "center", justifyContent: "center" }}>
             <span style={{ fontSize: 13, fontWeight: 900, color: "#000", fontFamily: "Arial, Helvetica, sans-serif" }}>P</span>
@@ -3489,57 +4075,51 @@ export default function App() {
           ))}
         </nav>
         <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 12 }}>
-          {/* ── TEAM BUTTON ── */}
-          <button onClick={() => setShowTeamSettings(true)} style={{
-            display: "flex", alignItems: "center", gap: 6,
-            background: "rgba(56,189,248,0.12)", border: "1px solid rgba(56,189,248,0.4)",
-            color: "#38bdf8", borderRadius: 6, padding: "5px 13px", cursor: "pointer",
-            fontSize: 11, fontWeight: 800, letterSpacing: "0.06em", fontFamily: "inherit",
-          }}>
-            <span style={{ fontSize: 13 }}>◎</span> TEAM
-          </button>
-          {/* ── TEMPLATES BUTTON ── */}
-          <button onClick={() => setShowTemplates(true)} style={{
-            display: "flex", alignItems: "center", gap: 6,
-            background: "rgba(167,139,250,0.12)", border: "1px solid rgba(167,139,250,0.4)",
-            color: "#a78bfa", borderRadius: 6, padding: "5px 13px", cursor: "pointer",
-            fontSize: 11, fontWeight: 800, letterSpacing: "0.06em", fontFamily: "inherit",
-          }}>
-            <span style={{ fontSize: 13 }}>◧</span> TEMPLATES
-          </button>
-          {/* ── EXPORT BUTTON ── */}
-          <button onClick={() => exportToExcel(projects)} style={{
-            display: "flex", alignItems: "center", gap: 6,
-            background: "rgba(52,211,153,0.12)", border: "1px solid rgba(52,211,153,0.4)",
-            color: "#34d399", borderRadius: 6, padding: "5px 13px", cursor: "pointer",
-            fontSize: 11, fontWeight: 800, letterSpacing: "0.06em", fontFamily: "inherit",
-          }}>
-            <span style={{ fontSize: 13 }}>↓</span> EXPORT
-          </button>
-          {/* ── HOLIDAYS BUTTON ── */}
-          <button onClick={() => setShowHolidays(true)} style={{
-            display: "flex", alignItems: "center", gap: 6,
-            background: "rgba(251,146,60,0.1)", border: "1px solid rgba(251,146,60,0.35)",
-            color: "#fb923c", borderRadius: 6, padding: "5px 13px", cursor: "pointer",
-            fontSize: 11, fontWeight: 800, letterSpacing: "0.06em", fontFamily: "inherit",
-          }}>
-            <span>🗓</span> HOLIDAYS
-          </button>
-          {/* ── IMPORT BUTTON ── */}
-          <button onClick={() => setShowImport(true)} style={{
-            display: "flex", alignItems: "center", gap: 6,
-            background: "rgba(52,211,153,0.12)", border: "1px solid rgba(52,211,153,0.4)",
-            color: "#34d399", borderRadius: 6, padding: "5px 13px", cursor: "pointer",
-            fontSize: 11, fontWeight: 800, letterSpacing: "0.06em", fontFamily: "inherit",
-            transition: "all 0.12s",
-          }}>
-            <span style={{ fontSize: 13 }}>↑</span> IMPORT EXCEL
-          </button>
+          {/* ── SETTINGS MENU ── */}
+          <div style={{ position: "relative" }}>
+            <button onClick={() => setShowSettingsMenu(m => !m)} style={{
+              display: "flex", alignItems: "center", gap: 5,
+              background: showSettingsMenu ? "rgba(0,0,0,0.08)" : "rgba(0,0,0,0.05)",
+              border: "1px solid rgba(0,0,0,0.12)", color: "#374151",
+              borderRadius: 6, padding: "5px 13px", cursor: "pointer",
+              fontSize: 11, fontWeight: 800, letterSpacing: "0.06em", fontFamily: "inherit",
+            }}>⚙ SETTINGS {showSettingsMenu ? "▲" : "▼"}</button>
+            {showSettingsMenu && (
+              <div style={{
+                position: "absolute", right: 0, top: "calc(100% + 6px)", zIndex: 200,
+                background: "#ffffff", border: "1px solid rgba(0,0,0,0.1)", borderRadius: 10,
+                boxShadow: "0 4px 20px rgba(0,0,0,0.12)", minWidth: 200, overflow: "hidden",
+              }}>
+                {[
+                  { icon: "◎", label: "Team Members",   color: "#38bdf8", action: () => { setShowTeamSettings(true); setShowSettingsMenu(false); } },
+                  { icon: "◧", label: "Templates",       color: "#a78bfa", action: () => { setShowTemplates(true); setShowSettingsMenu(false); } },
+                  { icon: "↓", label: "Export to Excel", color: "#34d399", action: () => { exportToExcel(projects); setShowSettingsMenu(false); } },
+                  { icon: "🗓", label: "Holidays",        color: "#fb923c", action: () => { setShowHolidays(true); setShowSettingsMenu(false); } },
+                  { icon: "↑", label: "Import Excel",    color: "#34d399", action: () => { setShowImport(true); setShowSettingsMenu(false); } },
+                  { icon: "⊡", label: "Archived Projects",color: "#fbbf24", action: () => { setView("archived"); setShowSettingsMenu(false); } },
+                ].map(item => (
+                  <button key={item.label} onClick={item.action} style={{
+                    display: "flex", alignItems: "center", gap: 10, width: "100%",
+                    padding: "10px 16px", background: "none", border: "none",
+                    borderBottom: "1px solid rgba(0,0,0,0.05)", cursor: "pointer",
+                    fontSize: 12, fontWeight: 600, color: "#1f2937", fontFamily: "inherit",
+                    textAlign: "left",
+                  }}
+                    onMouseEnter={e => e.currentTarget.style.background = "rgba(0,0,0,0.04)"}
+                    onMouseLeave={e => e.currentTarget.style.background = "none"}
+                  >
+                    <span style={{ color: item.color, width: 16 }}>{item.icon}</span>
+                    {item.label}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
           {/* ── NEW PROJECT BUTTON ── */}
           <button onClick={() => setShowNewProject(true)} style={{
             display: "flex", alignItems: "center", gap: 6,
             background: "rgba(245,158,11,0.12)", border: "1px solid rgba(245,158,11,0.5)",
-            color: "#f59e0b", borderRadius: 6, padding: "5px 13px", cursor: "pointer",
+            color: "#d97706", borderRadius: 6, padding: "5px 13px", cursor: "pointer",
             fontSize: 11, fontWeight: 800, letterSpacing: "0.06em", fontFamily: "inherit",
             transition: "all 0.12s",
           }}>
@@ -3552,7 +4132,7 @@ export default function App() {
       </header>
 
       {/* Main */}
-      <main style={{ flex: 1, padding: 20, overflow: "auto", display: "flex", flexDirection: "column", gap: 16 }}>
+      <main style={{ flex: 1, padding: "14px 16px", overflow: "auto", display: "flex", flexDirection: "column", gap: 14, boxSizing: "border-box", width: "100%", minWidth: 0 }}>
         {/* Project pills */}
         <div style={{ display: "flex", gap: 7, flexWrap: "wrap", alignItems: "center" }}>
           {projects.map(proj => {
@@ -3619,36 +4199,75 @@ export default function App() {
           </div>
         )}
 
-        {view === "dashboard" && <DashboardView projects={projects} people={people} onEditItem={handleEditItem} onAddDeliverable={(proj) => setNewDeliverable(proj)} onAddSubtask={(proj, del) => setNewSubtask({ project: proj, deliverable: del })} />}
+        {view === "dashboard" && <DashboardView projects={projects} people={people} onEditItem={handleEditItem} onAddDeliverable={(proj) => setNewDeliverable(proj)} onAddSubtask={(proj, del) => setNewSubtask({ project: proj, deliverable: del })} onNewProject={() => setShowNewProject(true)} />}
         {view === "timeline"  && (
           <TimelineView projects={projects} people={people} onEditItem={handleEditItem}
             onAddDeliverable={(proj) => setNewDeliverable(proj)}
             onAddSubtask={(proj, del) => setNewSubtask({ project: proj, deliverable: del })}
             onMarkDone={handleMarkDone} onSaveItem={handleSaveItem} holidays={holidays}
+            onInsertSubtask={handleInsertSubtask}
+            onReorderSubtasks={handleReorderSubtasks}
+            onDeleteSubtask={handleDeleteSubtask}
           />
         )}
         {view === "people"  && <PeopleView projects={projects} people={people} onEditItem={handleEditItem} onMarkDone={handleMarkDone} onSaveItem={handleSaveItem} holidays={holidays} />}
-        {view === "status"  && <StatusView projects={projects} people={people} statusNotes={statusNotes} onUpdateNote={handleUpdateNote} onAddDeliverable={(proj) => setNewDeliverable(proj)} onAddSubtask={(proj, del) => setNewSubtask({ project: proj, deliverable: del })} onSaveTrackOverride={(projId, delId, val) => setProjects(ps => ps.map(p => p.id !== projId ? p : { ...p, deliverables: p.deliverables.map(d => d.id !== delId ? d : { ...d, trackOverride: val }) }))} />}
+        {view === "archived" && (
+          <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+            <div style={{ fontSize: 14, fontWeight: 700, color: "#374151" }}>Archived Projects</div>
+            {archivedProjects.length === 0 && (
+              <div style={{ background: "#ffffff", border: "1px solid rgba(0,0,0,0.07)", borderRadius: 10, padding: 40, textAlign: "center", color: "#9ca3af", fontSize: 13 }}>
+                No archived projects yet. Archive a project from its ··· menu.
+              </div>
+            )}
+            {archivedProjects.map(proj => (
+              <div key={proj.id} style={{ background: "#ffffff", border: "1px solid rgba(0,0,0,0.07)", borderRadius: 10, padding: "16px 20px" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 12 }}>
+                  <div style={{ width: 10, height: 10, borderRadius: "50%", background: proj.color, opacity: 0.6 }} />
+                  <span style={{ fontSize: 15, fontWeight: 700, color: "#374151", flex: 1 }}>{proj.name}</span>
+                  {proj.client && <span style={{ fontSize: 12, color: "#6b7280" }}>{proj.client}</span>}
+                  <span style={{ fontSize: 11, color: "#9ca3af" }}>{proj.deliverables.length} deliverables</span>
+                  <button onClick={() => handleRestoreProject(proj.id)} style={{
+                    background: proj.color + "18", border: `1px solid ${proj.color}40`, borderRadius: 6,
+                    color: proj.color, padding: "5px 14px", cursor: "pointer", fontSize: 11, fontWeight: 700, fontFamily: "inherit",
+                  }}>Restore</button>
+                  <button onClick={() => handleDeleteProject(proj.id)} style={{
+                    background: "none", border: "1px solid rgba(248,113,113,0.3)", borderRadius: 6,
+                    color: "#f87171", padding: "5px 14px", cursor: "pointer", fontSize: 11, fontWeight: 700, fontFamily: "inherit",
+                  }}>Delete</button>
+                </div>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                  {proj.deliverables.map(d => (
+                    <div key={d.id} style={{ fontSize: 11, color: "#6b7280", background: "rgba(0,0,0,0.04)", borderRadius: 4, padding: "3px 10px" }}>{d.title}</div>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+        {view === "status"  && <StatusView projects={projects} people={people} statusNotes={statusNotes} onUpdateNote={handleUpdateNote} onAddDeliverable={(proj) => setNewDeliverable(proj)} onAddSubtask={(proj, del) => setNewSubtask({ project: proj, deliverable: del })} onSaveTrackOverride={(projId, delId, val) => setProjects(ps => ps.map(p => p.id !== projId ? p : { ...p, deliverables: p.deliverables.map(d => d.id !== delId ? d : { ...d, trackOverride: val }) }))} onEditItem={handleEditItem} />}
       </main>
 
       {/* ── Modals ── */}
       {showHolidays && (
         <HolidaysModal holidays={holidays} onClose={() => setShowHolidays(false)} onSave={(newHolidays) => {
           setHolidays(newHolidays);
-          // Push any task that lands on a new holiday forward
           const newHolidayDates = new Set(newHolidays.map(h => h.date));
+          const nextWorkDay = (dateStr) => {
+            let d = new Date(dateStr + "T00:00:00");
+            while (newHolidayDates.has(d.toISOString().slice(0,10)) || d.getDay()===0 || d.getDay()===6) {
+              d = new Date(d.getTime() + 86400000);
+            }
+            return d.toISOString().slice(0,10);
+          };
+          // Push any task whose start or end lands on a holiday forward, then cascade
           setProjects(projs => {
             let updated = projs;
             projs.forEach(proj => {
               proj.deliverables.forEach(del => {
                 [del, ...del.subtasks].forEach(item => {
-                  if (newHolidayDates.has(item.end)) {
-                    // Find next non-holiday day
-                    let d = new Date(item.end + "T00:00:00");
-                    while (newHolidayDates.has(d.toISOString().slice(0,10)) || d.getDay()===0 || d.getDay()===6) {
-                      d = new Date(d.getTime() + 86400000);
-                    }
-                    const newEnd = d.toISOString().slice(0,10);
+                  const newEnd   = nextWorkDay(item.end);
+                  const newStart = nextWorkDay(item.start);
+                  if (newEnd !== item.end || newStart !== item.start) {
                     updated = cascadeDates(updated, item.id, newEnd, newHolidays);
                   }
                 });
@@ -3698,6 +4317,7 @@ export default function App() {
         <NewDeliverableModal
           project={newDeliverable}
           allPeople={people}
+          savedTemplates={savedTemplates}
           onClose={() => setNewDeliverable(null)}
           onAdd={handleAddDeliverable}
         />
@@ -3717,8 +4337,15 @@ export default function App() {
           projectColor={editingItem.projectColor || "#f59e0b"}
           allItems={getSiblingItems(editingItem)}
           allPeople={people}
+          holidays={holidays}
           onClose={() => setEditingItem(null)}
           onSave={handleSaveItem}
+          onDelete={editingItem.deliverableId
+            ? () => handleDeleteSubtask(editingItem.projectId, editingItem.deliverableId, editingItem.id)
+            : editingItem.projectId
+              ? () => handleDeleteDeliverable(editingItem.projectId, editingItem.id)
+              : null
+          }
         />
       )}
     </div>
