@@ -3806,9 +3806,7 @@ function ModalFooter({ onClose, onSave, saveLabel, color }) {
 
 // --- APP ──────────────────────────────────────────────────────────────────────
 export default function App() {
-  const [projects, setProjects] = useState(initialProjects);
-  const [archivedProjects, setArchivedProjects] = useState([]);
-  const [people, setPeople] = useState(initialPeople);
+  // ── UI-only state (never persisted) ───────────────────────────────────────
   const [view, setView] = useState("timeline");
   const [editingItem, setEditingItem] = useState(null);
   const [showNewProject, setShowNewProject] = useState(false);
@@ -3816,210 +3814,389 @@ export default function App() {
   const [showTeamSettings, setShowTeamSettings] = useState(false);
   const [showSettingsMenu, setShowSettingsMenu] = useState(false);
   const [showTemplates, setShowTemplates] = useState(false);
-  const [savedTemplates, setSavedTemplates] = useState([]);
   const [showHolidays, setShowHolidays] = useState(false);
-  const [holidays, setHolidays] = useState([]);
-  const [projectMenu, setProjectMenu] = useState(null); // proj object
+  const [projectMenu, setProjectMenu] = useState(null);
   const [showArchived, setShowArchived] = useState(false);
-  const [statusNotes, setStatusNotes] = useState({});
-  const handleUpdateNote = (key, text) => setStatusNotes(n => ({ ...n, [key]: text }));
-  const [newDeliverable, setNewDeliverable] = useState(null); // project object
-  const [newSubtask, setNewSubtask] = useState(null);         // { project, deliverable }
+  const [newDeliverable, setNewDeliverable] = useState(null);
+  const [newSubtask, setNewSubtask] = useState(null);
 
-  // ── handlers ──
+  // ── Supabase helpers ───────────────────────────────────────────────────────
+  // Read URL/key from Vite env vars — set these in .env.local
+  // In Vite: these are replaced at build time by import.meta.env.*
+  // In the artifact/browser without a build step: set window.__PLANR_SUPABASE_URL__ etc.
+const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
+const SUPABASE_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
+
+  const sbReady = !!(SUPABASE_URL && SUPABASE_KEY);
+
+  // Minimal fetch wrapper around Supabase REST API (no npm package needed in artifact)
+  const sbFetch = useCallback(async (path, opts = {}) => {
+    if (!sbReady) return { data: null, error: "Supabase not configured" };
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/${path}`, {
+      headers: {
+        "apikey": SUPABASE_KEY,
+        "Authorization": `Bearer ${SUPABASE_KEY}`,
+        "Content-Type": "application/json",
+        "Prefer": opts.prefer || "return=representation",
+        ...opts.headers,
+      },
+      ...opts,
+    });
+    if (!res.ok) {
+      const text = await res.text();
+      return { data: null, error: text };
+    }
+    const text = await res.text();
+    return { data: text ? JSON.parse(text) : null, error: null };
+  }, [sbReady, SUPABASE_URL, SUPABASE_KEY]);
+
+  const sb = {
+    select: (table, query = "") => sbFetch(`${table}?${query}&order=position.asc,created_at.asc`),
+    upsert: (table, body) => sbFetch(table, { method: "POST", prefer: "resolution=merge-duplicates,return=minimal", headers: { "Prefer": "resolution=merge-duplicates,return=minimal" }, body: JSON.stringify(Array.isArray(body) ? body : [body]) }),
+    update: (table, id, body) => sbFetch(`${table}?id=eq.${id}`, { method: "PATCH", prefer: "return=minimal", headers: { "Prefer": "return=minimal" }, body: JSON.stringify(body) }),
+    updateWhere: (table, col, val, body) => sbFetch(`${table}?${col}=eq.${val}`, { method: "PATCH", prefer: "return=minimal", headers: { "Prefer": "return=minimal" }, body: JSON.stringify(body) }),
+    delete: (table, id) => sbFetch(`${table}?id=eq.${id}`, { method: "DELETE", prefer: "return=minimal", headers: { "Prefer": "return=minimal" } }),
+    deleteWhere: (table, col, val) => sbFetch(`${table}?${col}=eq.${val}`, { method: "DELETE", prefer: "return=minimal", headers: { "Prefer": "return=minimal" } }),
+  };
+
+  // ── Shape converters ───────────────────────────────────────────────────────
+  const rowToSubtask = (r) => ({
+    id: r.id, title: r.title, status: r.status, priority: r.priority,
+    department: r.department || "", start: r.start_date || "", end: r.end_date || "",
+    progress: r.progress ?? 0, dependencies: r.dependencies ?? [], assignees: r.assignees ?? [],
+  });
+  const rowToDeliverable = (r, subs) => ({
+    id: r.id, title: r.title, status: r.status, priority: r.priority,
+    department: r.department || "", start: r.start_date || "", end: r.end_date || "",
+    progress: r.progress ?? 0, dependencies: r.dependencies ?? [], assignees: r.assignees ?? [],
+    trackOverride: r.track_override || null,
+    subtasks: (subs || []).filter(s => s.deliverable_id === r.id)
+      .sort((a, b) => a.position - b.position).map(rowToSubtask),
+  });
+  const rowToProject = (r, dels, subs) => ({
+    id: r.id, name: r.name, client: r.client || "", color: r.color,
+    archived: r.archived, archivedAt: r.archived_at || null,
+    deliverables: (dels || []).filter(d => d.project_id === r.id)
+      .sort((a, b) => a.position - b.position).map(d => rowToDeliverable(d, subs)),
+  });
+  const delToRow = (d, projectId, pos = 0) => ({
+    id: d.id, project_id: projectId, title: d.title, status: d.status, priority: d.priority,
+    department: d.department || null, start_date: d.start || null, end_date: d.end || null,
+    progress: d.progress ?? 0, dependencies: d.dependencies ?? [], assignees: d.assignees ?? [],
+    track_override: d.trackOverride || null, position: pos,
+  });
+  const subToRow = (s, delId, projId, pos = 0) => ({
+    id: s.id, deliverable_id: delId, project_id: projId, title: s.title,
+    status: s.status, priority: s.priority, department: s.department || null,
+    start_date: s.start || null, end_date: s.end || null,
+    progress: s.progress ?? 0, dependencies: s.dependencies ?? [], assignees: s.assignees ?? [],
+    position: pos,
+  });
+
+  // ── Data state ────────────────────────────────────────────────────────────
+  const [projects, setProjects] = useState([]);
+  const [archivedProjects, setArchivedProjects] = useState([]);
+  const [people, setPeople] = useState([]);
+  const [holidays, setHolidays] = useState([]);
+  const [statusNotes, setStatusNotes] = useState({});
+  const [savedTemplates, setSavedTemplates] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [dbError, setDbError] = useState(null);
+  const seeded = useRef(false);
+
+  // ── Load all data ─────────────────────────────────────────────────────────
+  const loadAll = useCallback(async () => {
+    if (!sbReady) {
+      // No Supabase — fall back to in-memory defaults
+      setProjects(initialProjects);
+      setPeople(initialPeople);
+      setLoading(false);
+      return;
+    }
+    setDbError(null);
+    try {
+      const [pR, dR, sR, mR, hR, nR, tR] = await Promise.all([
+        sb.select("projects"),
+        sb.select("deliverables"),
+        sb.select("subtasks"),
+        sb.select("team_members"),
+        sb.select("holidays", "order=date.asc"),
+        sb.select("status_notes"),
+        sb.select("templates"),
+      ]);
+      for (const r of [pR, dR, sR, mR, hR, nR, tR]) {
+        if (r.error) throw new Error(r.error);
+      }
+      // Seed if empty
+      if (!seeded.current && (!pR.data || pR.data.length === 0)) {
+        seeded.current = true;
+        await seedDefaults();
+        return loadAll();
+      }
+      seeded.current = true;
+      const active = (pR.data || []).filter(p => !p.archived);
+      const archived = (pR.data || []).filter(p => p.archived);
+      setProjects(active.map(p => rowToProject(p, dR.data, sR.data)));
+      setArchivedProjects(archived.map(p => rowToProject(p, dR.data, sR.data)));
+      setPeople((mR.data || []).map(p => ({ id: p.id, name: p.name, color: p.color })));
+      setHolidays((hR.data || []).map(h => ({ id: h.id, date: h.date, name: h.name })));
+      const notes = {};
+      (nR.data || []).forEach(n => { notes[`${n.project_id}::${n.deliverable_id}`] = n.note; });
+      setStatusNotes(notes);
+      setSavedTemplates((tR.data || []).map(t => ({ ...t.data, id: t.id, name: t.name })));
+    } catch (e) {
+      console.error("[PLANR]", e);
+      setDbError(e.message);
+    } finally {
+      setLoading(false);
+    }
+  }, [sbReady]);
+
+  useEffect(() => { loadAll(); }, [loadAll]);
+
+  async function seedDefaults() {
+    for (let i = 0; i < initialPeople.length; i++) {
+      await sb.upsert("team_members", { id: initialPeople[i].id, name: initialPeople[i].name, color: initialPeople[i].color, position: i });
+    }
+    for (let pi = 0; pi < initialProjects.length; pi++) {
+      const proj = initialProjects[pi];
+      await sb.upsert("projects", { id: proj.id, name: proj.name, client: proj.client || "", color: proj.color, archived: false, position: pi });
+      for (let di = 0; di < proj.deliverables.length; di++) {
+        const del = proj.deliverables[di];
+        await sb.upsert("deliverables", delToRow(del, proj.id, di));
+        for (let si = 0; si < del.subtasks.length; si++) {
+          await sb.upsert("subtasks", subToRow(del.subtasks[si], del.id, proj.id, si));
+        }
+      }
+    }
+  }
+
+  // Optimistic helper: update state immediately, sync DB, reload on error
+  const optimistic = async (setFn, dbFn) => {
+    setFn();
+    const err = await dbFn();
+    if (err) { console.error("[PLANR] write error:", err); loadAll(); }
+  };
+
+  // ── handlers ──────────────────────────────────────────────────────────────
   const handleEditItem = (item) => setEditingItem(item);
 
   const handleSaveItem = (updated) => {
-    setProjects(projs => {
+    // Date cascade logic (unchanged)
+    const doSave = (projs) => {
       const original = projs.flatMap(p => [...p.deliverables, ...p.deliverables.flatMap(d => d.subtasks)]).find(x => x.id === updated.id);
       const holidaySet = new Set(holidays.map(h => h.date));
-
-      // Helper: advance a date past weekends and holidays
       const nextWorkDay = (dateStr) => {
         if (!dateStr) return dateStr;
         let d = new Date(dateStr + "T00:00:00");
-        while (d.getDay() === 0 || d.getDay() === 6 || holidaySet.has(d.toISOString().slice(0,10))) {
-          d = new Date(d.getTime() + 86400000);
-        }
+        while (d.getDay() === 0 || d.getDay() === 6 || holidaySet.has(d.toISOString().slice(0,10))) d = new Date(d.getTime() + 86400000);
         return d.toISOString().slice(0,10);
       };
-
-      // Sanitize start/end — push off weekends and holidays automatically
-      const cleanStart = nextWorkDay(updated.start);
-      const cleanEnd   = nextWorkDay(updated.end);
-      const sanitized  = { ...updated, start: cleanStart, end: cleanEnd };
-
-      // Apply the direct update
+      const sanitized = { ...updated, start: nextWorkDay(updated.start), end: nextWorkDay(updated.end) };
       let newProjs = projs.map(proj => {
         if (proj.id !== sanitized.projectId) return proj;
-        return {
-          ...proj,
-          deliverables: proj.deliverables.map(del => {
-            if (del.id === sanitized.id) return { ...del, ...sanitized };
-            return { ...del, subtasks: del.subtasks.map(s => s.id === sanitized.id ? { ...s, ...sanitized } : s) };
-          }),
-        };
+        return { ...proj, deliverables: proj.deliverables.map(del => {
+          if (del.id === sanitized.id) return { ...del, ...sanitized };
+          return { ...del, subtasks: del.subtasks.map(s => s.id === sanitized.id ? { ...s, ...sanitized } : s) };
+        })};
       });
-
-      // Cascade if end date changed
-      if (original && original.end !== sanitized.end) {
-        newProjs = cascadeDates(newProjs, sanitized.id, sanitized.end, holidays);
-      }
-
-      // If dependencies were added, push THIS item's start to after its last predecessor
-      const newDeps = sanitized.dependencies || [];
-      const oldDeps = original ? (original.dependencies || []) : [];
+      if (original && original.end !== sanitized.end) newProjs = cascadeDates(newProjs, sanitized.id, sanitized.end, holidays);
+      const newDeps = sanitized.dependencies || [], oldDeps = original ? (original.dependencies || []) : [];
       const addedDeps = newDeps.filter(d => !oldDeps.includes(d));
       if (addedDeps.length > 0) {
         const allItems = newProjs.flatMap(p => [...p.deliverables, ...p.deliverables.flatMap(d => d.subtasks)]);
-        const predEnds = addedDeps.map(depId => allItems.find(x => x.id === depId)).filter(Boolean).map(x => x.end);
+        const predEnds = addedDeps.map(id => allItems.find(x => x.id === id)).filter(Boolean).map(x => x.end);
         if (predEnds.length > 0) {
           const latestPred = predEnds.sort().pop();
-          const dayAfter = new Date(parseDate(latestPred).getTime() + 86400000).toISOString().slice(0,10);
-          let ns = new Date(dayAfter + "T00:00:00");
-          while (ns.getDay() === 0 || ns.getDay() === 6 || holidaySet.has(ns.toISOString().slice(0,10))) {
-            ns = new Date(ns.getTime() + 86400000);
-          }
+          let ns = new Date(new Date(parseDate(latestPred).getTime() + 86400000).toISOString().slice(0,10) + "T00:00:00");
+          while (ns.getDay() === 0 || ns.getDay() === 6 || holidaySet.has(ns.toISOString().slice(0,10))) ns = new Date(ns.getTime() + 86400000);
           const newStart = ns.toISOString().slice(0,10);
           const dur = Math.max(1, durDays(sanitized.start, sanitized.end));
-          let ne = new Date(ns.getTime());
-          let added = 0;
-          while (added < dur - 1) {
-            ne = new Date(ne.getTime() + 86400000);
-            if (ne.getDay() !== 0 && ne.getDay() !== 6 && !holidaySet.has(ne.toISOString().slice(0,10))) added++;
-          }
+          let ne = new Date(ns.getTime()); let added = 0;
+          while (added < dur - 1) { ne = new Date(ne.getTime() + 86400000); if (ne.getDay() !== 0 && ne.getDay() !== 6 && !holidaySet.has(ne.toISOString().slice(0,10))) added++; }
           const newEnd = ne.toISOString().slice(0,10);
           if (newStart !== sanitized.start || newEnd !== sanitized.end) {
-            newProjs = newProjs.map(proj => {
-              if (proj.id !== sanitized.projectId) return proj;
-              return {
-                ...proj,
-                deliverables: proj.deliverables.map(del => {
-                  if (del.id === sanitized.id) return { ...del, start: newStart, end: newEnd };
-                  return { ...del, subtasks: del.subtasks.map(s => s.id === sanitized.id ? { ...s, start: newStart, end: newEnd } : s) };
-                }),
-              };
-            });
+            newProjs = newProjs.map(proj => { if (proj.id !== sanitized.projectId) return proj;
+              return { ...proj, deliverables: proj.deliverables.map(del => { if (del.id === sanitized.id) return { ...del, start: newStart, end: newEnd };
+                return { ...del, subtasks: del.subtasks.map(s => s.id === sanitized.id ? { ...s, start: newStart, end: newEnd } : s) }; }) }; });
             newProjs = cascadeDates(newProjs, sanitized.id, newEnd, holidays);
           }
         }
       }
       return newProjs;
-    });
+    };
+
+    optimistic(
+      () => setProjects(ps => doSave(ps)),
+      async () => {
+        const newProjs = doSave(projects);
+        const item = newProjs.flatMap(p => [...p.deliverables, ...p.deliverables.flatMap(d => d.subtasks)]).find(x => x.id === updated.id);
+        if (!item) return null;
+        if (updated.deliverableId) {
+          const proj = newProjs.find(p => p.id === updated.projectId);
+          const del = proj?.deliverables.find(d => d.id === updated.deliverableId);
+          const pos = del?.subtasks.findIndex(s => s.id === updated.id) ?? 0;
+          const { error } = await sb.upsert("subtasks", subToRow(item, updated.deliverableId, updated.projectId, pos));
+          return error;
+        } else {
+          const proj = newProjs.find(p => p.id === updated.projectId);
+          const pos = proj?.deliverables.findIndex(d => d.id === updated.id) ?? 0;
+          const { error } = await sb.upsert("deliverables", delToRow(item, updated.projectId, pos));
+          return error;
+        }
+      }
+    );
   };
 
-  const handleAddProject = (proj) => setProjects(p => [...p, proj]);
+  const handleAddProject = (proj) => optimistic(
+    () => setProjects(ps => [...ps, { ...proj, deliverables: [] }]),
+    async () => {
+      const { error } = await sb.upsert("projects", { id: proj.id, name: proj.name, client: proj.client || "", color: proj.color, archived: false, position: projects.length });
+      return error;
+    }
+  );
 
   const handleArchiveProject = (id) => {
     const proj = projects.find(p => p.id === id);
-    if (proj) { setArchivedProjects(a => [...a, { ...proj, archivedAt: new Date().toISOString() }]); }
-    setProjects(ps => ps.filter(p => p.id !== id));
+    if (!proj) return;
+    const archived_at = new Date().toISOString();
+    optimistic(
+      () => { setProjects(ps => ps.filter(p => p.id !== id)); setArchivedProjects(a => [...a, { ...proj, archivedAt: archived_at }]); },
+      async () => { const { error } = await sb.update("projects", id, { archived: true, archived_at }); return error; }
+    );
   };
+
   const handleRestoreProject = (id) => {
     const proj = archivedProjects.find(p => p.id === id);
-    if (proj) { const { archivedAt, ...rest } = proj; setProjects(ps => [...ps, rest]); }
-    setArchivedProjects(a => a.filter(p => p.id !== id));
+    if (!proj) return;
+    const { archivedAt, ...rest } = proj;
+    optimistic(
+      () => { setArchivedProjects(a => a.filter(p => p.id !== id)); setProjects(ps => [...ps, { ...rest, archived: false }]); },
+      async () => { const { error } = await sb.update("projects", id, { archived: false, archived_at: null }); return error; }
+    );
   };
-  const handleDeleteProject = (id) => {
-    setProjects(ps => ps.filter(p => p.id !== id));
-    setArchivedProjects(a => a.filter(p => p.id !== id));
-  };
-  const handleRenameProject = (id, name, client) => {
-    setProjects(ps => ps.map(p => p.id !== id ? p : { ...p, name, client }));
-  };
+
+  const handleDeleteProject = (id) => optimistic(
+    () => { setProjects(ps => ps.filter(p => p.id !== id)); setArchivedProjects(a => a.filter(p => p.id !== id)); },
+    async () => { const { error } = await sb.delete("projects", id); return error; }
+  );
+
+  const handleRenameProject = (id, name, client) => optimistic(
+    () => setProjects(ps => ps.map(p => p.id !== id ? p : { ...p, name, client })),
+    async () => { const { error } = await sb.update("projects", id, { name, client }); return error; }
+  );
+
   const handleSaveAsTemplate = (proj) => {
-    const tpl = {
-      id: "tpl_saved_" + Date.now(),
-      name: proj.name + " (template)",
-      icon: "📋",
-      deliverables: proj.deliverables.map(d => ({
-        title: d.title,
-        subtasks: d.subtasks.map(s => s.title),
-      })),
-    };
+    const tpl = { id: "tpl_saved_" + Date.now(), name: proj.name + " (template)", icon: "📋", deliverables: proj.deliverables.map(d => ({ title: d.title, subtasks: d.subtasks.map(s => s.title) })) };
     setSavedTemplates(t => [...t, tpl]);
+    sb.upsert("templates", { id: tpl.id, name: tpl.name, data: tpl });
     alert(`"${proj.name}" saved as a template!`);
   };
 
-  const handleAddDeliverable = (projectId, del) => {
-    setProjects(projs => projs.map(p => p.id !== projectId ? p : { ...p, deliverables: [...p.deliverables, del] }));
-  };
+  const handleAddDeliverable = (projectId, del) => optimistic(
+    () => setProjects(projs => projs.map(p => p.id !== projectId ? p : { ...p, deliverables: [...p.deliverables, del] })),
+    async () => {
+      const pos = projects.find(p => p.id === projectId)?.deliverables.length ?? 0;
+      const { error } = await sb.upsert("deliverables", delToRow(del, projectId, pos));
+      if (error) return error;
+      for (let i = 0; i < (del.subtasks || []).length; i++) {
+        const { error: se } = await sb.upsert("subtasks", subToRow(del.subtasks[i], del.id, projectId, i));
+        if (se) return se;
+      }
+      return null;
+    }
+  );
 
-  const handleAddSubtask = (projectId, deliverableId, sub) => {
-    setProjects(projs => projs.map(p => p.id !== projectId ? p : {
-      ...p,
-      deliverables: p.deliverables.map(d => d.id !== deliverableId ? d : { ...d, subtasks: [...d.subtasks, sub] }),
-    }));
-  };
+  const handleAddSubtask = (projectId, deliverableId, sub) => optimistic(
+    () => setProjects(projs => projs.map(p => p.id !== projectId ? p : { ...p, deliverables: p.deliverables.map(d => d.id !== deliverableId ? d : { ...d, subtasks: [...d.subtasks, sub] }) })),
+    async () => {
+      const del = projects.find(p => p.id === projectId)?.deliverables.find(d => d.id === deliverableId);
+      const pos = del?.subtasks.length ?? 0;
+      const { error } = await sb.upsert("subtasks", subToRow(sub, deliverableId, projectId, pos));
+      return error;
+    }
+  );
 
-  const handleDeleteDeliverable = (projectId, deliverableId) => {
-    setProjects(projs => projs.map(p => p.id !== projectId ? p : {
-      ...p, deliverables: p.deliverables.filter(d => d.id !== deliverableId),
-    }));
-  };
+  const handleDeleteDeliverable = (projectId, deliverableId) => optimistic(
+    () => setProjects(projs => projs.map(p => p.id !== projectId ? p : { ...p, deliverables: p.deliverables.filter(d => d.id !== deliverableId) })),
+    async () => { const { error } = await sb.delete("deliverables", deliverableId); return error; }
+  );
 
-  const handleDeleteSubtask = (projectId, deliverableId, subtaskId) => {
-    setProjects(projs => projs.map(p => p.id !== projectId ? p : {
-      ...p,
-      deliverables: p.deliverables.map(d => d.id !== deliverableId ? d : {
-        ...d, subtasks: d.subtasks.filter(s => s.id !== subtaskId),
-      }),
-    }));
-  };
+  const handleDeleteSubtask = (projectId, deliverableId, subtaskId) => optimistic(
+    () => setProjects(projs => projs.map(p => p.id !== projectId ? p : { ...p, deliverables: p.deliverables.map(d => d.id !== deliverableId ? d : { ...d, subtasks: d.subtasks.filter(s => s.id !== subtaskId) }) })),
+    async () => { const { error } = await sb.delete("subtasks", subtaskId); return error; }
+  );
 
-  const handleInsertSubtask = (projectId, deliverableId, afterSubtaskId, newSub) => {
-    setProjects(projs => projs.map(p => p.id !== projectId ? p : {
-      ...p,
-      deliverables: p.deliverables.map(d => {
-        if (d.id !== deliverableId) return d;
-        const idx = afterSubtaskId ? d.subtasks.findIndex(s => s.id === afterSubtaskId) : -1;
-        const updated = [...d.subtasks];
-        updated.splice(idx + 1, 0, newSub);
-        return { ...d, subtasks: updated };
-      }),
-    }));
-  };
+  const handleInsertSubtask = (projectId, deliverableId, afterSubtaskId, newSub) => optimistic(
+    () => setProjects(projs => projs.map(p => p.id !== projectId ? p : { ...p, deliverables: p.deliverables.map(d => {
+      if (d.id !== deliverableId) return d;
+      const idx = afterSubtaskId ? d.subtasks.findIndex(s => s.id === afterSubtaskId) : -1;
+      const updated = [...d.subtasks]; updated.splice(idx + 1, 0, newSub);
+      return { ...d, subtasks: updated };
+    }) })),
+    async () => {
+      const { error } = await sb.upsert("subtasks", subToRow(newSub, deliverableId, projectId, 0));
+      if (error) return error;
+      // Re-index positions
+      const del = projects.find(p => p.id === projectId)?.deliverables.find(d => d.id === deliverableId);
+      if (!del) return null;
+      const reordered = [...del.subtasks];
+      const afterIdx = afterSubtaskId ? reordered.findIndex(s => s.id === afterSubtaskId) : -1;
+      reordered.splice(afterIdx + 1, 0, newSub);
+      await Promise.all(reordered.map((s, i) => sb.update("subtasks", s.id, { position: i })));
+      return null;
+    }
+  );
 
-  const handleReorderSubtasks = (projectId, deliverableId, newOrder) => {
-    setProjects(projs => projs.map(p => p.id !== projectId ? p : {
-      ...p,
-      deliverables: p.deliverables.map(d => d.id !== deliverableId ? d : { ...d, subtasks: newOrder }),
-    }));
-  };
+  const handleReorderSubtasks = (projectId, deliverableId, newOrder) => optimistic(
+    () => setProjects(projs => projs.map(p => p.id !== projectId ? p : { ...p, deliverables: p.deliverables.map(d => d.id !== deliverableId ? d : { ...d, subtasks: newOrder }) })),
+    async () => {
+      await Promise.all(newOrder.map((s, i) => sb.update("subtasks", s.id, { position: i })));
+      return null;
+    }
+  );
 
   const handleMarkDone = (projectId, deliverableId, subtaskId) => {
-    setProjects(projs => projs.map(proj => {
-      if (proj.id !== projectId) return proj;
-      return {
-        ...proj,
-        deliverables: proj.deliverables.map(del => {
-          if (subtaskId) {
-            // toggling a subtask
-            if (del.id !== deliverableId) return del;
-            return {
-              ...del,
-              subtasks: del.subtasks.map(s => s.id !== subtaskId ? s : {
-                ...s,
-                status: s.status === "Done" ? "In Progress" : "Done",
-                progress: s.status === "Done" ? 0 : 100,
-              }),
-            };
-          } else {
-            // toggling a deliverable
-            if (del.id !== deliverableId) return del;
-            const next = del.status === "Done" ? "In Progress" : "Done";
-            return {
-              ...del,
-              status: next,
-              progress: next === "Done" ? 100 : del.progress,
-              subtasks: next === "Done"
-                ? del.subtasks.map(s => ({ ...s, status: "Done", progress: 100 }))
-                : del.subtasks,
-            };
-          }
-        }),
-      };
-    }));
+    const proj = projects.find(p => p.id === projectId);
+    const del = proj?.deliverables.find(d => d.id === deliverableId);
+    if (subtaskId) {
+      const sub = del?.subtasks.find(s => s.id === subtaskId);
+      const next = sub?.status === "Done" ? "In Progress" : "Done";
+      const newProg = next === "Done" ? 100 : 0;
+      optimistic(
+        () => setProjects(ps => ps.map(p => p.id !== projectId ? p : { ...p, deliverables: p.deliverables.map(d => d.id !== deliverableId ? d : { ...d, subtasks: d.subtasks.map(s => s.id !== subtaskId ? s : { ...s, status: next, progress: newProg }) }) })),
+        async () => { const { error } = await sb.update("subtasks", subtaskId, { status: next, progress: newProg }); return error; }
+      );
+    } else {
+      const next = del?.status === "Done" ? "In Progress" : "Done";
+      const newProg = next === "Done" ? 100 : del?.progress ?? 0;
+      optimistic(
+        () => setProjects(ps => ps.map(p => p.id !== projectId ? p : { ...p, deliverables: p.deliverables.map(d => d.id !== deliverableId ? d : { ...d, status: next, progress: newProg, subtasks: next === "Done" ? d.subtasks.map(s => ({ ...s, status: "Done", progress: 100 })) : d.subtasks }) })),
+        async () => {
+          const { error } = await sb.update("deliverables", deliverableId, { status: next, progress: newProg });
+          if (error) return error;
+          if (next === "Done") { const { error: se } = await sb.updateWhere("subtasks", "deliverable_id", deliverableId, { status: "Done", progress: 100 }); return se; }
+          return null;
+        }
+      );
+    }
+  };
+
+  const handleUpdateNote = (key, text) => {
+    const [projectId, deliverableId] = key.split("::");
+    optimistic(
+      () => setStatusNotes(n => ({ ...n, [key]: text })),
+      async () => {
+        const { data } = await sb.select("status_notes", `project_id=eq.${projectId}&deliverable_id=eq.${deliverableId}&select=id`);
+        if (data && data.length > 0) {
+          const { error } = await sb.update("status_notes", data[0].id, { note: text });
+          return error;
+        } else {
+          const { error } = await sb.upsert("status_notes", { project_id: projectId, deliverable_id: deliverableId, note: text });
+          return error;
+        }
+      }
+    );
   };
 
   const getSiblingItems = (item) => {
@@ -4040,6 +4217,23 @@ export default function App() {
     { id: "status",    label: "Status",    icon: "◉" },
     { id: "archived",  label: "Archive",   icon: "⊡" },
   ];
+
+  // Loading / error screens
+  if (loading) return (
+    <div style={{ minHeight: "100vh", background: "#f5f6f8", display: "flex", alignItems: "center", justifyContent: "center", flexDirection: "column", gap: 16, fontFamily: "Arial, Helvetica, sans-serif" }}>
+      <div style={{ width: 44, height: 44, background: "#f59e0b", borderRadius: 10, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 22, fontWeight: 900, color: "#000" }}>P</div>
+      <div style={{ fontSize: 13, color: "#6b7280" }}>Loading your workspace…</div>
+      {!sbReady && <div style={{ fontSize: 11, color: "#9ca3af", maxWidth: 340, textAlign: "center" }}>Tip: set <code>window.__PLANR_SUPABASE_URL__</code> and <code>window.__PLANR_SUPABASE_KEY__</code> to connect Supabase.</div>}
+    </div>
+  );
+
+  if (dbError) return (
+    <div style={{ minHeight: "100vh", background: "#f5f6f8", display: "flex", alignItems: "center", justifyContent: "center", flexDirection: "column", gap: 12, fontFamily: "Arial, Helvetica, sans-serif" }}>
+      <div style={{ fontSize: 14, color: "#f87171", fontWeight: 700 }}>Could not connect to Supabase</div>
+      <div style={{ fontSize: 12, color: "#9ca3af", maxWidth: 400, textAlign: "center" }}>{dbError}</div>
+      <button onClick={loadAll} style={{ background: "#f59e0b", border: "none", borderRadius: 6, padding: "8px 20px", cursor: "pointer", fontWeight: 700, fontSize: 13 }}>Retry</button>
+    </div>
+  );
 
   return (
     <div style={{ minHeight: "100vh", background: "#f5f6f8", color: "#111827", fontFamily: "Arial, Helvetica, sans-serif", display: "flex", flexDirection: "column", width: "100vw", overflowX: "hidden" }}>
@@ -4249,8 +4443,14 @@ export default function App() {
 
       {/* ── Modals ── */}
       {showHolidays && (
-        <HolidaysModal holidays={holidays} onClose={() => setShowHolidays(false)} onSave={(newHolidays) => {
+        <HolidaysModal holidays={holidays} onClose={() => setShowHolidays(false)} onSave={async (newHolidays) => {
           setHolidays(newHolidays);
+          setShowHolidays(false);
+          // Persist to Supabase
+          if (sbReady) {
+            await fetch(`${SUPABASE_URL}/rest/v1/holidays?id=neq.00000000`, { method: "DELETE", headers: { apikey: SUPABASE_KEY, Authorization: `Bearer ${SUPABASE_KEY}`, "Prefer": "return=minimal" } });
+            for (const h of newHolidays) { await sb.upsert("holidays", { date: h.date, name: h.name }); }
+          }
           const newHolidayDates = new Set(newHolidays.map(h => h.date));
           const nextWorkDay = (dateStr) => {
             let d = new Date(dateStr + "T00:00:00");
@@ -4278,7 +4478,13 @@ export default function App() {
         }} />
       )}
       {showTeamSettings && (
-        <TeamSettingsModal people={people} onClose={() => setShowTeamSettings(false)} onSave={setPeople} />
+        <TeamSettingsModal people={people} onClose={() => setShowTeamSettings(false)} onSave={async (newPeople) => {
+            setPeople(newPeople);
+            // Upsert all members
+            for (let i = 0; i < newPeople.length; i++) {
+              await sb.upsert("team_members", { id: newPeople[i].id, name: newPeople[i].name, color: newPeople[i].color, position: i });
+            }
+          }} />
       )}
       {showTemplates && (
         <TemplatesModal
