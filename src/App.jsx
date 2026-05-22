@@ -3805,6 +3805,99 @@ function ModalFooter({ onClose, onSave, saveLabel, color }) {
 }
 
 // --- APP ──────────────────────────────────────────────────────────────────────
+// ─── SUPABASE — module-level, no stale closures ───────────────────────────
+// In your Vite app replace the two lines below with:
+//   const SB_URL = import.meta.env.VITE_SUPABASE_URL
+//   const SB_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY
+const SB_URL = import.meta.env.VITE_SUPABASE_URL;
+const SB_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
+const SB_READY = !!(SB_URL && SB_KEY);
+
+async function sbFetch(path, opts = {}) {
+  if (!SB_READY) {
+    console.warn("[PLANR] sbFetch called but Supabase is not configured. Path:", path);
+    return { data: null, error: "Supabase not configured" };
+  }
+  const { headers: extraHeaders, prefer, ...restOpts } = opts;
+  const url = `${SB_URL}/rest/v1/${path}`;
+  console.log("[PLANR]", (opts.method || "GET"), url.replace(SB_URL, ""));
+  try {
+    const res = await fetch(url, {
+      ...restOpts,
+      headers: {
+        "apikey":         SB_KEY,
+        "Authorization":  `Bearer ${SB_KEY}`,
+        "Content-Type":   "application/json",
+        "Prefer":         prefer || "return=representation",
+        ...(extraHeaders || {}),
+      },
+    });
+    if (!res.ok) {
+      const text = await res.text();
+      console.error("[PLANR] HTTP", res.status, path, "→", text.slice(0, 200));
+      return { data: null, error: text };
+    }
+    const text = await res.text();
+    return { data: text ? JSON.parse(text) : null, error: null };
+  } catch (e) {
+    console.error("[PLANR] fetch threw:", e.message, "path:", path);
+    return { data: null, error: e.message };
+  }
+}
+
+const sb = {
+  select:      (table, query = "")      => sbFetch(query ? `${table}?${query}` : table),
+  upsert:      (table, body)            => sbFetch(table, { method: "POST",   prefer: "resolution=merge-duplicates,return=minimal", body: JSON.stringify(Array.isArray(body) ? body : [body]) }),
+  update:      (table, id, body)        => sbFetch(`${table}?id=eq.${encodeURIComponent(id)}`, { method: "PATCH",  prefer: "return=minimal", body: JSON.stringify(body) }),
+  updateWhere: (table, col, val, body)  => sbFetch(`${table}?${col}=eq.${encodeURIComponent(val)}`, { method: "PATCH",  prefer: "return=minimal", body: JSON.stringify(body) }),
+  delete:      (table, id)              => sbFetch(`${table}?id=eq.${encodeURIComponent(id)}`, { method: "DELETE", prefer: "return=minimal" }),
+  deleteWhere: (table, col, val)        => sbFetch(`${table}?${col}=eq.${encodeURIComponent(val)}`, { method: "DELETE", prefer: "return=minimal" }),
+};
+
+// ─── SHAPE CONVERTERS — module-level pure functions ───────────────────────
+function rowToSubtask(r) {
+  return {
+    id: r.id, title: r.title, status: r.status, priority: r.priority,
+    department: r.department || "", start: r.start_date || "", end: r.end_date || "",
+    progress: r.progress ?? 0, dependencies: r.dependencies ?? [], assignees: r.assignees ?? [],
+  };
+}
+function rowToDeliverable(r, subs) {
+  return {
+    id: r.id, title: r.title, status: r.status, priority: r.priority,
+    department: r.department || "", start: r.start_date || "", end: r.end_date || "",
+    progress: r.progress ?? 0, dependencies: r.dependencies ?? [], assignees: r.assignees ?? [],
+    trackOverride: r.track_override || null,
+    subtasks: (subs || []).filter(s => s.deliverable_id === r.id)
+      .sort((a, b) => a.position - b.position).map(rowToSubtask),
+  };
+}
+function rowToProject(r, dels, subs) {
+  return {
+    id: r.id, name: r.name, client: r.client || "", color: r.color,
+    archived: r.archived, archivedAt: r.archived_at || null,
+    deliverables: (dels || []).filter(d => d.project_id === r.id)
+      .sort((a, b) => a.position - b.position).map(d => rowToDeliverable(d, subs)),
+  };
+}
+function delToRow(d, projectId, pos = 0) {
+  return {
+    id: d.id, project_id: projectId, title: d.title, status: d.status, priority: d.priority,
+    department: d.department || null, start_date: d.start || null, end_date: d.end || null,
+    progress: d.progress ?? 0, dependencies: d.dependencies ?? [], assignees: d.assignees ?? [],
+    track_override: d.trackOverride || null, position: pos,
+  };
+}
+function subToRow(s, delId, projId, pos = 0) {
+  return {
+    id: s.id, deliverable_id: delId, project_id: projId, title: s.title,
+    status: s.status, priority: s.priority, department: s.department || null,
+    start_date: s.start || null, end_date: s.end || null,
+    progress: s.progress ?? 0, dependencies: s.dependencies ?? [], assignees: s.assignees ?? [],
+    position: pos,
+  };
+}
+
 export default function App() {
   // ── UI-only state (never persisted) ───────────────────────────────────────
   const [view, setView] = useState("timeline");
@@ -3820,79 +3913,6 @@ export default function App() {
   const [newDeliverable, setNewDeliverable] = useState(null);
   const [newSubtask, setNewSubtask] = useState(null);
 
-  // ── Supabase helpers ───────────────────────────────────────────────────────
-  // Read URL/key from Vite env vars — set these in .env.local
-  // In Vite: these are replaced at build time by import.meta.env.*
-  // In the artifact/browser without a build step: set window.__PLANR_SUPABASE_URL__ etc.
-const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
-const SUPABASE_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
-
-  const sbReady = !!(SUPABASE_URL && SUPABASE_KEY);
-
-  // Minimal fetch wrapper around Supabase REST API (no npm package needed in artifact)
-  const sbFetch = useCallback(async (path, opts = {}) => {
-    if (!sbReady) return { data: null, error: "Supabase not configured" };
-    const res = await fetch(`${SUPABASE_URL}/rest/v1/${path}`, {
-      headers: {
-        "apikey": SUPABASE_KEY,
-        "Authorization": `Bearer ${SUPABASE_KEY}`,
-        "Content-Type": "application/json",
-        "Prefer": opts.prefer || "return=representation",
-        ...opts.headers,
-      },
-      ...opts,
-    });
-    if (!res.ok) {
-      const text = await res.text();
-      return { data: null, error: text };
-    }
-    const text = await res.text();
-    return { data: text ? JSON.parse(text) : null, error: null };
-  }, [sbReady, SUPABASE_URL, SUPABASE_KEY]);
-
-  const sb = {
-    select: (table, query = "") => sbFetch(`${table}?${query}&order=position.asc,created_at.asc`),
-    upsert: (table, body) => sbFetch(table, { method: "POST", prefer: "resolution=merge-duplicates,return=minimal", headers: { "Prefer": "resolution=merge-duplicates,return=minimal" }, body: JSON.stringify(Array.isArray(body) ? body : [body]) }),
-    update: (table, id, body) => sbFetch(`${table}?id=eq.${id}`, { method: "PATCH", prefer: "return=minimal", headers: { "Prefer": "return=minimal" }, body: JSON.stringify(body) }),
-    updateWhere: (table, col, val, body) => sbFetch(`${table}?${col}=eq.${val}`, { method: "PATCH", prefer: "return=minimal", headers: { "Prefer": "return=minimal" }, body: JSON.stringify(body) }),
-    delete: (table, id) => sbFetch(`${table}?id=eq.${id}`, { method: "DELETE", prefer: "return=minimal", headers: { "Prefer": "return=minimal" } }),
-    deleteWhere: (table, col, val) => sbFetch(`${table}?${col}=eq.${val}`, { method: "DELETE", prefer: "return=minimal", headers: { "Prefer": "return=minimal" } }),
-  };
-
-  // ── Shape converters ───────────────────────────────────────────────────────
-  const rowToSubtask = (r) => ({
-    id: r.id, title: r.title, status: r.status, priority: r.priority,
-    department: r.department || "", start: r.start_date || "", end: r.end_date || "",
-    progress: r.progress ?? 0, dependencies: r.dependencies ?? [], assignees: r.assignees ?? [],
-  });
-  const rowToDeliverable = (r, subs) => ({
-    id: r.id, title: r.title, status: r.status, priority: r.priority,
-    department: r.department || "", start: r.start_date || "", end: r.end_date || "",
-    progress: r.progress ?? 0, dependencies: r.dependencies ?? [], assignees: r.assignees ?? [],
-    trackOverride: r.track_override || null,
-    subtasks: (subs || []).filter(s => s.deliverable_id === r.id)
-      .sort((a, b) => a.position - b.position).map(rowToSubtask),
-  });
-  const rowToProject = (r, dels, subs) => ({
-    id: r.id, name: r.name, client: r.client || "", color: r.color,
-    archived: r.archived, archivedAt: r.archived_at || null,
-    deliverables: (dels || []).filter(d => d.project_id === r.id)
-      .sort((a, b) => a.position - b.position).map(d => rowToDeliverable(d, subs)),
-  });
-  const delToRow = (d, projectId, pos = 0) => ({
-    id: d.id, project_id: projectId, title: d.title, status: d.status, priority: d.priority,
-    department: d.department || null, start_date: d.start || null, end_date: d.end || null,
-    progress: d.progress ?? 0, dependencies: d.dependencies ?? [], assignees: d.assignees ?? [],
-    track_override: d.trackOverride || null, position: pos,
-  });
-  const subToRow = (s, delId, projId, pos = 0) => ({
-    id: s.id, deliverable_id: delId, project_id: projId, title: s.title,
-    status: s.status, priority: s.priority, department: s.department || null,
-    start_date: s.start || null, end_date: s.end || null,
-    progress: s.progress ?? 0, dependencies: s.dependencies ?? [], assignees: s.assignees ?? [],
-    position: pos,
-  });
-
   // ── Data state ────────────────────────────────────────────────────────────
   const [projects, setProjects] = useState([]);
   const [archivedProjects, setArchivedProjects] = useState([]);
@@ -3906,7 +3926,7 @@ const SUPABASE_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
 
   // ── Load all data ─────────────────────────────────────────────────────────
   const loadAll = useCallback(async () => {
-    if (!sbReady) {
+    if (!SB_READY) {
       // No Supabase — fall back to in-memory defaults
       setProjects(initialProjects);
       setPeople(initialPeople);
@@ -3916,13 +3936,13 @@ const SUPABASE_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
     setDbError(null);
     try {
       const [pR, dR, sR, mR, hR, nR, tR] = await Promise.all([
-        sb.select("projects"),
-        sb.select("deliverables"),
-        sb.select("subtasks"),
-        sb.select("team_members"),
-        sb.select("holidays", "order=date.asc"),
-        sb.select("status_notes"),
-        sb.select("templates"),
+        sb.select("projects",     "order=position.asc,created_at.asc"),
+        sb.select("deliverables", "order=position.asc,created_at.asc"),
+        sb.select("subtasks",     "order=position.asc,created_at.asc"),
+        sb.select("team_members", "order=position.asc,created_at.asc"),
+        sb.select("holidays",     "order=date.asc"),
+        sb.select("status_notes", ""),
+        sb.select("templates",    "order=created_at.asc"),
       ]);
       for (const r of [pR, dR, sR, mR, hR, nR, tR]) {
         if (r.error) throw new Error(r.error);
@@ -3950,7 +3970,7 @@ const SUPABASE_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
     } finally {
       setLoading(false);
     }
-  }, [sbReady]);
+  }, [SB_READY]);
 
   useEffect(() => { loadAll(); }, [loadAll]);
 
@@ -3972,11 +3992,11 @@ const SUPABASE_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
   }
 
   // Optimistic helper: update state immediately, sync DB, reload on error
-  const optimistic = async (setFn, dbFn) => {
+  async function optimistic(setFn, dbFn) {
     setFn();
     const err = await dbFn();
     if (err) { console.error("[PLANR] write error:", err); loadAll(); }
-  };
+  }
 
   // ── handlers ──────────────────────────────────────────────────────────────
   const handleEditItem = (item) => setEditingItem(item);
@@ -4223,7 +4243,7 @@ const SUPABASE_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
     <div style={{ minHeight: "100vh", background: "#f5f6f8", display: "flex", alignItems: "center", justifyContent: "center", flexDirection: "column", gap: 16, fontFamily: "Arial, Helvetica, sans-serif" }}>
       <div style={{ width: 44, height: 44, background: "#f59e0b", borderRadius: 10, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 22, fontWeight: 900, color: "#000" }}>P</div>
       <div style={{ fontSize: 13, color: "#6b7280" }}>Loading your workspace…</div>
-      {!sbReady && <div style={{ fontSize: 11, color: "#9ca3af", maxWidth: 340, textAlign: "center" }}>Tip: set <code>window.__PLANR_SUPABASE_URL__</code> and <code>window.__PLANR_SUPABASE_KEY__</code> to connect Supabase.</div>}
+      {!SB_READY && <div style={{ fontSize: 11, color: "#9ca3af", maxWidth: 340, textAlign: "center" }}>Tip: set <code>window.__PLANR_SB_URL__</code> and <code>window.__PLANR_SB_KEY__</code> to connect Supabase.</div>}
     </div>
   );
 
@@ -4447,8 +4467,8 @@ const SUPABASE_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
           setHolidays(newHolidays);
           setShowHolidays(false);
           // Persist to Supabase
-          if (sbReady) {
-            await fetch(`${SUPABASE_URL}/rest/v1/holidays?id=neq.00000000`, { method: "DELETE", headers: { apikey: SUPABASE_KEY, Authorization: `Bearer ${SUPABASE_KEY}`, "Prefer": "return=minimal" } });
+          if (SB_READY) {
+            await sbFetch("holidays?id=neq.00000000", { method: "DELETE", prefer: "return=minimal" });
             for (const h of newHolidays) { await sb.upsert("holidays", { date: h.date, name: h.name }); }
           }
           const newHolidayDates = new Set(newHolidays.map(h => h.date));
