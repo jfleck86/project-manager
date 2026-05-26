@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect, useCallback } from "react";
+import React, { useState, useRef, useEffect, useCallback, useMemo } from "react";
 
 // --- PEOPLE ───────────────────────────────────────────────────────────────────
 const initialPeople = [
@@ -463,6 +463,20 @@ const fmtFull = (d) => d.toLocaleDateString("en-US", { month: "short", day: "num
 const fmtMonth = (d) => d.toLocaleDateString("en-US", { month: "short", year: "2-digit" });
 const durDays = (start, end) => Math.ceil((parseDate(end) - parseDate(start)) / 86400000) + 1;
 
+// Business days between two date strings (inclusive), skipping weekends + provided holidays
+function busyDays(start, end, holidaySet = new Set()) {
+  if (!start || !end) return 0;
+  let d = new Date(start + "T00:00:00");
+  const e = new Date(end + "T00:00:00");
+  let count = 0;
+  while (d <= e) {
+    const ds = d.toISOString().slice(0,10);
+    if (d.getDay() !== 0 && d.getDay() !== 6 && !holidaySet.has(ds)) count++;
+    d = new Date(d.getTime() + 86400000);
+  }
+  return Math.max(1, count);
+}
+
 const statusMeta = {
   "Not Started":      { color: "#6b7280", bg: "rgba(100,116,139,0.15)" },
   "In Progress":      { color: "#38bdf8", bg: "rgba(56,189,248,0.15)"  },
@@ -795,7 +809,7 @@ function DashboardAddButton({ projects, onAddDeliverable, onNewProject }) {
   );
 }
 
-function DashboardView({ projects, people, onEditItem, onAddDeliverable, onAddSubtask, onNewProject }) {
+function DashboardView({ projects, people, onEditItem, onAddDeliverable, onAddSubtask, onNewProject, holidays = [] }) {
   const allDeliverables = projects.flatMap(p => p.deliverables.map(d => ({ ...d, projectId: p.id, projectName: p.name, projectColor: p.color })));
   const allSubtasks = projects.flatMap(p => p.deliverables.flatMap(d => d.subtasks.map(s => ({ ...s, projectId: p.id, projectName: p.name, projectColor: p.color, deliverableId: d.id }))));
   const allItems = [...allDeliverables, ...allSubtasks];
@@ -979,7 +993,7 @@ function DashboardView({ projects, people, onEditItem, onAddDeliverable, onAddSu
                     <td style={{ padding: "10px 14px" }}><div style={{ display: "flex" }}>{d.assignees.map(id => { const p = people.find(x => x.id === id); return p ? <div key={id} style={{ marginRight: -5 }}><Avatar person={p} size={22} /></div> : null; })}</div></td>
                     <td style={{ padding: "10px 14px", fontSize: 11, color: "#6b7280" }}>{fmt(parseDate(d.start))}</td>
                     <td style={{ padding: "10px 14px", fontSize: 11, color: "#6b7280" }}>{fmt(parseDate(d.end))}</td>
-                    <td style={{ padding: "10px 14px", fontSize: 11, color: "#6b7280" }}>{durDays(d.start, d.end)}d</td>
+                    <td style={{ padding: "10px 14px", fontSize: 11, color: "#6b7280" }} title="Business days">{busyDays(d.start, d.end, new Set(holidays.map(h=>h.date)))}d</td>
                     <td style={{ padding: "10px 14px", width: 110 }}>
                       <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
                         <ProgressBar value={d.progress} color={d.projectColor} />
@@ -1016,7 +1030,7 @@ function DashboardView({ projects, people, onEditItem, onAddDeliverable, onAddSu
                       <td style={{ padding: "6px 14px" }}><div style={{ display: "flex" }}>{(sub.assignees || []).map(id => { const p = people.find(x => x.id === id); return p ? <div key={id} style={{ marginRight: -5 }}><Avatar person={p} size={20} /></div> : null; })}</div></td>
                       <td style={{ padding: "6px 14px", fontSize: 11, color: "#9ca3af" }}>{sub.start ? fmt(parseDate(sub.start)) : "—"}</td>
                       <td style={{ padding: "6px 14px", fontSize: 11, color: "#9ca3af" }}>{sub.end ? fmt(parseDate(sub.end)) : "—"}</td>
-                      <td style={{ padding: "6px 14px", fontSize: 11, color: "#9ca3af" }}>{sub.start && sub.end ? durDays(sub.start, sub.end) + "d" : "—"}</td>
+                      <td style={{ padding: "6px 14px", fontSize: 11, color: "#9ca3af" }}>{sub.start && sub.end ? busyDays(sub.start, sub.end, new Set(holidays.map(h=>h.date))) + "d" : "—"}</td>
                       <td style={{ padding: "6px 14px", width: 110 }}>
                         <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
                           <ProgressBar value={sub.progress || 0} color={d.projectColor} height={3} />
@@ -1061,7 +1075,7 @@ const TODAY = new Date("2026-05-20");
 const totalDays = Math.ceil((TIMELINE_END - TIMELINE_START) / 86400000);
 
 // Column widths for the left table
-const COL_DEFAULTS = { num: 38, title: 220, start: 96, end: 96, dur: 56, deps: 86, assignees: 96 };
+const COL_DEFAULTS = { num: 38, title: 200, start: 88, end: 88, dur: 52, deps: 100, assignees: 88, notes: 160 };
 // LEFT_W is now computed dynamically from colWidths state
 
 // Build a flat numbered index of all items across all projects
@@ -1207,7 +1221,7 @@ function dayOffset(dateStr) {
   return Math.ceil((parseDate(dateStr) - TIMELINE_START) / 86400000);
 }
 
-function TimelineView({ projects, people, onEditItem, onAddDeliverable, onAddSubtask, onMarkDone, onSaveItem, holidays = [], onInsertSubtask, onReorderSubtasks, onDeleteSubtask }) {
+function TimelineView({ projects, people, onEditItem, onAddDeliverable, onAddSubtask, onMarkDone, onSaveItem, holidays = [], onInsertSubtask, onReorderSubtasks, onDeleteSubtask, statusNotes = {}, onUpdateNote }) {
   const [collapsed, setCollapsed] = useState(() => {
     try { return JSON.parse(localStorage.getItem('planr_collapsed') || '{}'); } catch { return {}; }
   });
@@ -1310,7 +1324,7 @@ function TimelineView({ projects, people, onEditItem, onAddDeliverable, onAddSub
       <div style={{ display: "flex", borderBottom: "1px solid rgba(0,0,0,0.07)", background: "#f5f6f8", position: "sticky", top: 0, zIndex: 20 }}>
         {/* Left table header with resize handles */}
         <div style={{ width: LEFT_W, flexShrink: 0, display: "flex", borderRight: "1px solid rgba(0,0,0,0.07)" }}>
-          {[["#","num"],["Title","title"],["Start","start"],["End","end"],["Dur","dur"],["Deps","deps"],["Assigned To","assignees"]].map(([label, key]) => (
+          {[["#","num"],["Title","title"],["Start","start"],["End","end"],["Dur","dur"],["Deps","deps"],["Assigned To","assignees"],["Notes","notes"]].map(([label, key]) => (
             <div key={key} style={{ width: colWidths[key], position: "relative", padding: "10px 8px", fontSize: 10, fontWeight: 700, color: "#6b7280", letterSpacing: "0.09em", flexShrink: 0, borderRight: "1px solid rgba(0,0,0,0.05)", whiteSpace: "nowrap", overflow: "hidden", userSelect: "none" }}>
               {label.toUpperCase()}
               {/* Drag handle */}
@@ -1343,13 +1357,14 @@ function TimelineView({ projects, people, onEditItem, onAddDeliverable, onAddSub
         onMarkDone={onMarkDone} onSaveItem={onSaveItem} rowIndex={rowIndex} DAY_W={DAY_W}
         colWidths={colWidths} LEFT_W={LEFT_W} holidays={holidays}
         onInsertSubtask={onInsertSubtask} onReorderSubtasks={onReorderSubtasks} onDeleteSubtask={onDeleteSubtask}
+        statusNotes={statusNotes} onUpdateNote={onUpdateNote}
       />
     </div>
     </div>
   );
 }
 
-function TimelineBody({ projects, people, collapsed, toggle, weeks, todayOff, allItemsFlat, onEditItem, headerScrollRef, onAddDeliverable, onAddSubtask, onMarkDone, onSaveItem, rowIndex, DAY_W, colWidths, LEFT_W, holidays = [], onInsertSubtask, onReorderSubtasks, onDeleteSubtask }) {
+function TimelineBody({ projects, people, collapsed, toggle, weeks, todayOff, allItemsFlat, onEditItem, headerScrollRef, onAddDeliverable, onAddSubtask, onMarkDone, onSaveItem, rowIndex, DAY_W, colWidths, LEFT_W, holidays = [], onInsertSubtask, onReorderSubtasks, onDeleteSubtask, statusNotes = {}, onUpdateNote }) {
   const bodyRef = useRef(null);
 
   const syncScroll = (e) => {
@@ -1381,7 +1396,8 @@ function TimelineBody({ projects, people, collapsed, toggle, weeks, todayOff, al
             weeks={weeks} todayOff={todayOff} allItemsFlat={allItemsFlat} onEditItem={onEditItem}
             onAddDeliverable={onAddDeliverable} onAddSubtask={onAddSubtask} onMarkDone={onMarkDone}
             onSaveItem={onSaveItem} rowIndex={rowIndex} DAY_W={DAY_W} colWidths={colWidths} LEFT_W={LEFT_W}
-            onInsertSubtask={onInsertSubtask} onReorderSubtasks={onReorderSubtasks} onDeleteSubtask={onDeleteSubtask} />
+            onInsertSubtask={onInsertSubtask} onReorderSubtasks={onReorderSubtasks} onDeleteSubtask={onDeleteSubtask}
+            statusNotes={statusNotes} onUpdateNote={onUpdateNote} holidays={holidays} />
         ))}
         {/* Today footer */}
         <div style={{ display: "flex", height: 22, background: "#e8eaee", borderTop: "1px solid rgba(0,0,0,0.06)" }}>
@@ -1395,7 +1411,7 @@ function TimelineBody({ projects, people, collapsed, toggle, weeks, todayOff, al
   );
 }
 
-function ProjectSection({ proj, people, collapsed, toggle, weeks, todayOff, allItemsFlat, onEditItem, onAddDeliverable, onAddSubtask, onMarkDone, onSaveItem, rowIndex, DAY_W, colWidths, LEFT_W, onInsertSubtask, onReorderSubtasks, onDeleteSubtask }) {
+function ProjectSection({ proj, people, collapsed, toggle, weeks, todayOff, allItemsFlat, onEditItem, onAddDeliverable, onAddSubtask, onMarkDone, onSaveItem, rowIndex, DAY_W, colWidths, LEFT_W, onInsertSubtask, onReorderSubtasks, onDeleteSubtask, statusNotes = {}, onUpdateNote, holidays = [] }) {
   const isProjCollapsed = !!collapsed[proj.id];
 
   // Span the whole project across the chart for the summary bar
@@ -1466,7 +1482,8 @@ function ProjectSection({ proj, people, collapsed, toggle, weeks, todayOff, allI
           allItemsFlat={allItemsFlat} onEditItem={onEditItem}
           onAddSubtask={() => onAddSubtask(proj, del)} onMarkDone={onMarkDone}
           onSaveItem={onSaveItem} rowIndex={rowIndex} DAY_W={DAY_W} colWidths={colWidths} LEFT_W={LEFT_W}
-          onInsertSubtask={onInsertSubtask} onReorderSubtasks={onReorderSubtasks} onDeleteSubtask={onDeleteSubtask} />
+          onInsertSubtask={onInsertSubtask} onReorderSubtasks={onReorderSubtasks} onDeleteSubtask={onDeleteSubtask}
+          statusNotes={statusNotes} onUpdateNote={onUpdateNote} holidays={holidays} />
       ))}
 
       {/* Empty state */}
@@ -1521,7 +1538,7 @@ function ContextMenu({ x, y, items, onClose }) {
   );
 }
 
-function DeliverableRow({ del, proj, people, collapsed, toggle, weeks, todayOff, allItemsFlat, onEditItem, onAddSubtask, onMarkDone, onSaveItem, rowIndex, DAY_W, colWidths, LEFT_W, onInsertSubtask, onReorderSubtasks, onDeleteSubtask }) {
+function DeliverableRow({ del, proj, people, collapsed, toggle, weeks, todayOff, allItemsFlat, onEditItem, onAddSubtask, onMarkDone, onSaveItem, rowIndex, DAY_W, colWidths, LEFT_W, onInsertSubtask, onReorderSubtasks, onDeleteSubtask, statusNotes = {}, onUpdateNote, holidays = [] }) {
   const isCollapsed = collapsed[del.id];
   const rowNum = rowIndex.index[del.id] || "?";
   const startOff = dayOffset(del.start);
@@ -1530,13 +1547,6 @@ function DeliverableRow({ del, proj, people, collapsed, toggle, weeks, todayOff,
 
   const save = (patch) => {
     const merged = { ...del, ...patch };
-    // Keep dependencies[] in sync with depsText when depsText changes
-    if ('depsText' in patch && rowIndex) {
-      const ids = (patch.depsText || '').split(',').map(s => s.trim()).filter(Boolean)
-        .map(num => { const e = rowIndex.reverse[parseInt(num)]; return e ? e.id : null; })
-        .filter(Boolean);
-      merged.dependencies = ids;
-    }
     onSaveItem({ ...merged, projectId: proj.id, projectName: proj.name, projectColor: proj.color });
   };
 
@@ -1596,10 +1606,9 @@ function DeliverableRow({ del, proj, people, collapsed, toggle, weeks, todayOff,
 
   return (
     <div>
-      <div style={{ display: "flex", height: D_ROW, borderBottom: "1px solid rgba(0,0,0,0.05)", alignItems: "center", background: "rgba(245,158,11,0.03)" }}
+      <div style={{ display: "flex", height: D_ROW, borderBottom: "1px solid rgba(0,0,0,0.05)", alignItems: "center", background: "rgba(245,158,11,0.03)", position: "relative" }}
         onMouseEnter={e => e.currentTarget.style.background = "rgba(245,158,11,0.06)"}
         onMouseLeave={e => e.currentTarget.style.background = "rgba(245,158,11,0.03)"}>
-
         {/* Row # */}
         <LeftCell width={colWidths.num} center>
           <span style={{ fontSize: 10, fontWeight: 700, color: "#9ca3af" }}>{rowNum}</span>
@@ -1626,6 +1635,8 @@ function DeliverableRow({ del, proj, people, collapsed, toggle, weeks, todayOff,
           <StatusBadge status={del.status} small />
         </LeftCell>
 
+
+
         {/* Start */}
         <LeftCell width={colWidths.start}>
           <InlineDate value={del.start} onChange={v => save({ start: v })} />
@@ -1638,18 +1649,25 @@ function DeliverableRow({ del, proj, people, collapsed, toggle, weeks, todayOff,
 
         {/* Duration (read-only, auto from dates) */}
         <LeftCell width={colWidths.dur}>
-          <span style={{ fontSize: 10, color: "#6b7280", padding: "2px 3px" }}>{durDays(del.start, del.end)}d</span>
+          <span style={{ fontSize: 10, color: "#6b7280", padding: "2px 3px" }} title="Business days">{busyDays(del.start, del.end, new Set((holidays||[]).map(h=>h.date)))}d</span>
         </LeftCell>
 
         {/* Dependencies */}
         <LeftCell width={colWidths.deps}>
-          <InlineDeps value={del.depsText || ""} onChange={v => save({ depsText: v })} />
+          <InlineDeps deps={del.dependencies || []} rowIndex={rowIndex} onChange={ids => save({ dependencies: ids })} />
         </LeftCell>
 
         {/* Assignees */}
-        <LeftCell width={colWidths.assignees} last>
+        <LeftCell width={colWidths.assignees}>
           <InlineAssignees assignees={del.assignees} people={people} onChange={v => save({ assignees: v })} />
         </LeftCell>
+        <InlineNoteCell
+          width={colWidths.notes}
+          note={statusNotes[`${proj.id}::${del.id}`] || ""}
+          onChange={onUpdateNote ? (text) => onUpdateNote(`${proj.id}::${del.id}`, text) : null}
+          color={proj.color}
+          last
+        />
 
         {/* Chart */}
         <div style={{ flex: 1, height: "100%", position: "relative", width: totalDays * DAY_W }}>
@@ -1698,7 +1716,7 @@ function DeliverableRow({ del, proj, people, collapsed, toggle, weeks, todayOff,
                 weeks={weeks} todayOff={todayOff} allItemsFlat={allItemsFlat} onEditItem={onEditItem}
                 onMarkDone={onMarkDone} onSaveItem={onSaveItem} rowIndex={rowIndex} DAY_W={DAY_W} colWidths={colWidths} LEFT_W={LEFT_W}
                 onInsertSubtask={onInsertSubtask} onReorderSubtasks={onReorderSubtasks} onDeleteSubtask={onDeleteSubtask}
-                onDragHandlePointerDown={(e) => startDrag(e, subIdx)} />
+                onDragHandlePointerDown={(e) => startDrag(e, subIdx)} holidays={holidays} />
             </div>
           ))}
         </div>
@@ -1735,7 +1753,7 @@ function DeliverableRow({ del, proj, people, collapsed, toggle, weeks, todayOff,
   );
 }
 
-function SubtaskRow({ sub, del, proj, people, weeks, todayOff, allItemsFlat, onEditItem, onMarkDone, onSaveItem, rowIndex, DAY_W, colWidths, LEFT_W, onInsertSubtask, onReorderSubtasks, onDeleteSubtask, onDragHandlePointerDown }) {
+function SubtaskRow({ sub, del, proj, people, weeks, todayOff, allItemsFlat, onEditItem, onMarkDone, onSaveItem, rowIndex, DAY_W, colWidths, LEFT_W, onInsertSubtask, onReorderSubtasks, onDeleteSubtask, onDragHandlePointerDown, holidays = [] }) {
   const m = statusMeta[sub.status] || statusMeta["Not Started"];
   const rowNum = rowIndex.index[sub.id] || "?";
   const startOff = dayOffset(sub.start);
@@ -1744,12 +1762,6 @@ function SubtaskRow({ sub, del, proj, people, weeks, todayOff, allItemsFlat, onE
 
   const save = (patch) => {
     const merged = { ...sub, ...patch };
-    if ('depsText' in patch && rowIndex) {
-      const ids = (patch.depsText || '').split(',').map(s => s.trim()).filter(Boolean)
-        .map(num => { const e = rowIndex.reverse[parseInt(num)]; return e ? e.id : null; })
-        .filter(Boolean);
-      merged.dependencies = ids;
-    }
     onSaveItem({ ...merged, projectId: proj.id, projectName: proj.name, projectColor: proj.color, deliverableId: del.id });
   };
 
@@ -1796,18 +1808,26 @@ function SubtaskRow({ sub, del, proj, people, weeks, todayOff, allItemsFlat, onE
 
       {/* Duration */}
       <LeftCell width={colWidths.dur}>
-        <span style={{ fontSize: 10, color: "#9ca3af", padding: "2px 3px" }}>{durDays(sub.start, sub.end)}d</span>
+        <span style={{ fontSize: 10, color: "#9ca3af", padding: "2px 3px" }} title="Business days">{busyDays(sub.start, sub.end, new Set((holidays||[]).map(h=>h.date)))}d</span>
       </LeftCell>
 
       {/* Dependencies */}
       <LeftCell width={colWidths.deps}>
-        <InlineDeps value={sub.depsText || ""} onChange={v => save({ depsText: v })} />
+        <InlineDeps deps={sub.dependencies || []} rowIndex={rowIndex} onChange={ids => save({ dependencies: ids })} />
       </LeftCell>
 
       {/* Assignees */}
-      <LeftCell width={colWidths.assignees} last>
+      <LeftCell width={colWidths.assignees}>
         <InlineAssignees assignees={sub.assignees} people={people} onChange={v => save({ assignees: v })} />
       </LeftCell>
+      <InlineNoteCell
+        width={colWidths.notes}
+        note={""}
+        onChange={null}
+        color={proj.color}
+        last
+        small
+      />
 
       {/* Chart */}
       <div style={{ flex: 1, height: "100%", position: "relative", width: totalDays * DAY_W }}>
@@ -1837,13 +1857,67 @@ function SubtaskRow({ sub, del, proj, people, weeks, todayOff, allItemsFlat, onE
   );
 }
 
+// ─── INLINE NOTE CELL ────────────────────────────────────────────────────────
+function InlineNoteCell({ width, note, onChange, color, last, small }) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(note);
+  const ref = useRef(null);
+
+  useEffect(() => { setDraft(note); }, [note]);
+
+  const commit = () => {
+    setEditing(false);
+    if (onChange && draft !== note) onChange(draft);
+  };
+
+  const fontSize = small ? 9 : 10;
+
+  return (
+    <div style={{
+      width, flexShrink: 0, padding: "0 8px", display: "flex", alignItems: "center",
+      borderRight: last ? "1px solid rgba(0,0,0,0.08)" : "1px solid rgba(0,0,0,0.04)",
+      height: "100%", overflow: "hidden", minWidth: 0,
+    }}>
+      {editing ? (
+        <textarea
+          ref={ref}
+          autoFocus
+          value={draft}
+          onChange={e => setDraft(e.target.value)}
+          onBlur={commit}
+          onKeyDown={e => { if (e.key === "Escape") { setDraft(note); setEditing(false); } if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); commit(); } }}
+          style={{
+            width: "100%", border: `1px solid ${color}60`, borderRadius: 4, padding: "3px 6px",
+            fontSize, fontFamily: "inherit", resize: "none", height: 48, outline: "none",
+            background: "#fff", color: "#1f2937", lineHeight: 1.4,
+          }}
+        />
+      ) : (
+        <div
+          onClick={() => onChange && setEditing(true)}
+          style={{
+            fontSize, color: note ? "#374151" : "#c4c9d4", lineHeight: 1.4,
+            overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+            cursor: onChange ? "pointer" : "default", width: "100%",
+            padding: "2px 4px", borderRadius: 3,
+            background: note ? "transparent" : "transparent",
+          }}
+          title={note || (onChange ? "Click to add note" : "")}
+        >
+          {note || (onChange ? <span style={{ color: "#d1d5db", fontSize: fontSize - 1 }}>+ note</span> : null)}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function LeftCell({ width, children, last, center }) {
   return (
     <div style={{
       width, flexShrink: 0, padding: "0 4px", display: "flex", flexDirection: "column",
-      justifyContent: "center", gap: 2, overflow: "hidden",
+      justifyContent: "center", gap: 2,
       borderRight: last ? "1px solid rgba(0,0,0,0.07)" : "1px solid rgba(0,0,0,0.05)",
-      height: "100%", alignItems: center ? "center" : "flex-start",
+      height: "100%", alignItems: center ? "center" : "flex-start", overflow: "visible",
     }}>{children}</div>
   );
 }
@@ -1867,26 +1941,42 @@ function InlineDate({ value, onChange, small }) {
   );
 }
 
-function InlineDeps({ value, onChange }) {
+function InlineDeps({ deps = [], rowIndex, onChange }) {
+  const toDisplay = (ids) => (ids || [])
+    .map(id => rowIndex?.index?.[id])
+    .filter(Boolean)
+    .join(", ");
+  const fromDisplay = (text) => text.split(",").map(s => s.trim()).filter(Boolean)
+    .map(num => rowIndex?.reverse?.[parseInt(num)]?.id)
+    .filter(Boolean);
+
   const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState("");
-  const open = () => { setDraft(value || ""); setEditing(true); };
-  const commit = () => { onChange(draft.trim()); setEditing(false); };
+  const display = toDisplay(deps);
+
   if (editing) return (
-    <input value={draft} autoFocus onChange={e => setDraft(e.target.value)}
-      onBlur={commit} onKeyDown={e => e.key === "Enter" && commit()}
-      placeholder="e.g. 3,5"
-      style={{ fontSize: 10, border: "1px solid #f59e0b", borderRadius: 3, padding: "1px 3px",
-        background: "#fff8f0", color: "#111827", fontFamily: "inherit", width: "100%", outline: "none" }} />
+    <input
+      autoFocus
+      defaultValue={display}
+      placeholder="e.g. 3, 5"
+      onBlur={e => { onChange(fromDisplay(e.target.value)); setEditing(false); }}
+      onKeyDown={e => {
+        if (e.key === "Enter") { onChange(fromDisplay(e.target.value)); setEditing(false); }
+        if (e.key === "Escape") { setEditing(false); }
+      }}
+      style={{ fontSize: 10, border: "2px solid #f59e0b", borderRadius: 3,
+        padding: "2px 4px", background: "#fffbf0", color: "#111827",
+        fontFamily: "inherit", outline: "none", width: "100%", boxSizing: "border-box" }}
+    />
   );
   return (
-    <span onClick={open} title="Row numbers, comma-separated"
-      style={{ fontSize: 10, color: value ? "#374151" : "#9ca3af", cursor: "text", padding: "2px 3px",
-        borderRadius: 3, border: "1px solid transparent", display: "block", width: "100%",
-        whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}
+    <span onClick={() => setEditing(true)} title="Click to edit — row numbers e.g. 3, 5"
+      style={{ fontSize: 10, color: display ? "#374151" : "#9ca3af", cursor: "text",
+        padding: "2px 3px", borderRadius: 3, border: "1px solid transparent",
+        display: "block", width: "100%", whiteSpace: "nowrap",
+        overflow: "hidden", textOverflow: "ellipsis" }}
       onMouseEnter={e => e.currentTarget.style.borderColor = "#f59e0b"}
       onMouseLeave={e => e.currentTarget.style.borderColor = "transparent"}
-    >{value || "—"}</span>
+    >{display || "—"}</span>
   );
 }
 
@@ -2185,70 +2275,159 @@ function PeopleView({ projects, people, onEditItem, onMarkDone, onSaveItem, holi
             </div>
           )}
 
-          {/* Active task columns */}
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(180px, 1fr))", gap: 12 }}>
-            {["In Progress","Blocked"].map(s => {
-              const items = byStatus[s] || []; const m = statusMeta[s] || statusMeta["Not Started"];
+          {/* ── MAIN WORK AREA: In Progress (left 50%) + Not Started (right 50%) ── */}
+          <div style={{ display: "flex", gap: 14, alignItems: "flex-start" }}>
+
+            {/* LEFT: In Progress */}
+            {(() => {
+              const items = myItems.filter(t => t.status === "In Progress");
+              const m = statusMeta["In Progress"];
               return (
-                <div key={s} style={{ background: "#ffffff", border: `1px solid ${m.color}22`, borderRadius: 10, overflow: "hidden" }}>
-                  <div style={{ padding: "10px 14px", borderBottom: `1px solid ${m.color}18`, display: "flex", alignItems: "center", gap: 7 }}>
-                    <div style={{ width: 7, height: 7, borderRadius: "50%", background: m.color }} />
-                    <span style={{ fontSize: 11, fontWeight: 700, color: m.color }}>{s}</span>
+                <div style={{ flex: 1, minWidth: 0, background: "#ffffff", border: `1px solid ${m.color}30`, borderRadius: 10, overflow: "hidden" }}>
+                  <div style={{ padding: "10px 14px", borderBottom: `1px solid ${m.color}20`, display: "flex", alignItems: "center", gap: 7, background: m.bg + "40" }}>
+                    <div style={{ width: 8, height: 8, borderRadius: "50%", background: m.color }} />
+                    <span style={{ fontSize: 11, fontWeight: 700, color: m.color }}>In Progress</span>
                     <span style={{ marginLeft: "auto", background: m.bg, color: m.color, borderRadius: 9, padding: "1px 7px", fontSize: 10, fontWeight: 700 }}>{items.length}</span>
                   </div>
-                  <div style={{ padding: 10, display: "flex", flexDirection: "column", gap: 7, minHeight: 70 }}>
+                  <div style={{ padding: 10, display: "flex", flexWrap: "wrap", gap: 8, minHeight: 60 }}>
                     {items.map(item => (
                       <div key={item.id} style={{
-                        background: "rgba(0,0,0,0.04)", border: "1px solid rgba(0,0,0,0.07)",
-                        borderLeft: `3px solid ${item.projectColor}`, borderRadius: 6, padding: 10,
+                        flex: "0 0 calc(50% - 4px)", minWidth: 140, boxSizing: "border-box",
+                        background: "rgba(56,189,248,0.04)", border: "1px solid rgba(56,189,248,0.15)",
+                        borderLeft: `3px solid ${item.projectColor}`, borderRadius: 6, padding: "8px 10px",
                       }}>
-                        <div style={{ display: "flex", alignItems: "flex-start", gap: 8, marginBottom: 4 }}>
+                        <div style={{ display: "flex", alignItems: "flex-start", gap: 6, marginBottom: 5 }}>
                           <CheckButton isDone={false} onClick={() => onMarkDone(item.projectId, item.deliverableId || item.id, item.deliverableId ? item.id : null)} />
-                          <div style={{ flex: 1, cursor: "pointer" }} onClick={() => onEditItem(item)}>
-                            <div style={{ fontSize: 11, fontWeight: 700, color: "#1f2937", marginBottom: 2 }}>{item.title}</div>
-                            <div style={{ fontSize: 10, color: "#6b7280" }}>{item.projectName}</div>
+                          <div style={{ flex: 1, minWidth: 0, cursor: "pointer" }} onClick={() => onEditItem(item)}>
+                            <div style={{ fontSize: 11, fontWeight: 700, color: "#1f2937", lineHeight: 1.3, marginBottom: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{item.title}</div>
+                            <div style={{ fontSize: 10, color: item.projectColor, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{item.projectName}</div>
                           </div>
                         </div>
                         <ProgressBar value={item.progress} color={item.projectColor} />
-                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 5 }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 5, marginTop: 5, flexWrap: "wrap" }}>
                           <PriorityDot priority={item.priority} />
                           {item.department && <DeptBadge dept={item.department} />}
-                          <span style={{ fontSize: 10, color: "#9ca3af" }}>Due {fmt(parseDate(item.end))}</span>
+                          <span style={{ fontSize: 9, color: "#9ca3af", marginLeft: "auto" }}>Due {fmt(parseDate(item.end))}</span>
                         </div>
                       </div>
                     ))}
-                    {items.length === 0 && <div style={{ padding: 10, textAlign: "center", fontSize: 11, color: "#9ca3af" }}>No tasks</div>}
+                    {items.length === 0 && <div style={{ width: "100%", padding: "16px 0", textAlign: "center", fontSize: 11, color: "#9ca3af" }}>Nothing in progress</div>}
                   </div>
                 </div>
               );
-            })}
+            })()}
+
+            {/* RIGHT: Not Started */}
+            {(() => {
+              const items = myItems.filter(t => t.status === "Not Started");
+              const m = statusMeta["Not Started"];
+              return (
+                <div style={{ flex: 1, minWidth: 0, background: "#ffffff", border: "1px solid rgba(0,0,0,0.07)", borderRadius: 10, overflow: "hidden" }}>
+                  <div style={{ padding: "10px 14px", borderBottom: "1px solid rgba(0,0,0,0.06)", display: "flex", alignItems: "center", gap: 7, background: "rgba(0,0,0,0.02)" }}>
+                    <div style={{ width: 8, height: 8, borderRadius: "50%", background: "#9ca3af" }} />
+                    <span style={{ fontSize: 11, fontWeight: 700, color: "#6b7280" }}>Not Started</span>
+                    <span style={{ marginLeft: "auto", background: "rgba(0,0,0,0.06)", color: "#6b7280", borderRadius: 9, padding: "1px 7px", fontSize: 10, fontWeight: 700 }}>{items.length}</span>
+                  </div>
+                  <div style={{ padding: 10, display: "flex", flexWrap: "wrap", gap: 8, minHeight: 60 }}>
+                    {items.map(item => (
+                      <div key={item.id} onClick={() => onEditItem(item)} style={{
+                        flex: "0 0 calc(50% - 4px)", minWidth: 140, boxSizing: "border-box",
+                        background: "rgba(0,0,0,0.025)", border: "1px solid rgba(0,0,0,0.06)",
+                        borderLeft: `3px solid ${item.projectColor}`, borderRadius: 6, padding: "8px 10px",
+                        cursor: "pointer",
+                      }}>
+                        <div style={{ fontSize: 11, fontWeight: 600, color: "#374151", lineHeight: 1.3, marginBottom: 3, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{item.title}</div>
+                        <div style={{ fontSize: 10, color: item.projectColor, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", marginBottom: 4 }}>{item.projectName}</div>
+                        <div style={{ display: "flex", alignItems: "center", gap: 5, flexWrap: "wrap" }}>
+                          <PriorityDot priority={item.priority} />
+                          {item.department && <DeptBadge dept={item.department} />}
+                          <span style={{ fontSize: 9, color: "#9ca3af", marginLeft: "auto" }}>Due {fmt(parseDate(item.end))}</span>
+                        </div>
+                      </div>
+                    ))}
+                    {items.length === 0 && <div style={{ width: "100%", padding: "16px 0", textAlign: "center", fontSize: 11, color: "#9ca3af" }}>Nothing queued</div>}
+                  </div>
+                </div>
+              );
+            })()}
           </div>
 
-          {/* Not started + done */}
-          {["Not Started","Done"].map(s => {
-            const items = byStatus[s] || []; if (!items.length) return null; const m = statusMeta[s] || statusMeta["Not Started"];
+          {/* ── OTHER STATUSES (review, done, etc.) ── */}
+          {(() => {
+            const reviewStatuses = ["Editorial Review","Design Review","Proof Review","Internal Review","Client Review","Done"];
+            const reviewItems = myItems.filter(t => reviewStatuses.includes(t.status));
+            if (!reviewItems.length) return null;
+            const grouped = reviewStatuses.reduce((acc, s) => {
+              const its = reviewItems.filter(t => t.status === s);
+              if (its.length) acc.push({ status: s, items: its });
+              return acc;
+            }, []);
             return (
-              <div key={s} style={{ background: "#ffffff", border: "1px solid rgba(0,0,0,0.07)", borderRadius: 10, overflow: "hidden" }}>
-                <div style={{ padding: "10px 14px", borderBottom: "1px solid rgba(0,0,0,0.06)", display: "flex", gap: 7, alignItems: "center" }}>
-                  <div style={{ width: 7, height: 7, borderRadius: "50%", background: m.color }} />
-                  <span style={{ fontSize: 11, fontWeight: 700, color: m.color }}>{s}</span>
-                  <span style={{ fontSize: 10, color: "#9ca3af" }}>— {items.length}</span>
+              <div style={{ background: "#ffffff", border: "1px solid rgba(0,0,0,0.07)", borderRadius: 10, overflow: "hidden" }}>
+                <div style={{ padding: "10px 14px", borderBottom: "1px solid rgba(0,0,0,0.06)", fontSize: 11, fontWeight: 700, color: "#6b7280" }}>
+                  In Review / Done
                 </div>
-                <div style={{ display: "flex", flexWrap: "wrap", gap: 8, padding: 10 }}>
+                <div style={{ padding: 10, display: "flex", flexDirection: "column", gap: 8 }}>
+                  {grouped.map(({ status, items }) => {
+                    const m = statusMeta[status] || statusMeta["Not Started"];
+                    const isDone = status === "Done";
+                    return (
+                      <div key={status}>
+                        <div style={{ fontSize: 10, fontWeight: 700, color: m.color, letterSpacing: "0.06em", textTransform: "uppercase", marginBottom: 5, display: "flex", alignItems: "center", gap: 5 }}>
+                          <div style={{ width: 6, height: 6, borderRadius: "50%", background: m.color }} />
+                          {status} <span style={{ color: "#9ca3af", fontWeight: 400 }}>· {items.length}</span>
+                        </div>
+                        <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                          {items.map(item => (
+                            <div key={item.id} onClick={() => onEditItem(item)} style={{
+                              flex: "0 0 calc(25% - 5px)", minWidth: 130, boxSizing: "border-box",
+                              background: isDone ? "rgba(0,0,0,0.02)" : m.bg + "30",
+                              border: `1px solid ${isDone ? "rgba(0,0,0,0.05)" : m.color + "20"}`,
+                              borderLeft: `3px solid ${item.projectColor}`,
+                              borderRadius: 6, padding: "7px 9px", cursor: "pointer",
+                            }}>
+                              <div style={{ fontSize: 10, fontWeight: isDone ? 400 : 600, color: isDone ? "#9ca3af" : "#374151", textDecoration: isDone ? "line-through" : "none", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{item.title}</div>
+                              <div style={{ fontSize: 9, color: item.projectColor, fontWeight: 600, marginTop: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{item.projectName}</div>
+                              {!isDone && <div style={{ fontSize: 9, color: "#9ca3af", marginTop: 2 }}>Due {fmt(parseDate(item.end))}</div>}
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            );
+          })()}
+
+          {/* ── BLOCKED — bottom section ── */}
+          {(() => {
+            const items = myItems.filter(t => t.status === "Blocked");
+            if (!items.length) return null;
+            const m = statusMeta["Blocked"] || statusMeta["Not Started"];
+            return (
+              <div style={{ background: "#fff5f5", border: "1px solid rgba(248,113,113,0.25)", borderRadius: 10, overflow: "hidden" }}>
+                <div style={{ padding: "10px 14px", borderBottom: "1px solid rgba(248,113,113,0.15)", display: "flex", alignItems: "center", gap: 7 }}>
+                  <div style={{ width: 8, height: 8, borderRadius: "50%", background: "#f87171" }} />
+                  <span style={{ fontSize: 11, fontWeight: 700, color: "#f87171" }}>Blocked</span>
+                  <span style={{ marginLeft: "auto", background: "rgba(248,113,113,0.1)", color: "#f87171", borderRadius: 9, padding: "1px 7px", fontSize: 10, fontWeight: 700 }}>{items.length}</span>
+                </div>
+                <div style={{ padding: 10, display: "flex", flexWrap: "wrap", gap: 8 }}>
                   {items.map(item => (
                     <div key={item.id} onClick={() => onEditItem(item)} style={{
-                      flex: "0 0 calc(33% - 6px)", background: "rgba(0,0,0,0.035)", borderRadius: 6,
-                      border: "1px solid rgba(0,0,0,0.05)", borderLeft: `3px solid ${item.projectColor}`,
-                      padding: 9, cursor: "pointer",
+                      flex: "0 0 calc(33% - 6px)", minWidth: 150, boxSizing: "border-box",
+                      background: "rgba(248,113,113,0.05)", border: "1px solid rgba(248,113,113,0.2)",
+                      borderLeft: `3px solid ${item.projectColor}`, borderRadius: 6, padding: "8px 10px", cursor: "pointer",
                     }}>
-                      <div style={{ fontSize: 11, fontWeight: s === "Done" ? 400 : 600, color: s === "Done" ? "#9ca3af" : "#374151", textDecoration: s === "Done" ? "line-through" : "none" }}>{item.title}</div>
-                      <div style={{ fontSize: 10, color: "#9ca3af", marginTop: 2 }}>{item.projectName}</div>
+                      <div style={{ fontSize: 11, fontWeight: 700, color: "#374151", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{item.title}</div>
+                      <div style={{ fontSize: 10, color: item.projectColor, fontWeight: 600, marginTop: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{item.projectName}</div>
+                      <div style={{ fontSize: 9, color: "#f87171", marginTop: 3 }}>⚠ Blocked · Due {fmt(parseDate(item.end))}</div>
                     </div>
                   ))}
                 </div>
               </div>
             );
-          })}
+          })()}
         </div>
       )}
     </div>
@@ -2328,7 +2507,9 @@ function StatusView({ projects, people, statusNotes, onUpdateNote, onAddDelivera
         .map(p => p.name.split(" ")[0])
         .join(", ");
       const key = `${proj.id}::${del.id}`;
-      return { proj, del, track, assigneeNames, note: statusNotes[key] || "", key };
+      const activeSub = del.subtasks.find(s => s.status === "In Progress") || del.subtasks.find(s => s.status !== "Done");
+      const taskEnd = activeSub?.end || del.end || "";
+      return { proj, del, track, assigneeNames, note: statusNotes[key] || "", key, taskEnd };
     })
   );
 
@@ -2348,6 +2529,7 @@ function StatusView({ projects, people, statusNotes, onUpdateNote, onAddDelivera
       else if (statusSortCol === "start") { av = a.del.start; bv = b.del.start; }
       else if (statusSortCol === "end") { av = a.del.end; bv = b.del.end; }
       else if (statusSortCol === "due") { av = a.del.end; bv = b.del.end; }
+      else if (statusSortCol === "taskdue") { av = a.taskEnd; bv = b.taskEnd; }
       else { av = ""; bv = ""; }
       const r2 = String(av).localeCompare(String(bv));
       return statusSortDir === "asc" ? r2 : -r2;
@@ -2395,8 +2577,8 @@ function StatusView({ projects, people, statusNotes, onUpdateNote, onAddDelivera
       {/* ── Status table ── */}
       <div style={{ background: "#ffffff", border: "1px solid rgba(0,0,0,0.07)", borderRadius: 10, overflow: "hidden" }}>
         {/* Header */}
-        <div style={{ display: "grid", gridTemplateColumns: "minmax(80px,1fr) minmax(100px,1.3fr) minmax(110px,1.4fr) minmax(110px,1.4fr) minmax(80px,0.7fr) minmax(60px,0.6fr) minmax(70px,0.6fr) minmax(70px,0.7fr) minmax(120px,2fr) minmax(70px,0.7fr)", gap: 0, borderBottom: "1px solid rgba(0,0,0,0.07)", background: "#eceef2" }}>
-          {[["Client","client"],["Project","project"],["Deliverable","deliverable"],["Current Task",null],["Track","track"],["Dept",null],["Due","due"],["Team","assigned"],["Notes",null],["",null]].map(([h, col], i) => (
+        <div style={{ display: "grid", gridTemplateColumns: "minmax(75px,0.9fr) minmax(95px,1.2fr) minmax(100px,1.3fr) minmax(100px,1.3fr) minmax(75px,0.65fr) minmax(55px,0.55fr) minmax(65px,0.6fr) minmax(65px,0.6fr) minmax(65px,0.6fr) minmax(110px,1.8fr) minmax(65px,0.65fr)", gap: 0, borderBottom: "1px solid rgba(0,0,0,0.07)", background: "#eceef2" }}>
+          {[["Client","client"],["Project","project"],["Deliverable","deliverable"],["Current Task",null],["Track","track"],["Dept",null],["Proj Due","due"],["Task Due","taskdue"],["Team","assigned"],["Notes",null],["",null]].map(([h, col], i) => (
             <div key={i} onClick={col ? () => toggleStatusSort(col) : undefined}
               style={{ padding: "7px 10px", fontSize: 9, fontWeight: 700, color: col ? (statusSortCol === col ? "#d97706" : "#6b7280") : "#6b7280", letterSpacing: "0.06em", textTransform: "uppercase", borderRight: i < 6 ? "1px solid rgba(0,0,0,0.06)" : "none", cursor: col ? "pointer" : "default", userSelect: "none", whiteSpace: "nowrap" }}>
               {h}{col && statusSortCol === col ? (statusSortDir === "asc" ? " ↑" : " ↓") : ""}
@@ -2408,13 +2590,13 @@ function StatusView({ projects, people, statusNotes, onUpdateNote, onAddDelivera
         {filtered.length === 0 && (
           <div style={{ padding: 32, textAlign: "center", color: "#9ca3af", fontSize: 12 }}>No deliverables match the current filter.</div>
         )}
-        {filtered.map(({ proj, del, track, assigneeNames, note, key }, i) => {
+        {filtered.map(({ proj, del, track, assigneeNames, note, key, taskEnd }, i) => {
           const m = trackMeta[track];
           const currentTask = getCurrentTask(del);
           const isDone = track === "done";
           return (
             <div key={key} style={{
-              display: "grid", gridTemplateColumns: "minmax(80px,1fr) minmax(100px,1.3fr) minmax(110px,1.4fr) minmax(110px,1.4fr) minmax(80px,0.7fr) minmax(60px,0.6fr) minmax(70px,0.6fr) minmax(70px,0.7fr) minmax(120px,2fr) minmax(70px,0.7fr)",
+              display: "grid", gridTemplateColumns: "minmax(75px,0.9fr) minmax(95px,1.2fr) minmax(100px,1.3fr) minmax(100px,1.3fr) minmax(75px,0.65fr) minmax(55px,0.55fr) minmax(65px,0.6fr) minmax(65px,0.6fr) minmax(65px,0.6fr) minmax(110px,1.8fr) minmax(65px,0.65fr)",
               borderBottom: i < filtered.length - 1 ? "1px solid rgba(0,0,0,0.05)" : "none",
               opacity: isDone ? 0.5 : 1, transition: "opacity 0.15s",
             }}
@@ -2507,6 +2689,13 @@ function StatusView({ projects, people, statusNotes, onUpdateNote, onAddDelivera
                 </span>
               </Cell>
 
+              {/* Task Due — active subtask's end date */}
+              <Cell border>
+                <span style={{ fontSize: 11, fontWeight: 600, color: taskEnd && parseDate(taskEnd) < TODAY_DATE && !isDone ? "#f87171" : "#374151", whiteSpace: "nowrap" }}>
+                  {taskEnd && taskEnd !== del.end ? fmt(parseDate(taskEnd)) : "—"}
+                </span>
+              </Cell>
+
               {/* Team */}
               <Cell border>
                 <div style={{ display: "flex", flexWrap: "wrap", gap: 2 }}>
@@ -2519,30 +2708,12 @@ function StatusView({ projects, people, statusNotes, onUpdateNote, onAddDelivera
                 {assigneeNames && <div style={{ fontSize: 9, color: "#6b7280", marginTop: 2, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{assigneeNames}</div>}
               </Cell>
 
-              {/* Status Notes */}
-              <div style={{ padding: "10px 14px", display: "flex", alignItems: "flex-start", gap: 8 }}>
-                {note ? (
-                  <div style={{ flex: 1 }}>
-                    <div style={{ fontSize: 11, color: "#4b5563", lineHeight: 1.5, whiteSpace: "pre-wrap" }}>{note}</div>
-                    <button onClick={() => openNote(proj.id, del.id)} style={{
-                      marginTop: 4, background: "none", border: "none", color: "#9ca3af", cursor: "pointer",
-                      fontSize: 10, fontFamily: "inherit", padding: 0,
-                    }}
-                      onMouseEnter={e => e.currentTarget.style.color = "#64748b"}
-                      onMouseLeave={e => e.currentTarget.style.color = "#334155"}
-                    >edit ✎</button>
-                  </div>
-                ) : (
-                  <button onClick={() => openNote(proj.id, del.id)} style={{
-                    background: "none", border: "1px dashed rgba(0,0,0,0.06)", borderRadius: 5,
-                    color: "#9ca3af", cursor: "pointer", padding: "4px 10px", fontSize: 10,
-                    fontFamily: "inherit", transition: "all 0.12s",
-                  }}
-                    onMouseEnter={e => { e.currentTarget.style.borderColor = "rgba(255,255,255,0.2)"; e.currentTarget.style.color = "#64748b"; }}
-                    onMouseLeave={e => { e.currentTarget.style.borderColor = "rgba(0,0,0,0.06)"; e.currentTarget.style.color = "#334155"; }}
-                  >+ Add note</button>
-                )}
-              </div>
+              {/* Status Notes — inline editable, syncs with timeline */}
+              <StatusNoteCell
+                note={note}
+                color={proj.color}
+                onSave={(text) => onUpdateNote(key, text)}
+              />
 
               {/* Actions */}
               <div style={{ padding: "8px 10px", display: "flex", flexDirection: "column", justifyContent: "center", gap: 5, borderLeft: "1px solid rgba(0,0,0,0.05)" }}>
@@ -2606,6 +2777,31 @@ function Cell({ children, border }) {
       padding: "10px 14px", display: "flex", flexDirection: "column", justifyContent: "center",
       borderRight: border ? "1px solid rgba(0,0,0,0.06)" : "none", overflow: "hidden", gap: 2,
     }}>{children}</div>
+  );
+}
+
+function StatusNoteCell({ note, color, onSave }) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(note);
+  useEffect(() => { setDraft(note); }, [note]);
+  const commit = () => { setEditing(false); if (draft !== note) onSave(draft); };
+  return (
+    <div style={{ padding: "8px 10px", display: "flex", alignItems: "flex-start", minWidth: 0, overflow: "hidden" }}>
+      {editing ? (
+        <textarea autoFocus value={draft} onChange={e => setDraft(e.target.value)}
+          onBlur={commit}
+          onKeyDown={e => { if (e.key === "Escape") { setDraft(note); setEditing(false); } if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); commit(); } }}
+          style={{ width: "100%", border: `1px solid ${color}60`, borderRadius: 4, padding: "4px 8px", fontSize: 11, fontFamily: "inherit", resize: "none", height: 60, outline: "none", background: "#fff", color: "#1f2937", lineHeight: 1.5 }}
+        />
+      ) : note ? (
+        <div style={{ flex: 1 }}>
+          <div style={{ fontSize: 11, color: "#374151", lineHeight: 1.5, whiteSpace: "pre-wrap", overflow: "hidden", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical" }}>{note}</div>
+          <button onClick={() => setEditing(true)} style={{ marginTop: 2, background: "none", border: "none", color: "#9ca3af", cursor: "pointer", fontSize: 9, fontFamily: "inherit", padding: 0 }}>edit ✎</button>
+        </div>
+      ) : (
+        <button onClick={() => setEditing(true)} style={{ background: "none", border: "1px dashed rgba(0,0,0,0.1)", borderRadius: 4, color: "#9ca3af", cursor: "pointer", padding: "3px 8px", fontSize: 10, fontFamily: "inherit", whiteSpace: "nowrap" }}>+ note</button>
+      )}
+    </div>
   );
 }
 
@@ -3084,7 +3280,7 @@ function ExcelImportModal({ onClose, onImport, existingColors }) {
                 onMouseLeave={e => e.currentTarget.style.borderColor = "rgba(52,211,153,0.3)"}
               >
                 <div style={{ fontSize: 28 }}>📊</div>
-                <div style={{ fontSize: 13, color: "#6b7280" }}>{fileName || "Click to choose a file, or drag & drop"}</div>
+                <div style={{ fontSize: 13, color: "#6b7280" }}>{fileName || "Click to choose a file, or drag &amp; drop"}</div>
                 <div style={{ fontSize: 10, color: xlsxReady ? "#334155" : "#fbbf24" }}>{xlsxReady ? ".xlsx · .xls" : "Loading Excel library…"}</div>
                 <input type="file" accept=".xlsx,.xls" onChange={handleFile} style={{ display: "none" }} />
               </label>
@@ -3805,56 +4001,7 @@ function ModalFooter({ onClose, onSave, saveLabel, color }) {
 }
 
 // --- APP ──────────────────────────────────────────────────────────────────────
-// ─── SUPABASE — module-level, no stale closures ───────────────────────────
-// In your Vite app replace the two lines below with:
-//   const SB_URL = import.meta.env.VITE_SUPABASE_URL
-//   const SB_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY
-const SB_URL = import.meta.env.VITE_SUPABASE_URL;
-const SB_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
-const SB_READY = !!(SB_URL && SB_KEY);
-
-async function sbFetch(path, opts = {}) {
-  if (!SB_READY) {
-    console.warn("[PLANR] sbFetch called but Supabase is not configured. Path:", path);
-    return { data: null, error: "Supabase not configured" };
-  }
-  const { headers: extraHeaders, prefer, ...restOpts } = opts;
-  const url = `${SB_URL}/rest/v1/${path}`;
-  console.log("[PLANR]", (opts.method || "GET"), url.replace(SB_URL, ""));
-  try {
-    const res = await fetch(url, {
-      ...restOpts,
-      headers: {
-        "apikey":         SB_KEY,
-        "Authorization":  `Bearer ${SB_KEY}`,
-        "Content-Type":   "application/json",
-        "Prefer":         prefer || "return=representation",
-        ...(extraHeaders || {}),
-      },
-    });
-    if (!res.ok) {
-      const text = await res.text();
-      console.error("[PLANR] HTTP", res.status, path, "→", text.slice(0, 200));
-      return { data: null, error: text };
-    }
-    const text = await res.text();
-    return { data: text ? JSON.parse(text) : null, error: null };
-  } catch (e) {
-    console.error("[PLANR] fetch threw:", e.message, "path:", path);
-    return { data: null, error: e.message };
-  }
-}
-
-const sb = {
-  select:      (table, query = "")      => sbFetch(query ? `${table}?${query}` : table),
-  upsert:      (table, body)            => sbFetch(table, { method: "POST",   prefer: "resolution=merge-duplicates,return=minimal", body: JSON.stringify(Array.isArray(body) ? body : [body]) }),
-  update:      (table, id, body)        => sbFetch(`${table}?id=eq.${encodeURIComponent(id)}`, { method: "PATCH",  prefer: "return=minimal", body: JSON.stringify(body) }),
-  updateWhere: (table, col, val, body)  => sbFetch(`${table}?${col}=eq.${encodeURIComponent(val)}`, { method: "PATCH",  prefer: "return=minimal", body: JSON.stringify(body) }),
-  delete:      (table, id)              => sbFetch(`${table}?id=eq.${encodeURIComponent(id)}`, { method: "DELETE", prefer: "return=minimal" }),
-  deleteWhere: (table, col, val)        => sbFetch(`${table}?${col}=eq.${encodeURIComponent(val)}`, { method: "DELETE", prefer: "return=minimal" }),
-};
-
-// ─── SHAPE CONVERTERS — module-level pure functions ───────────────────────
+// ─── SHAPE CONVERTERS — module-level pure functions (no env dependency) ──────
 function rowToSubtask(r) {
   return {
     id: r.id, title: r.title, status: r.status, priority: r.priority,
@@ -3899,6 +4046,62 @@ function subToRow(s, delId, projId, pos = 0) {
 }
 
 export default function App() {
+  // ── SUPABASE CONFIG — read after main.jsx has set window vars ────────────
+  // Reading inside App() guarantees main.jsx has already run and set these.
+  const SB_URL   = (typeof window !== "undefined" && window.__SB_URL__)  || "";
+  const SB_KEY   = (typeof window !== "undefined" && window.__SB_KEY__)  || "";
+  const SB_READY = !!(SB_URL && SB_KEY);
+
+  // Debug: log on every mount so you can confirm env vars are present
+  useEffect(() => {
+    console.log("[PLANR] App mounted");
+    console.log("[PLANR] SB_URL:", SB_URL ? SB_URL.slice(0, 40) + "..." : "NOT SET — check main.jsx / .env.local");
+    console.log("[PLANR] SB_KEY:", SB_KEY ? SB_KEY.slice(0, 8) + "..." : "NOT SET — check main.jsx / .env.local");
+    console.log("[PLANR] SB_READY:", SB_READY);
+  }, []); // eslint-disable-line
+
+  // ── Supabase fetch helper — closes over in-App SB_URL / SB_KEY ───────────
+  const sbFetch = useCallback(async (path, opts = {}) => {
+    if (!SB_READY) {
+      return { data: null, error: "Supabase not configured" };
+    }
+    const { headers: extraHeaders, prefer, ...restOpts } = opts;
+    const url = `${SB_URL}/rest/v1/${path}`;
+    console.debug("[PLANR]", opts.method || "GET", path.split("?")[0]);
+    try {
+      const res = await fetch(url, {
+        ...restOpts,
+        headers: {
+          "apikey":        SB_KEY,
+          "Authorization": `Bearer ${SB_KEY}`,
+          "Content-Type":  "application/json",
+          "Prefer":        prefer || "return=representation",
+          ...(extraHeaders || {}),
+        },
+      });
+      if (!res.ok) {
+        const text = await res.text();
+        console.error("[PLANR] HTTP", res.status, path.split("?")[0], "→", text.slice(0, 200));
+        return { data: null, error: text };
+      }
+      const text = await res.text();
+      return { data: text ? JSON.parse(text) : null, error: null };
+    } catch (e) {
+      console.error("[PLANR] fetch threw:", e.message, "→", path.split("?")[0]);
+      return { data: null, error: e.message };
+    }
+  }, [SB_URL, SB_KEY, SB_READY]); // re-creates if env vars somehow change
+
+  // ── sb convenience object — re-created when sbFetch updates ──────────────
+  const sb = useMemo(() => ({
+    select:      (table, query = "")     => sbFetch(query ? `${table}?${query}` : table),
+    upsert:      (table, body)           => sbFetch(table, { method: "POST",   prefer: "resolution=merge-duplicates,return=minimal", body: JSON.stringify(Array.isArray(body) ? body : [body]) }),
+    update:      (table, id, body)       => sbFetch(`${table}?id=eq.${encodeURIComponent(id)}`, { method: "PATCH",  prefer: "return=minimal", body: JSON.stringify(body) }),
+    updateWhere: (table, col, val, body) => sbFetch(`${table}?${col}=eq.${encodeURIComponent(val)}`, { method: "PATCH",  prefer: "return=minimal", body: JSON.stringify(body) }),
+    delete:      (table, id)             => sbFetch(`${table}?id=eq.${encodeURIComponent(id)}`, { method: "DELETE", prefer: "return=minimal" }),
+    deleteWhere: (table, col, val)       => sbFetch(`${table}?${col}=eq.${encodeURIComponent(val)}`, { method: "DELETE", prefer: "return=minimal" }),
+  }), [sbFetch]);
+
   // ── UI-only state (never persisted) ───────────────────────────────────────
   const [view, setView] = useState("timeline");
   const [editingItem, setEditingItem] = useState(null);
@@ -3915,6 +4118,7 @@ export default function App() {
 
   // ── Data state ────────────────────────────────────────────────────────────
   const [projects, setProjects] = useState([]);
+
   const [archivedProjects, setArchivedProjects] = useState([]);
   const [people, setPeople] = useState([]);
   const [holidays, setHolidays] = useState([]);
@@ -3927,12 +4131,13 @@ export default function App() {
   // ── Load all data ─────────────────────────────────────────────────────────
   const loadAll = useCallback(async () => {
     if (!SB_READY) {
-      // No Supabase — fall back to in-memory defaults
+      // Not a Vite/Supabase environment (e.g. Claude artifact preview) — use in-memory defaults
       setProjects(initialProjects);
       setPeople(initialPeople);
       setLoading(false);
       return;
     }
+    console.log("[PLANR] loadAll — URL:", SB_URL ? "set" : "MISSING");
     setDbError(null);
     try {
       const [pR, dR, sR, mR, hR, nR, tR] = await Promise.all([
@@ -3949,12 +4154,14 @@ export default function App() {
       }
       // Seed if empty
       if (!seeded.current && (!pR.data || pR.data.length === 0)) {
+        console.log("[PLANR] DB empty — seeding defaults");
         seeded.current = true;
         await seedDefaults();
         return loadAll();
       }
       seeded.current = true;
-      const active = (pR.data || []).filter(p => !p.archived);
+      console.log("[PLANR] Loaded — projects:", pR.data?.length, "deliverables:", dR.data?.length, "subtasks:", sR.data?.length);
+      const active   = (pR.data || []).filter(p => !p.archived);
       const archived = (pR.data || []).filter(p => p.archived);
       setProjects(active.map(p => rowToProject(p, dR.data, sR.data)));
       setArchivedProjects(archived.map(p => rowToProject(p, dR.data, sR.data)));
@@ -3965,12 +4172,12 @@ export default function App() {
       setStatusNotes(notes);
       setSavedTemplates((tR.data || []).map(t => ({ ...t.data, id: t.id, name: t.name })));
     } catch (e) {
-      console.error("[PLANR]", e);
+      console.error("[PLANR] loadAll failed:", e.message);
       setDbError(e.message);
     } finally {
       setLoading(false);
     }
-  }, [SB_READY]);
+  }, [sb, SB_READY]); // sb changes when sbFetch changes (env vars set)
 
   useEffect(() => { loadAll(); }, [loadAll]);
 
@@ -3991,17 +4198,25 @@ export default function App() {
     }
   }
 
-  // Optimistic helper: update state immediately, sync DB, reload on error
-  async function optimistic(setFn, dbFn) {
-    setFn();
+  // Optimistic helper: update local state immediately, persist to DB, reload on error
+  async function optimistic(setFn, dbFn, label = "") {
+    setFn(); // instant UI update
+    if (!SB_READY) return; // no Supabase configured — keep in-memory state as-is
     const err = await dbFn();
-    if (err) { console.error("[PLANR] write error:", err); loadAll(); }
+    if (err) {
+      console.error("[PLANR] write failed" + (label ? ` (${label})` : "") + ":", err);
+      loadAll(); // revert to DB truth on failure
+    }
   }
 
   // ── handlers ──────────────────────────────────────────────────────────────
   const handleEditItem = (item) => setEditingItem(item);
 
   const handleSaveItem = (updated) => {
+    // Log dependency changes explicitly
+    if (updated.dependencies) {
+      console.log("[PLANR] saveItem — id:", updated.id, "deps:", updated.dependencies);
+    }
     // Date cascade logic (unchanged)
     const doSave = (projs) => {
       const original = projs.flatMap(p => [...p.deliverables, ...p.deliverables.flatMap(d => d.subtasks)]).find(x => x.id === updated.id);
@@ -4176,6 +4391,8 @@ export default function App() {
     }
   );
 
+
+
   const handleMarkDone = (projectId, deliverableId, subtaskId) => {
     const proj = projects.find(p => p.id === projectId);
     const del = proj?.deliverables.find(d => d.id === deliverableId);
@@ -4243,7 +4460,6 @@ export default function App() {
     <div style={{ minHeight: "100vh", background: "#f5f6f8", display: "flex", alignItems: "center", justifyContent: "center", flexDirection: "column", gap: 16, fontFamily: "Arial, Helvetica, sans-serif" }}>
       <div style={{ width: 44, height: 44, background: "#f59e0b", borderRadius: 10, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 22, fontWeight: 900, color: "#000" }}>P</div>
       <div style={{ fontSize: 13, color: "#6b7280" }}>Loading your workspace…</div>
-      {!SB_READY && <div style={{ fontSize: 11, color: "#9ca3af", maxWidth: 340, textAlign: "center" }}>Tip: set <code>window.__PLANR_SB_URL__</code> and <code>window.__PLANR_SB_KEY__</code> to connect Supabase.</div>}
     </div>
   );
 
@@ -4413,7 +4629,7 @@ export default function App() {
           </div>
         )}
 
-        {view === "dashboard" && <DashboardView projects={projects} people={people} onEditItem={handleEditItem} onAddDeliverable={(proj) => setNewDeliverable(proj)} onAddSubtask={(proj, del) => setNewSubtask({ project: proj, deliverable: del })} onNewProject={() => setShowNewProject(true)} />}
+        {view === "dashboard" && <DashboardView projects={projects} people={people} holidays={holidays} onEditItem={handleEditItem} onAddDeliverable={(proj) => setNewDeliverable(proj)} onAddSubtask={(proj, del) => setNewSubtask({ project: proj, deliverable: del })} onNewProject={() => setShowNewProject(true)} />}
         {view === "timeline"  && (
           <TimelineView projects={projects} people={people} onEditItem={handleEditItem}
             onAddDeliverable={(proj) => setNewDeliverable(proj)}
@@ -4422,6 +4638,8 @@ export default function App() {
             onInsertSubtask={handleInsertSubtask}
             onReorderSubtasks={handleReorderSubtasks}
             onDeleteSubtask={handleDeleteSubtask}
+            statusNotes={statusNotes}
+            onUpdateNote={handleUpdateNote}
           />
         )}
         {view === "people"  && <PeopleView projects={projects} people={people} onEditItem={handleEditItem} onMarkDone={handleMarkDone} onSaveItem={handleSaveItem} holidays={holidays} />}
