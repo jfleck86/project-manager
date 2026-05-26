@@ -16,6 +16,9 @@ function getInitials(name) {
 const STATUSES = ["Not Started", "In Progress", "Done", "Blocked"];
 const PRIORITIES   = ["Low", "Medium", "High", "Critical"];
 const DEPARTMENTS  = ["Editorial", "Design", "Proof", "Strategy", "Account", "Production", "Client Review"];
+const EFFORT_OPTS  = ["S", "M", "L"];
+const EFFORT_VAL   = { S: 1, M: 2, L: 3 };
+const EFFORT_LABEL = { S: "Small", M: "Medium", L: "Large" };
 
 // --- DATA - deliverables = specific outputs; subtasks = production workflow steps
 const initialProjects = [
@@ -651,7 +654,7 @@ function TaskModal({ item, projectColor, allItems, onClose, onSave, allPeople, o
               </div>
             ))}
           </div>
-          {/* Department */}
+          {/* Department + Effort */}
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
             <div>
               <div style={labelStyle}>Department</div>
@@ -660,11 +663,22 @@ function TaskModal({ item, projectColor, allItems, onClose, onSave, allPeople, o
                 {DEPARTMENTS.map(d => <option key={d}>{d}</option>)}
               </select>
             </div>
-            {form.department && (
-              <div style={{ display: "flex", alignItems: "flex-end", paddingBottom: 2 }}>
-                <DeptBadge dept={form.department} />
+            <div>
+              <div style={labelStyle}>Effort</div>
+              <div style={{ display: "flex", gap: 6 }}>
+                {EFFORT_OPTS.map(e => (
+                  <button key={e} onClick={() => set("effort", e)} style={{
+                    flex: 1, padding: "6px 0", borderRadius: 6, cursor: "pointer",
+                    fontFamily: "inherit", fontSize: 11, fontWeight: 700,
+                    border: `1.5px solid ${form.effort === e ? projectColor : "rgba(0,0,0,0.12)"}`,
+                    background: form.effort === e ? projectColor + "15" : "transparent",
+                    color: form.effort === e ? projectColor : "#6b7280",
+                  }}>
+                    {EFFORT_LABEL[e]}
+                  </button>
+                ))}
               </div>
-            )}
+            </div>
           </div>
           {/* Dates + Duration — all linked */}
           <div>
@@ -2487,6 +2501,338 @@ function PeopleView({ projects, people, onEditItem, onMarkDone, onSaveItem, holi
   );
 }
 
+// --- WORKLOAD VIEW ────────────────────────────────────────────────────────────
+function WorkloadView({ projects, people }) {
+  const [filterPerson,  setFilterPerson]  = useState("all");
+  const [filterProject, setFilterProject] = useState("all");
+  const [filterStatus,  setFilterStatus]  = useState("active"); // all | active | done
+  const [hovered, setHovered] = useState(null); // { weekKey, personId }
+  const [drillWeek, setDrillWeek] = useState(null); // weekKey string
+
+  // ── helpers ────────────────────────────────────────────────────────────────
+  const isoWeekStart = (date) => {
+    const d = new Date(date);
+    const day = d.getDay(); // 0=Sun
+    const diff = day === 0 ? -6 : 1 - day; // back to Monday
+    d.setDate(d.getDate() + diff);
+    d.setHours(0, 0, 0, 0);
+    return d;
+  };
+  const weekKey = (date) => {
+    const ws = isoWeekStart(date);
+    return ws.toISOString().slice(0, 10);
+  };
+  const weekLabel = (key) => {
+    const d = new Date(key + "T00:00:00");
+    return `W/O ${d.getMonth() + 1}/${d.getDate()}`;
+  };
+  const effortVal = (e) => EFFORT_VAL[e] || EFFORT_VAL["M"];
+
+  // ── flatten all tasks ──────────────────────────────────────────────────────
+  const allTasks = projects.flatMap(proj =>
+    proj.deliverables.flatMap(del => {
+      const base = { ...del, projId: proj.id, projName: proj.name, projColor: proj.color, delId: del.id, delTitle: del.title, isSubtask: false };
+      const subs  = del.subtasks.map(s => ({ ...s, projId: proj.id, projName: proj.name, projColor: proj.color, delId: del.id, delTitle: del.title, isSubtask: true }));
+      return [base, ...subs];
+    })
+  );
+
+  // ── apply filters ──────────────────────────────────────────────────────────
+  const filteredTasks = allTasks.filter(t => {
+    if (!t.start || !t.end) return false;
+    if (filterPerson  !== "all" && !(t.assignees || []).includes(filterPerson))  return false;
+    if (filterProject !== "all" && t.projId !== filterProject) return false;
+    if (filterStatus === "active" && t.status === "Done") return false;
+    if (filterStatus === "done"   && t.status !== "Done") return false;
+    return true;
+  });
+
+  // ── aggregate into weeks ──────────────────────────────────────────────────
+  // A task contributes effort to every week it spans (start → end)
+  const weekMap = {}; // weekKey → { personId → { pts, tasks[] }, _total }
+  filteredTasks.forEach(task => {
+    const assignees = task.assignees?.length ? task.assignees : ["_unassigned"];
+    const start = new Date(task.start + "T00:00:00");
+    const end   = new Date(task.end   + "T00:00:00");
+    // Count business weeks spanned
+    const weeks = [];
+    let cur = new Date(isoWeekStart(start));
+    while (cur <= end) {
+      weeks.push(weekKey(cur));
+      cur = new Date(cur.getTime() + 7 * 86400000);
+    }
+    const eff = effortVal(task.effort);
+    // Split effort evenly across weeks
+    const effPerWeek = eff / Math.max(1, weeks.length);
+    weeks.forEach(wk => {
+      if (!weekMap[wk]) weekMap[wk] = {};
+      assignees.forEach(pid => {
+        if (!weekMap[wk][pid]) weekMap[wk][pid] = { pts: 0, tasks: [] };
+        weekMap[wk][pid].pts   += effPerWeek;
+        weekMap[wk][pid].tasks.push(task);
+      });
+    });
+  });
+
+  // ── sort weeks chronologically ─────────────────────────────────────────────
+  const sortedWeeks = Object.keys(weekMap).sort();
+  const allPersonIds = [...new Set(filteredTasks.flatMap(t => t.assignees?.length ? t.assignees : ["_unassigned"]))];
+  const visPersonIds = filterPerson === "all" ? allPersonIds : [filterPerson];
+
+  // ── chart dimensions ──────────────────────────────────────────────────────
+  const BAR_W  = 42;
+  const GAP    = 10;
+  const MAX_H  = 200;
+  const LABEL_H = 28;
+  const LABEL_W = 48;
+  const chartW = sortedWeeks.length * (BAR_W + GAP) + LABEL_W;
+
+  // Max total pts in any week (for Y scale)
+  const maxPts = Math.max(1, ...sortedWeeks.map(wk =>
+    visPersonIds.reduce((s, pid) => s + (weekMap[wk]?.[pid]?.pts || 0), 0)
+  ));
+
+  // capacity thresholds (total pts per week)
+  const CAP_GREEN  = 6;
+  const CAP_YELLOW = 10;
+
+  // ── drill tasks ───────────────────────────────────────────────────────────
+  const drillTasks = drillWeek
+    ? filteredTasks.filter(t => {
+        if (!t.start) return false;
+        const start = new Date(t.start + "T00:00:00");
+        const end   = new Date(t.end   + "T00:00:00");
+        let cur = new Date(isoWeekStart(start));
+        while (cur <= end) {
+          if (weekKey(cur) === drillWeek) return true;
+          cur = new Date(cur.getTime() + 7 * 86400000);
+        }
+        return false;
+      })
+    : [];
+
+  // ── render ────────────────────────────────────────────────────────────────
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+
+      {/* ── Header ── */}
+      <div style={{ background: "#fff", border: "1px solid rgba(0,0,0,0.07)", borderRadius: 10, padding: "16px 20px" }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 10 }}>
+          <div>
+            <div style={{ fontSize: 15, fontWeight: 800, color: "#1f2937" }}>Team Workload</div>
+            <div style={{ fontSize: 11, color: "#6b7280", marginTop: 2 }}>Relative workload volume by week and team member</div>
+          </div>
+          {/* Filters */}
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+            <select value={filterPerson} onChange={e => setFilterPerson(e.target.value)}
+              style={{ fontSize: 11, border: "1px solid rgba(0,0,0,0.1)", borderRadius: 6, padding: "5px 10px", background: "#fff", fontFamily: "inherit" }}>
+              <option value="all">All People</option>
+              {people.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+            </select>
+            <select value={filterProject} onChange={e => setFilterProject(e.target.value)}
+              style={{ fontSize: 11, border: "1px solid rgba(0,0,0,0.1)", borderRadius: 6, padding: "5px 10px", background: "#fff", fontFamily: "inherit" }}>
+              <option value="all">All Projects</option>
+              {projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+            </select>
+            <select value={filterStatus} onChange={e => setFilterStatus(e.target.value)}
+              style={{ fontSize: 11, border: "1px solid rgba(0,0,0,0.1)", borderRadius: 6, padding: "5px 10px", background: "#fff", fontFamily: "inherit" }}>
+              <option value="active">Active tasks</option>
+              <option value="all">All tasks</option>
+              <option value="done">Done only</option>
+            </select>
+          </div>
+        </div>
+      </div>
+
+      {/* ── Stacked bar chart ── */}
+      <div style={{ background: "#fff", border: "1px solid rgba(0,0,0,0.07)", borderRadius: 10, padding: "20px 20px 12px", overflowX: "auto" }}>
+        {sortedWeeks.length === 0 ? (
+          <div style={{ textAlign: "center", color: "#9ca3af", fontSize: 13, padding: 40 }}>No tasks match the current filters.</div>
+        ) : (
+          <>
+            {/* Legend */}
+            <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 16 }}>
+              {visPersonIds.map(pid => {
+                const person = people.find(p => p.id === pid);
+                if (!person && pid !== "_unassigned") return null;
+                return (
+                  <div key={pid} style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 11, color: "#374151" }}>
+                    <div style={{ width: 10, height: 10, borderRadius: 2, background: person?.color || "#9ca3af" }} />
+                    {person?.name || "Unassigned"}
+                  </div>
+                );
+              })}
+              <div style={{ marginLeft: "auto", display: "flex", gap: 10, fontSize: 10, color: "#9ca3af", alignItems: "center" }}>
+                <span style={{ display: "flex", alignItems: "center", gap: 4 }}><span style={{ width: 8, height: 8, borderRadius: 2, background: "#34d399", display: "inline-block" }} />Light load</span>
+                <span style={{ display: "flex", alignItems: "center", gap: 4 }}><span style={{ width: 8, height: 8, borderRadius: 2, background: "#fbbf24", display: "inline-block" }} />Moderate load</span>
+                <span style={{ display: "flex", alignItems: "center", gap: 4 }}><span style={{ width: 8, height: 8, borderRadius: 2, background: "#f87171", display: "inline-block" }} />Heavy load</span>
+              </div>
+            </div>
+
+            {/* SVG Chart */}
+            <svg width={chartW} height={MAX_H + LABEL_H + 24} style={{ display: "block", overflow: "visible" }}>
+              {/* Y-axis grid lines */}
+              {[0.25, 0.5, 0.75, 1].map(pct => {
+                const y = MAX_H - pct * MAX_H;
+                const pts = Math.round(pct * maxPts);
+                return (
+                  <g key={pct}>
+                    <line x1={LABEL_W} y1={y} x2={chartW} y2={y} stroke="rgba(0,0,0,0.06)" strokeWidth={1} />
+                    {/* Y-axis: no numeric labels shown to users */}
+                  </g>
+                );
+              })}
+
+              {/* Bars */}
+              {sortedWeeks.map((wk, wi) => {
+                const x = LABEL_W + wi * (BAR_W + GAP);
+                const totalPts = visPersonIds.reduce((s, pid) => s + (weekMap[wk]?.[pid]?.pts || 0), 0);
+                const capColor = totalPts > CAP_YELLOW ? "#f87171" : totalPts > CAP_GREEN ? "#fbbf24" : "#34d399";
+                const isDrill = drillWeek === wk;
+
+                let stackY = MAX_H;
+                return (
+                  <g key={wk} style={{ cursor: "pointer" }}
+                    onClick={() => setDrillWeek(isDrill ? null : wk)}
+                    onMouseEnter={() => setHovered(wk)}
+                    onMouseLeave={() => setHovered(null)}
+                  >
+                    {/* capacity indicator dot */}
+                    <circle cx={x + BAR_W / 2} cy={MAX_H + 6} r={3} fill={capColor} />
+
+                    {/* stacked segments */}
+                    {visPersonIds.map(pid => {
+                      const pts = weekMap[wk]?.[pid]?.pts || 0;
+                      if (!pts) return null;
+                      const segH = Math.max(2, (pts / maxPts) * MAX_H);
+                      stackY -= segH;
+                      const person = people.find(p => p.id === pid);
+                      const fill = person?.color || "#9ca3af";
+                      const isHov = hovered === wk;
+                      return (
+                        <rect key={pid}
+                          x={x} y={stackY} width={BAR_W} height={segH}
+                          fill={fill}
+                          opacity={isHov ? 1 : 0.82}
+                          rx={pid === visPersonIds[visPersonIds.length - 1] ? 3 : 0}
+                          style={{ transition: "opacity 0.1s" }}
+                        />
+                      );
+                    })}
+
+                    {/* total label on hover */}
+                    {hovered === wk && (() => {
+                      const wkTasks = filteredTasks.filter(t => {
+                        if (!t.start) return false;
+                        let cur = new Date(isoWeekStart(new Date(t.start + "T00:00:00")));
+                        const end = new Date((t.end || t.start) + "T00:00:00");
+                        while (cur <= end) { if (weekKey(cur) === wk) return true; cur = new Date(cur.getTime() + 7*86400000); }
+                        return false;
+                      });
+                      const s = wkTasks.filter(t=>(t.effort||"M")==="S").length;
+                      const m = wkTasks.filter(t=>(t.effort||"M")==="M").length;
+                      const l = wkTasks.filter(t=>(t.effort||"M")==="L").length;
+                      return (
+                        <g>
+                          <rect x={x - 10} y={stackY - 52} width={BAR_W + 20} height={48} rx={4} fill="#1f2937" opacity={0.92} />
+                          <text x={x + BAR_W/2} y={stackY - 36} textAnchor="middle" fontSize={10} fontWeight={700} fill="#fff">{wkTasks.length} tasks</text>
+                          <text x={x + BAR_W/2} y={stackY - 22} textAnchor="middle" fontSize={9} fill="#9ca3af">{s>0?`${s}S `:""}{m>0?`${m}M `:""}{l>0?`${l}L`:""}</text>
+                          <text x={x + BAR_W/2} y={stackY - 9} textAnchor="middle" fontSize={9} fill="#6b7280">click to drill in</text>
+                        </g>
+                      );
+                    })()}
+
+                    {/* selected outline */}
+                    {isDrill && (
+                      <rect x={x - 1} y={0} width={BAR_W + 2} height={MAX_H} fill="none" stroke="#f59e0b" strokeWidth={2} rx={3} />
+                    )}
+
+                    {/* week label */}
+                    <text x={x + BAR_W / 2} y={MAX_H + LABEL_H} textAnchor="middle" fontSize={9} fill="#6b7280" fontWeight={600}>
+                      {weekLabel(wk)}
+                    </text>
+                  </g>
+                );
+              })}
+            </svg>
+          </>
+        )}
+      </div>
+
+      {/* ── Drill-down task list ── */}
+      {drillWeek && (
+        <div style={{ background: "#fff", border: "1px solid rgba(0,0,0,0.07)", borderRadius: 10, overflow: "hidden" }}>
+          <div style={{ padding: "12px 18px", borderBottom: "1px solid rgba(0,0,0,0.06)", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+            <span style={{ fontSize: 13, fontWeight: 700, color: "#1f2937" }}>Tasks in week of {weekLabel(drillWeek)}</span>
+            <button onClick={() => setDrillWeek(null)} style={{ background: "none", border: "none", color: "#9ca3af", cursor: "pointer", fontSize: 18, lineHeight: 1 }}>×</button>
+          </div>
+          <div style={{ display: "flex", flexDirection: "column" }}>
+            {drillTasks.length === 0
+              ? <div style={{ padding: 20, textAlign: "center", color: "#9ca3af", fontSize: 13 }}>No tasks this week.</div>
+              : drillTasks.map(t => {
+                  const effortColors = { S: "#34d399", M: "#fbbf24", L: "#f87171" };
+                  return (
+                    <div key={t.id} style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 18px", borderBottom: "1px solid rgba(0,0,0,0.04)" }}>
+                      <div style={{ width: 3, height: 32, background: t.projColor, borderRadius: 2, flexShrink: 0 }} />
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontSize: 12, fontWeight: 600, color: t.status === "Done" ? "#9ca3af" : "#1f2937", textDecoration: t.status === "Done" ? "line-through" : "none", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{t.title}</div>
+                        <div style={{ fontSize: 10, color: "#6b7280", marginTop: 1 }}>{t.projName}{t.isSubtask ? ` · ${t.delTitle}` : ""}</div>
+                      </div>
+                      <div style={{ fontSize: 10, color: effortColors[t.effort || "M"], fontWeight: 700, background: effortColors[t.effort || "M"] + "18", borderRadius: 4, padding: "2px 7px", flexShrink: 0 }}>
+                        {EFFORT_LABEL[t.effort || "M"]}
+                      </div>
+                      <div style={{ fontSize: 10, color: "#9ca3af", flexShrink: 0 }}>
+                        {t.assignees?.map(id => people.find(p => p.id === id)?.name).filter(Boolean).join(", ") || "Unassigned"}
+                      </div>
+                    </div>
+                  );
+                })
+            }
+          </div>
+          <div style={{ padding: "10px 18px", borderTop: "1px solid rgba(0,0,0,0.06)", display: "flex", gap: 16, fontSize: 11 }}>
+            <span style={{ color: "#6b7280" }}>{drillTasks.length} tasks</span>
+            <span style={{ color: "#34d399" }}>Small: {drillTasks.filter(t => (t.effort || "M") === "S").length}</span>
+            <span style={{ color: "#fbbf24" }}>Medium: {drillTasks.filter(t => (t.effort || "M") === "M").length}</span>
+            <span style={{ color: "#f87171" }}>Large: {drillTasks.filter(t => (t.effort || "M") === "L").length}</span>
+          </div>
+        </div>
+      )}
+
+      {/* ── Per-person summary cards ── */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))", gap: 12 }}>
+        {people.map(person => {
+          const myTasks = filteredTasks.filter(t => (t.assignees || []).includes(person.id));
+          const totalPts = myTasks.reduce((s, t) => s + effortVal(t.effort), 0);
+          const bySize = { S: myTasks.filter(t => (t.effort || "M") === "S").length, M: myTasks.filter(t => (t.effort || "M") === "M").length, L: myTasks.filter(t => (t.effort || "M") === "L").length };
+          return (
+            <div key={person.id} style={{ background: "#fff", border: "1px solid rgba(0,0,0,0.07)", borderRadius: 10, padding: "14px 16px" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+                <div style={{ width: 28, height: 28, borderRadius: "50%", background: person.color, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, fontWeight: 800, color: "#fff", flexShrink: 0 }}>
+                  {person.name.split(" ").map(n => n[0]).join("").slice(0, 2)}
+                </div>
+                <div style={{ fontSize: 12, fontWeight: 700, color: "#1f2937", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{person.name}</div>
+                <div style={{ marginLeft: "auto", fontSize: 11, fontWeight: 700, color: person.color }}>{myTasks.length} tasks</div>
+              </div>
+              <div style={{ display: "flex", gap: 6 }}>
+                {["S","M","L"].map(sz => (
+                  <div key={sz} style={{ flex: 1, textAlign: "center", background: "rgba(0,0,0,0.03)", borderRadius: 6, padding: "4px 0" }}>
+                    <div style={{ fontSize: 12, fontWeight: 700, color: { S: "#34d399", M: "#fbbf24", L: "#f87171" }[sz] }}>{bySize[sz]}</div>
+                    <div style={{ fontSize: 9, color: "#9ca3af" }}>{sz}</div>
+                  </div>
+                ))}
+              </div>
+              <div style={{ marginTop: 8, height: 4, borderRadius: 2, background: "rgba(0,0,0,0.06)", overflow: "hidden" }}>
+                <div style={{ height: "100%", width: `${Math.min(100, (totalPts / 20) * 100)}%`, background: person.color, borderRadius: 2, transition: "width 0.3s" }} />
+              </div>
+              <div style={{ fontSize: 9, color: "#9ca3af", marginTop: 3 }}>{myTasks.length} tasks assigned</div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 // --- STATUS VIEW ─────────────────────────────────────────────────────────────
 const TODAY_STR = "2026-05-20";
 const TODAY_DATE = new Date(TODAY_STR + "T00:00:00");
@@ -4060,6 +4406,7 @@ function rowToSubtask(r) {
     id: r.id, title: r.title, status: r.status, priority: r.priority,
     department: r.department || "", start: r.start_date || "", end: r.end_date || "",
     progress: r.progress ?? 0, dependencies: r.dependencies ?? [], assignees: r.assignees ?? [],
+    effort: r.effort || "M",
   };
 }
 function rowToDeliverable(r, subs) {
@@ -4068,6 +4415,7 @@ function rowToDeliverable(r, subs) {
     department: r.department || "", start: r.start_date || "", end: r.end_date || "",
     progress: r.progress ?? 0, dependencies: r.dependencies ?? [], assignees: r.assignees ?? [],
     trackOverride: r.track_override || null,
+    effort: r.effort || "M",
     subtasks: (subs || []).filter(s => s.deliverable_id === r.id)
       .sort((a, b) => a.position - b.position).map(rowToSubtask),
   };
@@ -4085,7 +4433,7 @@ function delToRow(d, projectId, pos = 0) {
     id: d.id, project_id: projectId, title: d.title, status: d.status, priority: d.priority,
     department: d.department || null, start_date: d.start || null, end_date: d.end || null,
     progress: d.progress ?? 0, dependencies: d.dependencies ?? [], assignees: d.assignees ?? [],
-    track_override: d.trackOverride || null, position: pos,
+    track_override: d.trackOverride || null, effort: d.effort || "M", position: pos,
   };
 }
 function subToRow(s, delId, projId, pos = 0) {
@@ -4094,7 +4442,7 @@ function subToRow(s, delId, projId, pos = 0) {
     status: s.status, priority: s.priority, department: s.department || null,
     start_date: s.start || null, end_date: s.end || null,
     progress: s.progress ?? 0, dependencies: s.dependencies ?? [], assignees: s.assignees ?? [],
-    position: pos,
+    effort: s.effort || "M", position: pos,
   };
 }
 
@@ -4505,6 +4853,7 @@ export default function App() {
     { id: "timeline",  label: "Timeline",  icon: "▬" },
     { id: "people",    label: "By Person", icon: "◎" },
     { id: "status",    label: "Status",    icon: "◉" },
+    { id: "workload",  label: "Workload",  icon: "▦" },
     { id: "archived",  label: "Archive",   icon: "⊡" },
   ];
 
@@ -4696,6 +5045,9 @@ export default function App() {
           />
         )}
         {view === "people"  && <PeopleView projects={projects} people={people} onEditItem={handleEditItem} onMarkDone={handleMarkDone} onSaveItem={handleSaveItem} holidays={holidays} />}
+        {view === "workload" && (
+          <WorkloadView projects={projects} people={people} />
+        )}
         {view === "archived" && (
           <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
             <div style={{ fontSize: 14, fontWeight: 700, color: "#374151" }}>Archived Projects</div>
