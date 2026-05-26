@@ -16,7 +16,23 @@ function getInitials(name) {
 const STATUSES = ["Not Started", "In Progress", "Done", "Blocked"];
 const PRIORITIES   = ["Low", "Medium", "High", "Critical"];
 const DEPARTMENTS  = ["Editorial", "Design", "Proof", "Strategy", "Account", "Production", "Client Review"];
+// ── BRAND COLORS ─────────────────────────────────────────────────────────────
+const BRAND_TEAL   = "#50C0C0";  // primary accent
+const BRAND_NAVY   = "#002A4E";  // dark background / headers
+const BRAND_TEAL_D = "#009090";  // darker teal for hover / text on light bg
+const BRAND_TEAL_L = "rgba(80,192,192,0.13)"; // light teal for selected bg
+
 const EFFORT_OPTS  = ["S", "M", "L"];
+const ZOOM_LEVELS  = [
+  { id: "compact",  label: "Compact",    base: 11 },
+  { id: "standard", label: "Standard",   base: 13 },
+  { id: "large",    label: "Large",      base: 15 },
+  { id: "xl",       label: "Extra Large",base: 17 },
+];
+// Font-size scaler — multiply any px size by the zoom ratio
+// zoomRatio is set inside App() based on selected zoom level
+let _zoomRatio = 1.0;
+const fs = (px) => Math.round(px * _zoomRatio);
 const EFFORT_VAL   = { S: 1, M: 2, L: 3 };
 const EFFORT_LABEL = { S: "Small", M: "Medium", L: "Large" };
 
@@ -639,7 +655,7 @@ function TaskModal({ item, projectColor, allItems, onClose, onSave, allPeople, o
         <div style={{ borderBottom: "1px solid rgba(0,0,0,0.06)", padding: "18px 22px", display: "flex", alignItems: "center", gap: 12 }}>
           <div style={{ width: 4, height: 22, background: projectColor, borderRadius: 2, flexShrink: 0 }} />
           <input value={form.title} onChange={e => set("title", e.target.value)}
-            style={{ flex: 1, background: "none", border: "none", outline: "none", color: "#111827", fontSize: 17, fontWeight: 700, fontFamily: "inherit" }} />
+            style={{ flex: 1, background: "none", border: "none", outline: "none", color: "#111827", fontSize: fs(17), fontWeight: 700, fontFamily: "inherit" }} />
           <button onClick={onClose} style={{ background: "none", border: "none", color: "#6b7280", cursor: "pointer", fontSize: 22, lineHeight: 1 }}>×</button>
         </div>
         <div style={{ padding: 22, display: "flex", flexDirection: "column", gap: 18 }}>
@@ -783,8 +799,8 @@ function DashboardAddButton({ projects, onAddDeliverable, onNewProject }) {
       <div style={{ position: "relative" }}>
         <button onClick={() => setOpen(o => !o)} style={{
           display: "flex", alignItems: "center", gap: 5,
-          background: "rgba(245,158,11,0.1)", border: "1px solid rgba(245,158,11,0.4)",
-          color: "#d97706", borderRadius: 6, padding: "5px 12px", cursor: "pointer",
+          background: BRAND_TEAL_L, border: `1px solid ${BRAND_TEAL}60`,
+          color: BRAND_TEAL_D, borderRadius: 6, padding: "5px 12px", cursor: "pointer",
           fontSize: 11, fontWeight: 800, fontFamily: "inherit",
         }}>+ Add {open ? "▲" : "▼"}</button>
         {open && (
@@ -797,7 +813,7 @@ function DashboardAddButton({ projects, onAddDeliverable, onNewProject }) {
             <button onClick={() => { onNewProject(); setOpen(false); }} style={{
               display: "flex", alignItems: "center", gap: 8, width: "100%",
               padding: "10px 14px", background: "none", border: "none", borderBottom: "1px solid rgba(0,0,0,0.06)",
-              cursor: "pointer", fontSize: 12, fontWeight: 600, color: "#1f2937", fontFamily: "inherit", textAlign: "left",
+              cursor: "pointer", fontSize: fs(12), fontWeight: 600, color: "#1f2937", fontFamily: "inherit", textAlign: "left",
             }}
               onMouseEnter={e => e.currentTarget.style.background = "rgba(0,0,0,0.04)"}
               onMouseLeave={e => e.currentTarget.style.background = "none"}
@@ -847,7 +863,7 @@ function DashboardView({ projects, people, onEditItem, onAddDeliverable, onAddSu
     return sortDir === "asc" ? r : -r;
   });
   const SortTh = ({ col, label }) => (
-    <th onClick={() => toggleSort(col)} style={{ padding: "9px 14px", textAlign: "left", fontSize: 10, fontWeight: 700, color: sortCol === col ? "#d97706" : "#6b7280", letterSpacing: "0.07em", textTransform: "uppercase", cursor: "pointer", userSelect: "none", whiteSpace: "nowrap" }}>
+    <th onClick={() => toggleSort(col)} style={{ padding: "9px 14px", textAlign: "left", fontSize: 10, fontWeight: 700, color: sortCol === col ? BRAND_TEAL_D : "#6b7280", letterSpacing: "0.07em", textTransform: "uppercase", cursor: "pointer", userSelect: "none", whiteSpace: "nowrap" }}>
       {label} {sortCol === col ? (sortDir === "asc" ? "↑" : "↓") : ""}
     </th>
   );
@@ -881,7 +897,7 @@ function DashboardView({ projects, people, onEditItem, onAddDeliverable, onAddSu
 
       {/* KPI row 2 — dept distribution breakdown */}
       <div style={{ background: "#ffffff", border: "1px solid rgba(0,0,0,0.07)", borderRadius: 10, padding: "16px 20px" }}>
-        <div style={{ fontSize: 10, fontWeight: 700, color: "#6b7280", letterSpacing: "0.09em", textTransform: "uppercase", marginBottom: 14 }}>Work Distribution by Department</div>
+        <div style={{ fontSize: fs(10), fontWeight: 700, color: "#6b7280", letterSpacing: "0.09em", textTransform: "uppercase", marginBottom: 14 }}>Work Distribution by Department</div>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(130px, 1fr))", gap: 10 }}>
           {DEPARTMENTS.map(dept => {
             const m = deptMeta[dept] || { color: "#6b7280", icon: "●" };
@@ -937,7 +953,7 @@ function DashboardView({ projects, people, onEditItem, onAddDeliverable, onAddSu
                     <span style={{ width: 7, height: 7, borderRadius: "50%", background: proj.color, display: "inline-block" }} />{proj.name}
                   </span>
                   <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                    <span style={{ fontSize: 11, color: "#6b7280" }}>{done}/{all.length} done {blocked > 0 && <span style={{ color: "#f87171", marginLeft: 8 }}>⚠ {blocked}</span>}</span>
+                    <span style={{ fontSize: fs(11), color: "#6b7280" }}>{done}/{all.length} done {blocked > 0 && <span style={{ color: "#f87171", marginLeft: 8 }}>⚠ {blocked}</span>}</span>
                     <button onClick={() => onAddDeliverable(proj)} style={{
                       background: proj.color + "15", border: `1px solid ${proj.color}50`,
                       color: proj.color, borderRadius: 4, padding: "2px 8px", cursor: "pointer",
@@ -1000,14 +1016,14 @@ function DashboardView({ projects, people, onEditItem, onAddDeliverable, onAddSu
                   <tr style={{ borderBottom: "none" }}
                     onMouseEnter={e => e.currentTarget.style.background = "rgba(0,0,0,0.02)"}
                     onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
-                    <td style={{ padding: "10px 14px", fontSize: 12, fontWeight: 700, color: d.status === "Done" ? "#9ca3af" : "#1f2937", textDecoration: d.status === "Done" ? "line-through" : "none", cursor: "pointer" }} onClick={() => onEditItem(d)}>{d.title}</td>
-                    <td style={{ padding: "10px 14px" }}><span style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 11, color: "#6b7280" }}><span style={{ width: 5, height: 5, borderRadius: "50%", background: d.projectColor, display: "inline-block" }} />{d.projectName}</span></td>
+                    <td style={{ padding: "10px 14px", fontSize: fs(12), fontWeight: 700, color: d.status === "Done" ? "#9ca3af" : "#1f2937", textDecoration: d.status === "Done" ? "line-through" : "none", cursor: "pointer" }} onClick={() => onEditItem(d)}>{d.title}</td>
+                    <td style={{ padding: "10px 14px" }}><span style={{ display: "flex", alignItems: "center", gap: 5, fontSize: fs(11), color: "#6b7280" }}><span style={{ width: 5, height: 5, borderRadius: "50%", background: d.projectColor, display: "inline-block" }} />{d.projectName}</span></td>
                     <td style={{ padding: "10px 14px" }}><StatusBadge status={d.status} small /></td>
                     <td style={{ padding: "10px 14px" }}><PriorityDot priority={d.priority} /></td>
                     <td style={{ padding: "10px 14px" }}><div style={{ display: "flex" }}>{d.assignees.map(id => { const p = people.find(x => x.id === id); return p ? <div key={id} style={{ marginRight: -5 }}><Avatar person={p} size={22} /></div> : null; })}</div></td>
-                    <td style={{ padding: "10px 14px", fontSize: 11, color: "#6b7280" }}>{fmt(parseDate(d.start))}</td>
-                    <td style={{ padding: "10px 14px", fontSize: 11, color: "#6b7280" }}>{fmt(parseDate(d.end))}</td>
-                    <td style={{ padding: "10px 14px", fontSize: 11, color: "#6b7280" }} title="Business days">{busyDays(d.start, d.end, new Set(holidays.map(h=>h.date)))}d</td>
+                    <td style={{ padding: "10px 14px", fontSize: fs(11), color: "#6b7280" }}>{fmt(parseDate(d.start))}</td>
+                    <td style={{ padding: "10px 14px", fontSize: fs(11), color: "#6b7280" }}>{fmt(parseDate(d.end))}</td>
+                    <td style={{ padding: "10px 14px", fontSize: fs(11), color: "#6b7280" }} title="Business days">{busyDays(d.start, d.end, new Set(holidays.map(h=>h.date)))}d</td>
                     <td style={{ padding: "10px 14px", width: 110 }}>
                       <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
                         <ProgressBar value={d.progress} color={d.projectColor} />
@@ -1031,7 +1047,7 @@ function DashboardView({ projects, people, onEditItem, onAddDeliverable, onAddSu
                     <tr key={sub.id} style={{ background: "rgba(0,0,0,0.015)", borderBottom: "none" }}
                       onMouseEnter={e => e.currentTarget.style.background = "rgba(0,0,0,0.035)"}
                       onMouseLeave={e => e.currentTarget.style.background = "rgba(0,0,0,0.015)"}>
-                      <td style={{ padding: "6px 14px 6px 28px", fontSize: 11, color: sub.status === "Done" ? "#9ca3af" : "#374151", textDecoration: sub.status === "Done" ? "line-through" : "none", cursor: "pointer" }}
+                      <td style={{ padding: "6px 14px 6px 28px", fontSize: fs(11), color: sub.status === "Done" ? "#9ca3af" : "#374151", textDecoration: sub.status === "Done" ? "line-through" : "none", cursor: "pointer" }}
                         onClick={() => onEditItem({ ...sub, projectId: d.projectId, projectName: d.projectName, projectColor: d.projectColor, deliverableId: d.id })}>
                         <span style={{ display: "flex", alignItems: "center", gap: 7 }}>
                           <span style={{ width: 2, height: 12, background: d.projectColor + "80", borderRadius: 1, flexShrink: 0 }} />
@@ -1334,7 +1350,7 @@ function TimelineView({ projects, people, onEditItem, onAddDeliverable, onAddSub
 
       {/* Project filter pills — normal flow above the timeline box */}
       <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
-        <span style={{ fontSize: 11, color: "#6b7280", fontWeight: 600 }}>Show:</span>
+        <span style={{ fontSize: fs(11), color: "#6b7280", fontWeight: 600 }}>Show:</span>
         <div onClick={() => setSelectedProjects([])} style={{
           padding: "3px 10px", borderRadius: 12, cursor: "pointer", fontSize: 11, fontWeight: 700,
           background: selectedProjects.length === 0 ? "rgba(0,0,0,0.1)" : "transparent",
@@ -1391,7 +1407,7 @@ function TimelineView({ projects, people, onEditItem, onAddDeliverable, onAddSub
           {/* Left: column labels with resize handles */}
           <div style={{ width: LEFT_W, flexShrink: 0, display: "flex", background: "#f0f2f5", borderRight: "1px solid rgba(0,0,0,0.07)" }}>
             {[["#","num"],["Title","title"],["Start","start"],["End","end"],["Dur","dur"],["Deps","deps"],["Assigned To","assignees"],["Notes","notes"]].map(([label, key]) => (
-              <div key={key} style={{ width: colWidths[key], position: "relative", padding: "0 8px", fontSize: 10, fontWeight: 700, color: "#6b7280", letterSpacing: "0.09em", flexShrink: 0, borderRight: "1px solid rgba(0,0,0,0.05)", whiteSpace: "nowrap", overflow: "hidden", userSelect: "none", display: "flex", alignItems: "center" }}>
+              <div key={key} style={{ width: colWidths[key], position: "relative", padding: "0 8px", fontSize: fs(10), fontWeight: 700, color: "#6b7280", letterSpacing: "0.09em", flexShrink: 0, borderRight: "1px solid rgba(0,0,0,0.05)", whiteSpace: "nowrap", overflow: "hidden", userSelect: "none", display: "flex", alignItems: "center" }}>
                 {label.toUpperCase()}
                 <div onMouseDown={(e) => startResizeCol(key, e)} style={{ position: "absolute", right: 0, top: 0, bottom: 0, width: 6, cursor: "col-resize", display: "flex", alignItems: "center", justifyContent: "center" }}>
                   <div style={{ width: 2, height: 14, background: "rgba(0,0,0,0.15)", borderRadius: 1 }} />
@@ -1410,7 +1426,7 @@ function TimelineView({ projects, people, onEditItem, onAddDeliverable, onAddSub
               {months.map((m, i) => (
                 <div key={i} style={{ position: "absolute", left: m.offset * DAY_W, width: m.days * DAY_W, height: "100%", display: "flex", alignItems: "center", paddingLeft: 8, fontSize: 10, fontWeight: 800, color: "#6b7280", letterSpacing: "0.1em", textTransform: "uppercase", borderRight: "1px solid rgba(0,0,0,0.06)" }}>{m.label}</div>
               ))}
-              <div style={{ position: "absolute", left: todayOff * DAY_W, top: 0, bottom: 0, width: 2, background: "#f59e0b", opacity: 0.9 }} />
+              <div style={{ position: "absolute", left: todayOff * DAY_W, top: 0, bottom: 0, width: 2, background: BRAND_TEAL, opacity: 0.9 }} />
             </div>
           </div>
         </div>
@@ -1470,7 +1486,7 @@ function TimelineBody({ projects, people, collapsed, toggle, weeks, todayOff, al
         <div style={{ display: "flex", height: 22, background: "#e8eaee", borderTop: "1px solid rgba(0,0,0,0.06)" }}>
           <div style={{ width: LEFT_W, flexShrink: 0 }} />
           <div style={{ flex: 1, position: "relative", width: totalDays * DAY_W }}>
-            <div style={{ position: "absolute", left: todayOff * DAY_W - 20, top: "50%", transform: "translateY(-50%)", background: "#f59e0b", color: "#000", fontSize: 9, fontWeight: 900, padding: "2px 7px", borderRadius: 3, letterSpacing: "0.08em" }}>TODAY</div>
+            <div style={{ position: "absolute", left: todayOff * DAY_W - 20, top: "50%", transform: "translateY(-50%)", background: BRAND_TEAL, color: BRAND_NAVY, fontSize: 9, fontWeight: 900, padding: "2px 7px", borderRadius: 3, letterSpacing: "0.08em" }}>TODAY</div>
           </div>
         </div>
       </div>
@@ -1519,7 +1535,7 @@ function ProjectSection({ proj, people, collapsed, toggle, weeks, todayOff, allI
         {/* Chart area — shows summary bar when collapsed */}
         <div style={{ flex: 1, height: "100%", position: "relative", width: totalDays * DAY_W }} onClick={() => toggle(proj.id)}>
           {weeks.map(w => <div key={w} style={{ position: "absolute", left: w * DAY_W, top: 0, bottom: 0, width: 1, background: "rgba(0,0,0,0.035)" }} />)}
-          <div style={{ position: "absolute", left: todayOff * DAY_W, top: 0, bottom: 0, width: 2, background: "#f59e0b22" }} />
+          <div style={{ position: "absolute", left: todayOff * DAY_W, top: 0, bottom: 0, width: 2, background: `${BRAND_TEAL}22` }} />
           {/* Summary span bar — always visible, more prominent when collapsed */}
           {projBarW > 0 && (
             <div style={{
@@ -1693,7 +1709,7 @@ function DeliverableRow({ del, proj, people, collapsed, toggle, weeks, todayOff,
               {isCollapsed ? "▸" : "▾"}
             </button>
             <div style={{ width: 3, height: 14, background: proj.color, borderRadius: 1, flexShrink: 0 }} />
-            <span onClick={() => onEditItem({ ...del, projectId: proj.id, projectName: proj.name, projectColor: proj.color })} style={{ fontSize: 11, fontWeight: 700, color: del.status === "Done" ? "#9ca3af" : "#111827", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1, textDecoration: del.status === "Done" ? "line-through" : "none", cursor: "pointer" }} title={"Click to edit: " + del.title}>{del.title}</span>
+            <span onClick={() => onEditItem({ ...del, projectId: proj.id, projectName: proj.name, projectColor: proj.color })} style={{ fontSize: fs(11), fontWeight: 700, color: del.status === "Done" ? "#9ca3af" : "#111827", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1, textDecoration: del.status === "Done" ? "line-through" : "none", cursor: "pointer" }} title={"Click to edit: " + del.title}>{del.title}</span>
             <button onClick={onAddSubtask} title="Add subtask" style={{ background: "none", border: "none", color: "#9ca3af", cursor: "pointer", fontSize: 13, lineHeight: 1, padding: "0 2px", flexShrink: 0 }}
               onMouseEnter={e => e.currentTarget.style.color = proj.color}
               onMouseLeave={e => e.currentTarget.style.color = "#9ca3af"}
@@ -1739,14 +1755,14 @@ function DeliverableRow({ del, proj, people, collapsed, toggle, weeks, todayOff,
         {/* Chart */}
         <div style={{ flex: 1, height: "100%", position: "relative", width: totalDays * DAY_W }}>
           {weeks.map(w => <div key={w} style={{ position: "absolute", left: w * DAY_W, top: 0, bottom: 0, width: 1, background: "rgba(0,0,0,0.04)" }} />)}
-          <div style={{ position: "absolute", left: todayOff * DAY_W, top: 0, bottom: 0, width: 2, background: "#f59e0b22" }} />
+          <div style={{ position: "absolute", left: todayOff * DAY_W, top: 0, bottom: 0, width: 2, background: `${BRAND_TEAL}22` }} />
           {depArrows.map(({ depEndOff, thisStartOff, key }) => {
             const x1 = depEndOff * DAY_W; const x2 = thisStartOff * DAY_W;
             const midY = D_ROW / 2;
             return (
               <svg key={key} style={{ position: "absolute", left: 0, top: 0, width: totalDays * DAY_W, height: D_ROW, pointerEvents: "none", overflow: "visible" }}>
-                <path d={`M ${x1} ${midY} C ${(x1+x2)/2} ${midY}, ${(x1+x2)/2} ${midY}, ${x2} ${midY}`} stroke="#f59e0b" strokeWidth={1.5} fill="none" strokeDasharray="4 3" opacity={0.6} />
-                <polygon points={`${x2},${midY} ${x2-5},${midY-3} ${x2-5},${midY+3}`} fill="#f59e0b" opacity={0.6} />
+                <path d={`M ${x1} ${midY} C ${(x1+x2)/2} ${midY}, ${(x1+x2)/2} ${midY}, ${x2} ${midY}`} stroke={BRAND_TEAL} strokeWidth={1.5} fill="none" strokeDasharray="4 3" opacity={0.6} />
+                <polygon points={`${x2},${midY} ${x2-5},${midY-3} ${x2-5},${midY+3}`} fill={BRAND_TEAL} opacity={0.6} />
               </svg>
             );
           })}
@@ -1773,7 +1789,7 @@ function DeliverableRow({ del, proj, people, collapsed, toggle, weeks, todayOff,
               style={{
                 opacity: dragState.dragIdx === subIdx ? 0.35 : 1,
                 outline: dragState.overIdx === subIdx && dragState.dragIdx !== null && dragState.dragIdx !== subIdx
-                  ? '2px solid #f59e0b' : 'none',
+                  ? `2px solid ${BRAND_TEAL}` : 'none',
                 outlineOffset: -2,
                 transition: 'opacity 0.1s',
                 cursor: dragState.dragIdx !== null ? 'grabbing' : 'default',
@@ -1859,7 +1875,7 @@ function SubtaskRow({ sub, del, proj, people, weeks, todayOff, allItemsFlat, onE
             <button onClick={e => { e.stopPropagation(); save({ status: "In Progress" }); }} title="Start task"
               style={{ background: "none", border: "none", cursor: "pointer", color: "#34d399", fontSize: 10, padding: 0, lineHeight: 1, flexShrink: 0 }}>▶</button>
           )}
-          <span onClick={() => onEditItem({ ...sub, projectId: proj.id, projectName: proj.name, projectColor: proj.color, deliverableId: del.id })} style={{ fontSize: 11, color: sub.status === "Done" ? "#9ca3af" : "#374151", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", textDecoration: sub.status === "Done" ? "line-through" : "none", flex: 1, cursor: "pointer" }} title={"Click to edit · Right-click for options"}>{sub.title}</span>
+          <span onClick={() => onEditItem({ ...sub, projectId: proj.id, projectName: proj.name, projectColor: proj.color, deliverableId: del.id })} style={{ fontSize: fs(11), color: sub.status === "Done" ? "#9ca3af" : "#374151", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", textDecoration: sub.status === "Done" ? "line-through" : "none", flex: 1, cursor: "pointer" }} title={"Click to edit · Right-click for options"}>{sub.title}</span>
         </div>
       </LeftCell>
 
@@ -1899,7 +1915,7 @@ function SubtaskRow({ sub, del, proj, people, weeks, todayOff, allItemsFlat, onE
       {/* Chart */}
       <div style={{ flex: 1, height: "100%", position: "relative", width: totalDays * DAY_W }}>
         {weeks.map(w => <div key={w} style={{ position: "absolute", left: w * DAY_W, top: 0, bottom: 0, width: 1, background: "rgba(0,0,0,0.025)" }} />)}
-        <div style={{ position: "absolute", left: todayOff * DAY_W, top: 0, bottom: 0, width: 2, background: "#f59e0b15" }} />
+        <div style={{ position: "absolute", left: todayOff * DAY_W, top: 0, bottom: 0, width: 2, background: `${BRAND_TEAL}15` }} />
         {depArrows.map(({ depEndOff, thisStartOff, key }) => {
           const x1 = depEndOff * DAY_W; const x2 = thisStartOff * DAY_W;
           const midY = S_ROW / 2;
@@ -1994,7 +2010,7 @@ function InlineDate({ value, onChange, small }) {
   if (editing) return (
     <input type="date" defaultValue={value} autoFocus
       onBlur={e => { onChange(e.target.value); setEditing(false); }}
-      style={{ fontSize: 10, border: "1px solid #f59e0b", borderRadius: 3, padding: "1px 3px",
+      style={{ fontSize: 10, border: `1px solid ${BRAND_TEAL}`, borderRadius: 3, padding: "1px 3px",
         background: "#fff8f0", color: "#111827", fontFamily: "inherit", width: "100%", outline: "none" }} />
   );
   return (
@@ -2002,7 +2018,7 @@ function InlineDate({ value, onChange, small }) {
       style={{ fontSize: small ? 10 : 11, color: "#374151", cursor: "text", padding: "2px 3px",
         borderRadius: 3, border: "1px solid transparent", display: "block", width: "100%",
         whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}
-      onMouseEnter={e => e.currentTarget.style.borderColor = "#f59e0b"}
+      onMouseEnter={e => e.currentTarget.style.borderColor = BRAND_TEAL}
       onMouseLeave={e => e.currentTarget.style.borderColor = "transparent"}
     >{value ? fmt(parseDate(value)) : "—"}</span>
   );
@@ -2030,7 +2046,7 @@ function InlineDeps({ deps = [], rowIndex, onChange }) {
         if (e.key === "Enter") { onChange(fromDisplay(e.target.value)); setEditing(false); }
         if (e.key === "Escape") { setEditing(false); }
       }}
-      style={{ fontSize: 10, border: "2px solid #f59e0b", borderRadius: 3,
+      style={{ fontSize: 10, border: `2px solid ${BRAND_TEAL}`, borderRadius: 3,
         padding: "2px 4px", background: "#fffbf0", color: "#111827",
         fontFamily: "inherit", outline: "none", width: "100%", boxSizing: "border-box" }}
     />
@@ -2041,7 +2057,7 @@ function InlineDeps({ deps = [], rowIndex, onChange }) {
         padding: "2px 3px", borderRadius: 3, border: "1px solid transparent",
         display: "block", width: "100%", whiteSpace: "nowrap",
         overflow: "hidden", textOverflow: "ellipsis" }}
-      onMouseEnter={e => e.currentTarget.style.borderColor = "#f59e0b"}
+      onMouseEnter={e => e.currentTarget.style.borderColor = BRAND_TEAL}
       onMouseLeave={e => e.currentTarget.style.borderColor = "transparent"}
     >{display || "—"}</span>
   );
@@ -2111,7 +2127,7 @@ function InlineAssignees({ assignees, onChange, people }) {
             ))}
             <div onClick={() => setOpen(false)} style={{
               borderTop: "1px solid rgba(0,0,0,0.07)", marginTop: 4, paddingTop: 6,
-              textAlign: "center", fontSize: 11, color: "#6b7280", cursor: "pointer", fontWeight: 600,
+              textAlign: "center", fontSize: fs(11), color: "#6b7280", cursor: "pointer", fontWeight: 600,
             }}>Done</div>
           </div>
         );
@@ -2147,7 +2163,7 @@ function PeopleView({ projects, people, onEditItem, onMarkDone, onSaveItem, holi
     return sortDir === "asc" ? r : -r;
   });
   const SortTh = ({ col, label }) => (
-    <th onClick={() => toggleSort(col)} style={{ padding: "9px 14px", textAlign: "left", fontSize: 10, fontWeight: 700, color: sortCol === col ? "#d97706" : "#6b7280", letterSpacing: "0.07em", textTransform: "uppercase", cursor: "pointer", userSelect: "none", whiteSpace: "nowrap" }}>
+    <th onClick={() => toggleSort(col)} style={{ padding: "9px 14px", textAlign: "left", fontSize: 10, fontWeight: 700, color: sortCol === col ? BRAND_TEAL_D : "#6b7280", letterSpacing: "0.07em", textTransform: "uppercase", cursor: "pointer", userSelect: "none", whiteSpace: "nowrap" }}>
       {label} {sortCol === col ? (sortDir === "asc" ? "↑" : "↓") : ""}
     </th>
   );
@@ -2358,15 +2374,19 @@ function PeopleView({ projects, people, onEditItem, onMarkDone, onSaveItem, holi
                   </div>
                   <div style={{ padding: 10, display: "flex", flexWrap: "wrap", gap: 8, minHeight: 60 }}>
                     {items.map(item => (
-                      <div key={item.id} style={{
+                      <div key={item.id} onClick={() => onEditItem(item)} style={{
                         flex: "0 0 calc(50% - 4px)", minWidth: 140, boxSizing: "border-box",
                         background: "rgba(56,189,248,0.04)", border: "1px solid rgba(56,189,248,0.15)",
                         borderLeft: `3px solid ${item.projectColor}`, borderRadius: 6, padding: "8px 10px",
-                      }}>
+                        cursor: "pointer",
+                      }}
+                        onMouseEnter={e => e.currentTarget.style.background = "rgba(56,189,248,0.09)"}
+                        onMouseLeave={e => e.currentTarget.style.background = "rgba(56,189,248,0.04)"}
+                      >
                         <div style={{ display: "flex", alignItems: "flex-start", gap: 6, marginBottom: 5 }}>
-                          <CheckButton isDone={false} onClick={() => onMarkDone(item.projectId, item.deliverableId || item.id, item.deliverableId ? item.id : null)} />
-                          <div style={{ flex: 1, minWidth: 0, cursor: "pointer" }} onClick={() => onEditItem(item)}>
-                            <div style={{ fontSize: 11, fontWeight: 700, color: "#1f2937", lineHeight: 1.3, marginBottom: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{item.title}</div>
+                          <CheckButton isDone={false} onClick={e => { e.stopPropagation(); onMarkDone(item.projectId, item.deliverableId || item.id, item.deliverableId ? item.id : null); }} />
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <div style={{ fontSize: fs(11), fontWeight: 700, color: "#1f2937", lineHeight: 1.3, marginBottom: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{item.title}</div>
                             <div style={{ fontSize: 10, color: item.projectColor, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{item.projectName}</div>
                           </div>
                         </div>
@@ -2374,6 +2394,7 @@ function PeopleView({ projects, people, onEditItem, onMarkDone, onSaveItem, holi
                         <div style={{ display: "flex", alignItems: "center", gap: 5, marginTop: 5, flexWrap: "wrap" }}>
                           <PriorityDot priority={item.priority} />
                           {item.department && <DeptBadge dept={item.department} />}
+                          {item.effort && item.effort !== "M" && <span style={{ fontSize: 9, color: "#6b7280", background: "rgba(0,0,0,0.05)", borderRadius: 3, padding: "1px 4px" }}>{EFFORT_LABEL[item.effort]}</span>}
                           <span style={{ fontSize: 9, color: "#9ca3af", marginLeft: "auto" }}>Due {fmt(parseDate(item.end))}</span>
                         </div>
                       </div>
@@ -2402,12 +2423,16 @@ function PeopleView({ projects, people, onEditItem, onMarkDone, onSaveItem, holi
                         background: "rgba(0,0,0,0.025)", border: "1px solid rgba(0,0,0,0.06)",
                         borderLeft: `3px solid ${item.projectColor}`, borderRadius: 6, padding: "8px 10px",
                         cursor: "pointer",
-                      }}>
-                        <div style={{ fontSize: 11, fontWeight: 600, color: "#374151", lineHeight: 1.3, marginBottom: 3, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{item.title}</div>
+                      }}
+                        onMouseEnter={e => e.currentTarget.style.background = "rgba(0,0,0,0.05)"}
+                        onMouseLeave={e => e.currentTarget.style.background = "rgba(0,0,0,0.025)"}
+                      >
+                        <div style={{ fontSize: fs(11), fontWeight: 600, color: "#374151", lineHeight: 1.3, marginBottom: 3, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{item.title}</div>
                         <div style={{ fontSize: 10, color: item.projectColor, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", marginBottom: 4 }}>{item.projectName}</div>
                         <div style={{ display: "flex", alignItems: "center", gap: 5, flexWrap: "wrap" }}>
                           <PriorityDot priority={item.priority} />
                           {item.department && <DeptBadge dept={item.department} />}
+                          {item.effort && item.effort !== "M" && <span style={{ fontSize: 9, color: "#6b7280", background: "rgba(0,0,0,0.05)", borderRadius: 3, padding: "1px 4px" }}>{EFFORT_LABEL[item.effort]}</span>}
                           <span style={{ fontSize: 9, color: "#9ca3af", marginLeft: "auto" }}>Due {fmt(parseDate(item.end))}</span>
                         </div>
                       </div>
@@ -2502,7 +2527,7 @@ function PeopleView({ projects, people, onEditItem, onMarkDone, onSaveItem, holi
 }
 
 // --- WORKLOAD VIEW ────────────────────────────────────────────────────────────
-function WorkloadView({ projects, people }) {
+function WorkloadView({ projects, people, onEditItem }) {
   const [filterPerson,  setFilterPerson]  = useState("all");
   const [filterProject, setFilterProject] = useState("all");
   const [filterStatus,  setFilterStatus]  = useState("active"); // all | active | done
@@ -2619,8 +2644,8 @@ function WorkloadView({ projects, people }) {
       <div style={{ background: "#fff", border: "1px solid rgba(0,0,0,0.07)", borderRadius: 10, padding: "16px 20px" }}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 10 }}>
           <div>
-            <div style={{ fontSize: 15, fontWeight: 800, color: "#1f2937" }}>Team Workload</div>
-            <div style={{ fontSize: 11, color: "#6b7280", marginTop: 2 }}>Relative workload volume by week and team member</div>
+            <div style={{ fontSize: fs(15), fontWeight: 800, color: "#1f2937" }}>Team Workload</div>
+            <div style={{ fontSize: fs(11), color: "#6b7280", marginTop: 2 }}>Relative workload volume by week and team member</div>
           </div>
           {/* Filters */}
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
@@ -2732,19 +2757,31 @@ function WorkloadView({ projects, people }) {
                       const s = wkTasks.filter(t=>(t.effort||"M")==="S").length;
                       const m = wkTasks.filter(t=>(t.effort||"M")==="M").length;
                       const l = wkTasks.filter(t=>(t.effort||"M")==="L").length;
+                      // Build per-person breakdown for tooltip
+                      const personBreakdown = visPersonIds.map(pid => {
+                        const person = people.find(p => p.id === pid);
+                        const pTasks = wkTasks.filter(t => (t.assignees || []).includes(pid));
+                        return person && pTasks.length ? { name: person.name.split(" ")[0], color: person.color, count: pTasks.length } : null;
+                      }).filter(Boolean);
+                      const ttH = 28 + personBreakdown.length * 14 + 14;
                       return (
                         <g>
-                          <rect x={x - 10} y={stackY - 52} width={BAR_W + 20} height={48} rx={4} fill="#1f2937" opacity={0.92} />
-                          <text x={x + BAR_W/2} y={stackY - 36} textAnchor="middle" fontSize={10} fontWeight={700} fill="#fff">{wkTasks.length} tasks</text>
-                          <text x={x + BAR_W/2} y={stackY - 22} textAnchor="middle" fontSize={9} fill="#9ca3af">{s>0?`${s}S `:""}{m>0?`${m}M `:""}{l>0?`${l}L`:""}</text>
-                          <text x={x + BAR_W/2} y={stackY - 9} textAnchor="middle" fontSize={9} fill="#6b7280">click to drill in</text>
+                          <rect x={x - 14} y={stackY - ttH - 4} width={BAR_W + 28} height={ttH} rx={5} fill="#1f2937" opacity={0.95} />
+                          <text x={x + BAR_W/2} y={stackY - ttH + 14} textAnchor="middle" fontSize={10} fontWeight={700} fill="#fff">{wkTasks.length} task{wkTasks.length !== 1 ? "s" : ""}</text>
+                          {personBreakdown.map((pb, pi) => (
+                            <g key={pb.name}>
+                              <rect x={x - 6} y={stackY - ttH + 22 + pi * 14} width={7} height={7} rx={1} fill={pb.color} />
+                              <text x={x + 6} y={stackY - ttH + 29 + pi * 14} fontSize={9} fill="#d1d5db">{pb.name}: {pb.count}</text>
+                            </g>
+                          ))}
+                          <text x={x + BAR_W/2} y={stackY - 9} textAnchor="middle" fontSize={8} fill="#6b7280">click to drill in</text>
                         </g>
                       );
                     })()}
 
                     {/* selected outline */}
                     {isDrill && (
-                      <rect x={x - 1} y={0} width={BAR_W + 2} height={MAX_H} fill="none" stroke="#f59e0b" strokeWidth={2} rx={3} />
+                      <rect x={x - 1} y={0} width={BAR_W + 2} height={MAX_H} fill="none" stroke={BRAND_TEAL} strokeWidth={2} rx={3} />
                     )}
 
                     {/* week label */}
@@ -2772,7 +2809,9 @@ function WorkloadView({ projects, people }) {
               : drillTasks.map(t => {
                   const effortColors = { S: "#34d399", M: "#fbbf24", L: "#f87171" };
                   return (
-                    <div key={t.id} style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 18px", borderBottom: "1px solid rgba(0,0,0,0.04)" }}>
+                    <div key={t.id} onClick={() => onEditItem && onEditItem({ ...t, projectId: t.projId, projectName: t.projName, projectColor: t.projColor })} style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 18px", borderBottom: "1px solid rgba(0,0,0,0.04)", cursor: "pointer" }}
+                      onMouseEnter={e => e.currentTarget.style.background = "rgba(0,0,0,0.025)"}
+                      onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
                       <div style={{ width: 3, height: 32, background: t.projColor, borderRadius: 2, flexShrink: 0 }} />
                       <div style={{ flex: 1, minWidth: 0 }}>
                         <div style={{ fontSize: 12, fontWeight: 600, color: t.status === "Done" ? "#9ca3af" : "#1f2937", textDecoration: t.status === "Done" ? "line-through" : "none", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{t.title}</div>
@@ -2781,8 +2820,18 @@ function WorkloadView({ projects, people }) {
                       <div style={{ fontSize: 10, color: effortColors[t.effort || "M"], fontWeight: 700, background: effortColors[t.effort || "M"] + "18", borderRadius: 4, padding: "2px 7px", flexShrink: 0 }}>
                         {EFFORT_LABEL[t.effort || "M"]}
                       </div>
-                      <div style={{ fontSize: 10, color: "#9ca3af", flexShrink: 0 }}>
-                        {t.assignees?.map(id => people.find(p => p.id === id)?.name).filter(Boolean).join(", ") || "Unassigned"}
+                      {/* Assignee color dots */}
+                      <div style={{ display: "flex", alignItems: "center", gap: 4, flexShrink: 0 }}>
+                        {(t.assignees || []).map(id => {
+                          const p = people.find(x => x.id === id);
+                          return p ? (
+                            <div key={id} title={p.name} style={{ display: "flex", alignItems: "center", gap: 3 }}>
+                              <div style={{ width: 8, height: 8, borderRadius: "50%", background: p.color, flexShrink: 0 }} />
+                              <span style={{ fontSize: 9, color: "#6b7280" }}>{p.name.split(" ")[0]}</span>
+                            </div>
+                          ) : null;
+                        })}
+                        {!(t.assignees || []).length && <span style={{ fontSize: 9, color: "#9ca3af" }}>Unassigned</span>}
                       </div>
                     </div>
                   );
@@ -2810,7 +2859,7 @@ function WorkloadView({ projects, people }) {
                 <div style={{ width: 28, height: 28, borderRadius: "50%", background: person.color, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, fontWeight: 800, color: "#fff", flexShrink: 0 }}>
                   {person.name.split(" ").map(n => n[0]).join("").slice(0, 2)}
                 </div>
-                <div style={{ fontSize: 12, fontWeight: 700, color: "#1f2937", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{person.name}</div>
+                <div style={{ fontSize: fs(12), fontWeight: 700, color: "#1f2937", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{person.name}</div>
                 <div style={{ marginLeft: "auto", fontSize: 11, fontWeight: 700, color: person.color }}>{myTasks.length} tasks</div>
               </div>
               <div style={{ display: "flex", gap: 6 }}>
@@ -2961,7 +3010,7 @@ function StatusView({ projects, people, statusNotes, onUpdateNote, onAddDelivera
         })}
         {/* hide completed toggle + project filter */}
         <div style={{ marginLeft: "auto", display: "flex", gap: 8, alignItems: "center" }}>
-          <label style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 11, color: "#6b7280", cursor: "pointer", userSelect: "none" }}>
+          <label style={{ display: "flex", alignItems: "center", gap: 5, fontSize: fs(11), color: "#6b7280", cursor: "pointer", userSelect: "none" }}>
             <input type="checkbox" checked={hideCompleted} onChange={e => setHideCompleted(e.target.checked)} />
             Hide completed
           </label>
@@ -2979,7 +3028,7 @@ function StatusView({ projects, people, statusNotes, onUpdateNote, onAddDelivera
         <div style={{ display: "grid", gridTemplateColumns: "minmax(75px,0.9fr) minmax(95px,1.2fr) minmax(100px,1.3fr) minmax(100px,1.3fr) minmax(75px,0.65fr) minmax(55px,0.55fr) minmax(65px,0.6fr) minmax(65px,0.6fr) minmax(65px,0.6fr) minmax(110px,1.8fr) minmax(65px,0.65fr)", gap: 0, borderBottom: "1px solid rgba(0,0,0,0.07)", background: "#eceef2" }}>
           {[["Client","client"],["Project","project"],["Deliverable","deliverable"],["Current Task",null],["Track","track"],["Dept",null],["Proj Due","due"],["Task Due","taskdue"],["Team","assigned"],["Notes",null],["",null]].map(([h, col], i) => (
             <div key={i} onClick={col ? () => toggleStatusSort(col) : undefined}
-              style={{ padding: "7px 10px", fontSize: 9, fontWeight: 700, color: col ? (statusSortCol === col ? "#d97706" : "#6b7280") : "#6b7280", letterSpacing: "0.06em", textTransform: "uppercase", borderRight: i < 6 ? "1px solid rgba(0,0,0,0.06)" : "none", cursor: col ? "pointer" : "default", userSelect: "none", whiteSpace: "nowrap" }}>
+              style={{ padding: "7px 10px", fontSize: 9, fontWeight: 700, color: col ? (statusSortCol === col ? BRAND_TEAL_D : "#6b7280") : "#6b7280", letterSpacing: "0.06em", textTransform: "uppercase", borderRight: i < 6 ? "1px solid rgba(0,0,0,0.06)" : "none", cursor: col ? "pointer" : "default", userSelect: "none", whiteSpace: "nowrap" }}>
               {h}{col && statusSortCol === col ? (statusSortDir === "asc" ? " ↑" : " ↓") : ""}
             </div>
           ))}
@@ -3232,7 +3281,7 @@ function TeamSettingsModal({ people, onClose, onSave }) {
     <Overlay onClose={onClose}>
       <ModalShell title="Team Members" onClose={onClose} accentColor="#38bdf8" width={480}>
         <div style={{ padding: 22, display: "flex", flexDirection: "column", gap: 10 }}>
-          <div style={{ fontSize: 11, color: "#6b7280", marginBottom: 4 }}>
+          <div style={{ fontSize: fs(11), color: "#6b7280", marginBottom: 4 }}>
             Edit names or colors. Changes apply across all projects.
           </div>
           {members.map((m, i) => (
@@ -3679,7 +3728,7 @@ function ExcelImportModal({ onClose, onImport, existingColors }) {
                 onMouseLeave={e => e.currentTarget.style.borderColor = "rgba(52,211,153,0.3)"}
               >
                 <div style={{ fontSize: 28 }}>📊</div>
-                <div style={{ fontSize: 13, color: "#6b7280" }}>{fileName || "Click to choose a file, or drag &amp; drop"}</div>
+                <div style={{ fontSize: fs(13), color: "#6b7280" }}>{fileName || "Click to choose a file, or drag &amp; drop"}</div>
                 <div style={{ fontSize: 10, color: xlsxReady ? "#334155" : "#fbbf24" }}>{xlsxReady ? ".xlsx · .xls" : "Loading Excel library…"}</div>
                 <input type="file" accept=".xlsx,.xls" onChange={handleFile} style={{ display: "none" }} />
               </label>
@@ -3760,7 +3809,7 @@ function ExcelImportModal({ onClose, onImport, existingColors }) {
               <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
                 <div style={{ width: 10, height: 10, borderRadius: "50%", background: projectColor }} />
                 <span style={{ fontSize: 14, fontWeight: 800, color: "#111827" }}>{projectName}</span>
-                <span style={{ fontSize: 11, color: "#6b7280" }}>— {parsed.deliverables.length} deliverables, {parsed.deliverables.reduce((s, d) => s + d.subtasks.length, 0)} subtasks</span>
+                <span style={{ fontSize: fs(11), color: "#6b7280" }}>— {parsed.deliverables.length} deliverables, {parsed.deliverables.reduce((s, d) => s + d.subtasks.length, 0)} subtasks</span>
               </div>
               <div style={{ maxHeight: 340, overflowY: "auto", display: "flex", flexDirection: "column", gap: 6 }}>
                 {parsed.deliverables.map((del, di) => (
@@ -3787,7 +3836,7 @@ function ExcelImportModal({ onClose, onImport, existingColors }) {
                   </div>
                 ))}
               </div>
-              <div style={{ fontSize: 11, color: "#6b7280", background: "rgba(52,211,153,0.07)", border: "1px solid rgba(52,211,153,0.2)", borderRadius: 6, padding: "8px 12px" }}>
+              <div style={{ fontSize: fs(11), color: "#6b7280", background: "rgba(52,211,153,0.07)", border: "1px solid rgba(52,211,153,0.2)", borderRadius: 6, padding: "8px 12px" }}>
                 ✓ Assignees and dependencies will be stored as text — you can link them to team members after import by editing each item.
               </div>
               {error && <div style={{ fontSize: 11, color: "#f87171" }}>{error}</div>}
@@ -4263,7 +4312,7 @@ function NewDeliverableModal({ project, onClose, onAdd, allPeople, savedTemplate
           </div>
         </div>
         <div style={{ borderTop: "1px solid rgba(0,0,0,0.07)", padding: "14px 20px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-          <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11, color: "#6b7280", cursor: "pointer" }}>
+          <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: fs(11), color: "#6b7280", cursor: "pointer" }}>
             <input type="checkbox" checked={keepOpen} onChange={e => setKeepOpen(e.target.checked)} />
             Add another
           </label>
@@ -4355,7 +4404,7 @@ function NewSubtaskModal({ project, deliverable, onClose, onAdd, allPeople }) {
           </div>
         </div>
         <div style={{ borderTop: "1px solid rgba(0,0,0,0.07)", padding: "14px 20px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-          <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11, color: "#6b7280", cursor: "pointer" }}>
+          <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: fs(11), color: "#6b7280", cursor: "pointer" }}>
             <input type="checkbox" checked={keepOpen} onChange={e => setKeepOpen(e.target.checked)} />
             Add another
           </label>
@@ -4378,7 +4427,7 @@ function Overlay({ children, onClose }) {
     </div>
   );
 }
-function ModalShell({ title, onClose, children, accentColor = "#f59e0b", width = 480 }) {
+function ModalShell({ title, onClose, children, accentColor = BRAND_TEAL, width = 480 }) {
   return (
     <div style={{ background: "#ffffff", border: "1px solid rgba(0,0,0,0.09)", borderRadius: 12, width, maxHeight: "92vh", overflow: "auto", boxShadow: "0 30px 90px rgba(0,0,0,0.35)" }}>
       <div style={{ borderBottom: "1px solid rgba(0,0,0,0.07)", padding: "16px 20px", display: "flex", alignItems: "center", gap: 10 }}>
@@ -4455,10 +4504,10 @@ export default function App() {
 
   // Debug: log on every mount so you can confirm env vars are present
   useEffect(() => {
-    console.log("[PLANR] App mounted");
-    console.log("[PLANR] SB_URL:", SB_URL ? SB_URL.slice(0, 40) + "..." : "NOT SET — check main.jsx / .env.local");
-    console.log("[PLANR] SB_KEY:", SB_KEY ? SB_KEY.slice(0, 8) + "..." : "NOT SET — check main.jsx / .env.local");
-    console.log("[PLANR] SB_READY:", SB_READY);
+    console.log("[PulseX] App mounted");
+    console.log("[PulseX] SB_URL:", SB_URL ? SB_URL.slice(0, 40) + "..." : "NOT SET — check main.jsx / .env.local");
+    console.log("[PulseX] SB_KEY:", SB_KEY ? SB_KEY.slice(0, 8) + "..." : "NOT SET — check main.jsx / .env.local");
+    console.log("[PulseX] SB_READY:", SB_READY);
   }, []); // eslint-disable-line
 
   // ── Supabase fetch helper — closes over in-App SB_URL / SB_KEY ───────────
@@ -4468,7 +4517,7 @@ export default function App() {
     }
     const { headers: extraHeaders, prefer, ...restOpts } = opts;
     const url = `${SB_URL}/rest/v1/${path}`;
-    console.debug("[PLANR]", opts.method || "GET", path.split("?")[0]);
+    console.debug("[PulseX]", opts.method || "GET", path.split("?")[0]);
     try {
       const res = await fetch(url, {
         ...restOpts,
@@ -4482,13 +4531,13 @@ export default function App() {
       });
       if (!res.ok) {
         const text = await res.text();
-        console.error("[PLANR] HTTP", res.status, path.split("?")[0], "→", text.slice(0, 200));
+        console.error("[PulseX] HTTP", res.status, path.split("?")[0], "→", text.slice(0, 200));
         return { data: null, error: text };
       }
       const text = await res.text();
       return { data: text ? JSON.parse(text) : null, error: null };
     } catch (e) {
-      console.error("[PLANR] fetch threw:", e.message, "→", path.split("?")[0]);
+      console.error("[PulseX] fetch threw:", e.message, "→", path.split("?")[0]);
       return { data: null, error: e.message };
     }
   }, [SB_URL, SB_KEY, SB_READY]); // re-creates if env vars somehow change
@@ -4516,6 +4565,16 @@ export default function App() {
   const [showArchived, setShowArchived] = useState(false);
   const [newDeliverable, setNewDeliverable] = useState(null);
   const [newSubtask, setNewSubtask] = useState(null);
+  const [zoomId, setZoomId] = useState(() => {
+    try { return localStorage.getItem("planr_zoom") || "standard"; } catch { return "standard"; }
+  });
+  const zoomBase = ZOOM_LEVELS.find(z => z.id === zoomId)?.base ?? 13;
+  _zoomRatio = zoomBase / 13; // update module-level ratio used by fs()
+  const setZoom = (id) => {
+    setZoomId(id);
+    try { localStorage.setItem("planr_zoom", id); } catch {}
+  };
+
 
   // ── Data state ────────────────────────────────────────────────────────────
   const [projects, setProjects] = useState([]);
@@ -4538,7 +4597,7 @@ export default function App() {
       setLoading(false);
       return;
     }
-    console.log("[PLANR] loadAll — URL:", SB_URL ? "set" : "MISSING");
+    console.log("[PulseX] loadAll — URL:", SB_URL ? "set" : "MISSING");
     setDbError(null);
     try {
       const [pR, dR, sR, mR, hR, nR, tR] = await Promise.all([
@@ -4555,13 +4614,13 @@ export default function App() {
       }
       // Seed if empty
       if (!seeded.current && (!pR.data || pR.data.length === 0)) {
-        console.log("[PLANR] DB empty — seeding defaults");
+        console.log("[PulseX] DB empty — seeding defaults");
         seeded.current = true;
         await seedDefaults();
         return loadAll();
       }
       seeded.current = true;
-      console.log("[PLANR] Loaded — projects:", pR.data?.length, "deliverables:", dR.data?.length, "subtasks:", sR.data?.length);
+      console.log("[PulseX] Loaded — projects:", pR.data?.length, "deliverables:", dR.data?.length, "subtasks:", sR.data?.length);
       const active   = (pR.data || []).filter(p => !p.archived);
       const archived = (pR.data || []).filter(p => p.archived);
       setProjects(active.map(p => rowToProject(p, dR.data, sR.data)));
@@ -4573,7 +4632,7 @@ export default function App() {
       setStatusNotes(notes);
       setSavedTemplates((tR.data || []).map(t => ({ ...t.data, id: t.id, name: t.name })));
     } catch (e) {
-      console.error("[PLANR] loadAll failed:", e.message);
+      console.error("[PulseX] loadAll failed:", e.message);
       setDbError(e.message);
     } finally {
       setLoading(false);
@@ -4605,7 +4664,7 @@ export default function App() {
     if (!SB_READY) return; // no Supabase configured — keep in-memory state as-is
     const err = await dbFn();
     if (err) {
-      console.error("[PLANR] write failed" + (label ? ` (${label})` : "") + ":", err);
+      console.error("[PulseX] write failed" + (label ? ` (${label})` : "") + ":", err);
       loadAll(); // revert to DB truth on failure
     }
   }
@@ -4616,7 +4675,7 @@ export default function App() {
   const handleSaveItem = (updated) => {
     // Log dependency changes explicitly
     if (updated.dependencies) {
-      console.log("[PLANR] saveItem — id:", updated.id, "deps:", updated.dependencies);
+      console.log("[PulseX] saveItem — id:", updated.id, "deps:", updated.dependencies);
     }
     // Date cascade logic (unchanged)
     const doSave = (projs) => {
@@ -4859,22 +4918,26 @@ export default function App() {
 
   // Loading / error screens
   if (loading) return (
-    <div style={{ minHeight: "100vh", background: "#f5f6f8", display: "flex", alignItems: "center", justifyContent: "center", flexDirection: "column", gap: 16, fontFamily: "Arial, Helvetica, sans-serif" }}>
-      <div style={{ width: 44, height: 44, background: "#f59e0b", borderRadius: 10, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 22, fontWeight: 900, color: "#000" }}>P</div>
-      <div style={{ fontSize: 13, color: "#6b7280" }}>Loading your workspace…</div>
+    <div style={{ minHeight: "100vh", background: "#f5f6f8", display: "flex", alignItems: "center", justifyContent: "center", flexDirection: "column", gap: 16, fontFamily: '"Roboto", Arial, sans-serif' }}>
+      <div style={{ width: 44, height: 44, background: BRAND_TEAL, borderRadius: 10, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 22, fontWeight: 900, color: BRAND_NAVY }}>X</div>
+      <div style={{ fontSize: fs(13), color: "#6b7280" }}>Loading your workspace…</div>
     </div>
   );
 
   if (dbError) return (
-    <div style={{ minHeight: "100vh", background: "#f5f6f8", display: "flex", alignItems: "center", justifyContent: "center", flexDirection: "column", gap: 12, fontFamily: "Arial, Helvetica, sans-serif" }}>
+    <div style={{ minHeight: "100vh", background: "#f5f6f8", display: "flex", alignItems: "center", justifyContent: "center", flexDirection: "column", gap: 12, fontFamily: '"Roboto", Arial, sans-serif' }}>
       <div style={{ fontSize: 14, color: "#f87171", fontWeight: 700 }}>Could not connect to Supabase</div>
       <div style={{ fontSize: 12, color: "#9ca3af", maxWidth: 400, textAlign: "center" }}>{dbError}</div>
-      <button onClick={loadAll} style={{ background: "#f59e0b", border: "none", borderRadius: 6, padding: "8px 20px", cursor: "pointer", fontWeight: 700, fontSize: 13 }}>Retry</button>
+      <button onClick={loadAll} style={{ background: BRAND_TEAL, border: "none", borderRadius: 6, padding: "8px 20px", cursor: "pointer", fontWeight: 700, fontSize: 13, color: BRAND_NAVY }}>Retry</button>
     </div>
   );
 
   return (
-    <div style={{ minHeight: "100vh", background: "#f5f6f8", color: "#111827", fontFamily: "Arial, Helvetica, sans-serif", display: "flex", flexDirection: "column", width: "100vw", overflowX: "hidden", overflowY: "auto" }}>
+    <div style={{ minHeight: "100vh", background: "#f5f6f8", color: "#111827", fontFamily: '"Roboto", Arial, sans-serif', display: "flex", flexDirection: "column", width: "100vw", overflowX: "hidden", overflowY: "auto", fontSize: zoomBase }}>
+
+      <link rel="preconnect" href="https://fonts.googleapis.com" />
+      <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
+      <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700;900&display=swap" rel="stylesheet" />
       <style>{`
         
         * { box-sizing: border-box; margin: 0; padding: 0; } html, body, #root { width: 100%; max-width: 100vw; overflow-x: hidden; }
@@ -4888,31 +4951,40 @@ export default function App() {
       `}</style>
 
       {/* Nav */}
-      <header style={{ borderBottom: "1px solid rgba(0,0,0,0.07)", padding: "0 20px", display: "flex", alignItems: "center", height: 52, flexShrink: 0, background: "#f5f6f8", width: "100%", boxSizing: "border-box" }}>
+      <header style={{ borderBottom: `1px solid rgba(255,255,255,0.08)`, padding: "0 20px", display: "flex", alignItems: "center", height: 52, flexShrink: 0, background: BRAND_NAVY, width: "100%", boxSizing: "border-box" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 9, marginRight: 36 }}>
-          <div style={{ width: 26, height: 26, background: "#f59e0b", borderRadius: 5, display: "flex", alignItems: "center", justifyContent: "center" }}>
-            <span style={{ fontSize: 13, fontWeight: 900, color: "#000", fontFamily: "Arial, Helvetica, sans-serif" }}>P</span>
+          <div style={{ width: 28, height: 28, background: BRAND_TEAL, borderRadius: 6, display: "flex", alignItems: "center", justifyContent: "center" }}>
+            <span style={{ fontSize: 14, fontWeight: 900, color: BRAND_NAVY, fontFamily: '"Roboto", Arial, sans-serif' }}>X</span>
           </div>
-          <span style={{ fontSize: 14, fontWeight: 800, color: "#111827", fontFamily: "Arial, Helvetica, sans-serif", letterSpacing: "-0.02em" }}>PLANR</span>
+          <span style={{ fontSize: 15, fontWeight: 800, color: "#ffffff", fontFamily: '"Roboto", Arial, sans-serif', letterSpacing: "-0.01em" }}>PulseX</span>
         </div>
         <nav style={{ display: "flex", gap: 3 }}>
           {navItems.map(n => (
             <button key={n.id} onClick={() => setView(n.id)} style={{
-              background: view === n.id ? "rgba(245,158,11,0.12)" : "none",
-              border: `1px solid ${view === n.id ? "rgba(245,158,11,0.28)" : "transparent"}`,
-              color: view === n.id ? "#d97706" : "#4b5563", padding: "5px 14px",
+              background: view === n.id ? BRAND_TEAL_L : "none",
+              border: `1px solid ${view === n.id ? BRAND_TEAL + "50" : "rgba(255,255,255,0.1)"}` ,
+              color: view === n.id ? BRAND_TEAL : "rgba(255,255,255,0.65)", padding: "5px 14px",
               borderRadius: 5, cursor: "pointer", fontSize: 11, fontWeight: 700,
               letterSpacing: "0.07em", fontFamily: "inherit", display: "flex", alignItems: "center", gap: 5, transition: "all 0.12s",
             }}><span>{n.icon}</span>{n.label}</button>
           ))}
         </nav>
         <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 12 }}>
+          {/* ── ZOOM CONTROL ── */}
+          <div style={{ display: "flex", alignItems: "center", gap: 4, background: "rgba(255,255,255,0.08)", borderRadius: 6, padding: "2px 4px" }}>
+            {ZOOM_LEVELS.map(z => (
+              <button key={z.id} onClick={() => setZoom(z.id)} title={`${z.label} (${z.base}px)`}
+                style={{ background: zoomId === z.id ? BRAND_TEAL : "none", border: "none", borderRadius: 4, padding: "3px 7px", cursor: "pointer", fontSize: 10, fontWeight: zoomId === z.id ? 800 : 500, color: zoomId === z.id ? BRAND_NAVY : "rgba(255,255,255,0.5)", fontFamily: "inherit", boxShadow: zoomId === z.id ? "0 1px 3px rgba(0,0,0,0.1)" : "none", transition: "all 0.12s" }}
+              >{z.label.split(" ")[0]}</button>
+            ))}
+          </div>
+
           {/* ── SETTINGS MENU ── */}
           <div style={{ position: "relative" }}>
             <button onClick={() => setShowSettingsMenu(m => !m)} style={{
               display: "flex", alignItems: "center", gap: 5,
-              background: showSettingsMenu ? "rgba(0,0,0,0.08)" : "rgba(0,0,0,0.05)",
-              border: "1px solid rgba(0,0,0,0.12)", color: "#374151",
+              background: showSettingsMenu ? "rgba(255,255,255,0.15)" : "rgba(255,255,255,0.08)",
+              border: "1px solid rgba(255,255,255,0.15)", color: "rgba(255,255,255,0.85)",
               borderRadius: 6, padding: "5px 13px", cursor: "pointer",
               fontSize: 11, fontWeight: 800, letterSpacing: "0.06em", fontFamily: "inherit",
             }}>⚙ SETTINGS {showSettingsMenu ? "▲" : "▼"}</button>
@@ -4928,13 +5000,13 @@ export default function App() {
                   { icon: "↓", label: "Export to Excel", color: "#34d399", action: () => { exportToExcel(projects); setShowSettingsMenu(false); } },
                   { icon: "🗓", label: "Holidays",        color: "#fb923c", action: () => { setShowHolidays(true); setShowSettingsMenu(false); } },
                   { icon: "↑", label: "Import Excel",    color: "#34d399", action: () => { setShowImport(true); setShowSettingsMenu(false); } },
-                  { icon: "⊡", label: "Archived Projects",color: "#fbbf24", action: () => { setView("archived"); setShowSettingsMenu(false); } },
+                  { icon: "⊡", label: "Archived Projects",color: BRAND_TEAL, action: () => { setView("archived"); setShowSettingsMenu(false); } },
                 ].map(item => (
                   <button key={item.label} onClick={item.action} style={{
                     display: "flex", alignItems: "center", gap: 10, width: "100%",
                     padding: "10px 16px", background: "none", border: "none",
                     borderBottom: "1px solid rgba(0,0,0,0.05)", cursor: "pointer",
-                    fontSize: 12, fontWeight: 600, color: "#1f2937", fontFamily: "inherit",
+                    fontSize: fs(12), fontWeight: 600, color: "#1f2937", fontFamily: "inherit",
                     textAlign: "left",
                   }}
                     onMouseEnter={e => e.currentTarget.style.background = "rgba(0,0,0,0.04)"}
@@ -4950,8 +5022,8 @@ export default function App() {
           {/* ── NEW PROJECT BUTTON ── */}
           <button onClick={() => setShowNewProject(true)} style={{
             display: "flex", alignItems: "center", gap: 6,
-            background: "rgba(245,158,11,0.12)", border: "1px solid rgba(245,158,11,0.5)",
-            color: "#d97706", borderRadius: 6, padding: "5px 13px", cursor: "pointer",
+            background: BRAND_TEAL_L, border: `1px solid ${BRAND_TEAL}80`,
+            color: BRAND_TEAL_D, borderRadius: 6, padding: "5px 13px", cursor: "pointer",
             fontSize: 11, fontWeight: 800, letterSpacing: "0.06em", fontFamily: "inherit",
             transition: "all 0.12s",
           }}>
@@ -5046,7 +5118,7 @@ export default function App() {
         )}
         {view === "people"  && <PeopleView projects={projects} people={people} onEditItem={handleEditItem} onMarkDone={handleMarkDone} onSaveItem={handleSaveItem} holidays={holidays} />}
         {view === "workload" && (
-          <WorkloadView projects={projects} people={people} />
+          <WorkloadView projects={projects} people={people} onEditItem={handleEditItem} />
         )}
         {view === "archived" && (
           <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
@@ -5074,7 +5146,7 @@ export default function App() {
                 </div>
                 <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
                   {proj.deliverables.map(d => (
-                    <div key={d.id} style={{ fontSize: 11, color: "#6b7280", background: "rgba(0,0,0,0.04)", borderRadius: 4, padding: "3px 10px" }}>{d.title}</div>
+                    <div key={d.id} style={{ fontSize: fs(11), color: "#6b7280", background: "rgba(0,0,0,0.04)", borderRadius: 4, padding: "3px 10px" }}>{d.title}</div>
                   ))}
                 </div>
               </div>
