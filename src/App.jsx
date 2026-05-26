@@ -1075,7 +1075,7 @@ const TODAY = new Date("2026-05-20");
 const totalDays = Math.ceil((TIMELINE_END - TIMELINE_START) / 86400000);
 
 // Column widths for the left table
-const COL_DEFAULTS = { num: 38, title: 200, start: 88, end: 88, dur: 52, deps: 100, assignees: 88, notes: 160 };
+const COL_DEFAULTS = { num: 38, title: 280, start: 82, end: 82, dur: 48, deps: 88, assignees: 82, notes: 150 };
 // LEFT_W is now computed dynamically from colWidths state
 
 // Build a flat numbered index of all items across all projects
@@ -1236,7 +1236,23 @@ function TimelineView({ projects, people, onEditItem, onAddDeliverable, onAddSub
   const toggleProjFilter = (id) => setSelectedProjects(s => s.includes(id) ? s.filter(x => x !== id) : [...s, id]);
   const visibleProjects = selectedProjects.length === 0 ? projects : projects.filter(p => selectedProjects.includes(p.id));
   const [DAY_W, setDayW] = useState(24);
-  const [colWidths, setColWidths] = useState({ ...COL_DEFAULTS });
+  const [colWidths, setColWidths] = useState(() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem('planr_colWidths') || '{}');
+      // Merge saved with defaults so new columns always appear
+      return { ...COL_DEFAULTS, ...saved };
+    } catch { return { ...COL_DEFAULTS }; }
+  });
+
+  // Persist colWidths to localStorage whenever they change
+  useEffect(() => {
+    try { localStorage.setItem('planr_colWidths', JSON.stringify(colWidths)); } catch {}
+  }, [colWidths]);
+
+  const resetColWidths = () => {
+    setColWidths({ ...COL_DEFAULTS });
+    try { localStorage.removeItem('planr_colWidths'); } catch {}
+  };
   const LEFT_W = Object.values(colWidths).reduce((a, b) => a + b, 0);
   const rowIndex = buildRowIndex(projects);
 
@@ -1301,65 +1317,102 @@ function TimelineView({ projects, people, onEditItem, onAddDeliverable, onAddSub
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-    {/* Project filter pills */}
-    <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
-      <span style={{ fontSize: 11, color: "#6b7280", fontWeight: 600 }}>Show:</span>
-      <div onClick={() => setSelectedProjects([])} style={{
-        padding: "3px 10px", borderRadius: 12, cursor: "pointer", fontSize: 11, fontWeight: 700,
-        background: selectedProjects.length === 0 ? "rgba(0,0,0,0.1)" : "transparent",
-        border: `1px solid ${selectedProjects.length === 0 ? "rgba(0,0,0,0.2)" : "rgba(0,0,0,0.1)"}`,
-        color: selectedProjects.length === 0 ? "#111827" : "#6b7280",
-      }}>All Projects</div>
-      {projects.map(p => (
-        <div key={p.id} onClick={() => toggleProjFilter(p.id)} style={{
+
+      {/* Project filter pills — normal flow above the timeline box */}
+      <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
+        <span style={{ fontSize: 11, color: "#6b7280", fontWeight: 600 }}>Show:</span>
+        <div onClick={() => setSelectedProjects([])} style={{
           padding: "3px 10px", borderRadius: 12, cursor: "pointer", fontSize: 11, fontWeight: 700,
-          background: selectedProjects.includes(p.id) ? p.color + "18" : "transparent",
-          border: `1px solid ${selectedProjects.includes(p.id) ? p.color + "80" : "rgba(0,0,0,0.1)"}`,
-          color: selectedProjects.includes(p.id) ? p.color : "#6b7280",
-        }}>{p.name}</div>
-      ))}
-    </div>
-    <div ref={containerRef} style={{ background: "#eceef2", border: "1px solid rgba(0,0,0,0.07)", borderRadius: 10, overflow: "hidden", fontFamily: "inherit" }}>
-      {/* Sticky header row — month labels */}
-      <div style={{ display: "flex", borderBottom: "1px solid rgba(0,0,0,0.07)", background: "#f5f6f8", position: "sticky", top: 0, zIndex: 20 }}>
-        {/* Left table header with resize handles */}
-        <div style={{ width: LEFT_W, flexShrink: 0, display: "flex", borderRight: "1px solid rgba(0,0,0,0.07)" }}>
-          {[["#","num"],["Title","title"],["Start","start"],["End","end"],["Dur","dur"],["Deps","deps"],["Assigned To","assignees"],["Notes","notes"]].map(([label, key]) => (
-            <div key={key} style={{ width: colWidths[key], position: "relative", padding: "10px 8px", fontSize: 10, fontWeight: 700, color: "#6b7280", letterSpacing: "0.09em", flexShrink: 0, borderRight: "1px solid rgba(0,0,0,0.05)", whiteSpace: "nowrap", overflow: "hidden", userSelect: "none" }}>
-              {label.toUpperCase()}
-              {/* Drag handle */}
-              <div onMouseDown={(e) => startResizeCol(key, e)} style={{
-                position: "absolute", right: 0, top: 0, bottom: 0, width: 6, cursor: "col-resize",
-                display: "flex", alignItems: "center", justifyContent: "center",
-              }}>
-                <div style={{ width: 2, height: 14, background: "rgba(0,0,0,0.15)", borderRadius: 1 }} />
-              </div>
-            </div>
-          ))}
-        </div>
-        {/* Scrollable month header */}
-        <div style={{ flex: 1, overflow: "hidden" }} ref={scrollRef}>
-          <div style={{ width: totalDays * DAY_W, height: 38, position: "relative" }}>
-            {months.map((m, i) => (
-              <div key={i} style={{ position: "absolute", left: m.offset * DAY_W, width: m.days * DAY_W, height: "100%", display: "flex", alignItems: "center", paddingLeft: 8, fontSize: 10, fontWeight: 800, color: "#6b7280", letterSpacing: "0.1em", textTransform: "uppercase", borderRight: "1px solid rgba(0,0,0,0.06)" }}>{m.label}</div>
-            ))}
-            <div style={{ position: "absolute", left: todayOff * DAY_W, top: 0, bottom: 0, width: 2, background: "#f59e0b", opacity: 0.9 }} />
-          </div>
-        </div>
+          background: selectedProjects.length === 0 ? "rgba(0,0,0,0.1)" : "transparent",
+          border: `1px solid ${selectedProjects.length === 0 ? "rgba(0,0,0,0.2)" : "rgba(0,0,0,0.1)"}`,
+          color: selectedProjects.length === 0 ? "#111827" : "#6b7280",
+        }}>All Projects</div>
+        {projects.map(p => (
+          <div key={p.id} onClick={() => toggleProjFilter(p.id)} style={{
+            padding: "3px 10px", borderRadius: 12, cursor: "pointer", fontSize: 11, fontWeight: 700,
+            background: selectedProjects.includes(p.id) ? p.color + "18" : "transparent",
+            border: `1px solid ${selectedProjects.includes(p.id) ? p.color + "80" : "rgba(0,0,0,0.1)"}`,
+            color: selectedProjects.includes(p.id) ? p.color : "#6b7280",
+          }}>{p.name}</div>
+        ))}
       </div>
 
-      {/* Body — synced horizontal scroll */}
-      <TimelineBody
-        projects={visibleProjects} people={people} collapsed={collapsed} toggle={toggle}
-        weeks={weeks} todayOff={todayOff} allItemsFlat={allItemsFlat}
-        onEditItem={onEditItem} headerScrollRef={scrollRef}
-        onAddDeliverable={onAddDeliverable} onAddSubtask={onAddSubtask}
-        onMarkDone={onMarkDone} onSaveItem={onSaveItem} rowIndex={rowIndex} DAY_W={DAY_W}
-        colWidths={colWidths} LEFT_W={LEFT_W} holidays={holidays}
-        onInsertSubtask={onInsertSubtask} onReorderSubtasks={onReorderSubtasks} onDeleteSubtask={onDeleteSubtask}
-        statusNotes={statusNotes} onUpdateNote={onUpdateNote}
-      />
-    </div>
+      {/*
+        ── TIMELINE BOX ──────────────────────────────────────────────────────
+        This is a self-contained scroll region. It fills remaining viewport
+        height and scrolls vertically within itself. The column header sticks
+        at the top of THIS box using position:sticky top:0, which works
+        perfectly because the immediate scroll ancestor is this div.
+        Horizontal scroll is handled inside TimelineBody and synced to the
+        header via headerScrollRef / syncScroll.
+      */}
+      <div
+        ref={containerRef}
+        style={{
+          background: "#eceef2",
+          border: "1px solid rgba(0,0,0,0.07)",
+          borderRadius: 10,
+          fontFamily: "inherit",
+          display: "flex",
+          flexDirection: "column",
+          /* Fill remaining viewport height below the header + filter pills */
+          height: "calc(100vh - 130px)",
+          minHeight: 320,
+          overflowY: "auto",   /* ← THIS div owns vertical scrolling */
+          overflowX: "hidden", /* horizontal is handled inside */
+        }}
+      >
+        {/* ── STICKY COLUMN HEADER — sticks inside the timeline box ── */}
+        <div style={{
+          position: "sticky",
+          top: 0,
+          zIndex: 30,
+          display: "flex",
+          height: 38,
+          flexShrink: 0,
+          background: "#f0f2f5",
+          borderBottom: "1px solid rgba(0,0,0,0.09)",
+          boxShadow: "0 2px 6px rgba(0,0,0,0.08)",
+        }}>
+          {/* Left: column labels with resize handles */}
+          <div style={{ width: LEFT_W, flexShrink: 0, display: "flex", background: "#f0f2f5", borderRight: "1px solid rgba(0,0,0,0.07)" }}>
+            {[["#","num"],["Title","title"],["Start","start"],["End","end"],["Dur","dur"],["Deps","deps"],["Assigned To","assignees"],["Notes","notes"]].map(([label, key]) => (
+              <div key={key} style={{ width: colWidths[key], position: "relative", padding: "0 8px", fontSize: 10, fontWeight: 700, color: "#6b7280", letterSpacing: "0.09em", flexShrink: 0, borderRight: "1px solid rgba(0,0,0,0.05)", whiteSpace: "nowrap", overflow: "hidden", userSelect: "none", display: "flex", alignItems: "center" }}>
+                {label.toUpperCase()}
+                <div onMouseDown={(e) => startResizeCol(key, e)} style={{ position: "absolute", right: 0, top: 0, bottom: 0, width: 6, cursor: "col-resize", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                  <div style={{ width: 2, height: 14, background: "rgba(0,0,0,0.15)", borderRadius: 1 }} />
+                </div>
+              </div>
+            ))}
+            <button onClick={resetColWidths} title="Reset column widths to defaults"
+              style={{ marginLeft: 4, background: "none", border: "none", color: "#c4c9d4", cursor: "pointer", fontSize: 9, fontFamily: "inherit", padding: "0 6px", alignSelf: "center", whiteSpace: "nowrap" }}
+              onMouseEnter={e => e.currentTarget.style.color = "#6b7280"}
+              onMouseLeave={e => e.currentTarget.style.color = "#c4c9d4"}
+            >↺</button>
+          </div>
+          {/* Right: month/date labels — synced with body horizontal scroll */}
+          <div style={{ flex: 1, overflow: "hidden" }} ref={scrollRef}>
+            <div style={{ width: totalDays * DAY_W, height: "100%", position: "relative", minWidth: "100%" }}>
+              {months.map((m, i) => (
+                <div key={i} style={{ position: "absolute", left: m.offset * DAY_W, width: m.days * DAY_W, height: "100%", display: "flex", alignItems: "center", paddingLeft: 8, fontSize: 10, fontWeight: 800, color: "#6b7280", letterSpacing: "0.1em", textTransform: "uppercase", borderRight: "1px solid rgba(0,0,0,0.06)" }}>{m.label}</div>
+              ))}
+              <div style={{ position: "absolute", left: todayOff * DAY_W, top: 0, bottom: 0, width: 2, background: "#f59e0b", opacity: 0.9 }} />
+            </div>
+          </div>
+        </div>
+
+        {/* ── BODY — scrolls vertically inside the timeline box ── */}
+        <TimelineBody
+          projects={visibleProjects} people={people} collapsed={collapsed} toggle={toggle}
+          weeks={weeks} todayOff={todayOff} allItemsFlat={allItemsFlat}
+          onEditItem={onEditItem} headerScrollRef={scrollRef}
+          onAddDeliverable={onAddDeliverable} onAddSubtask={onAddSubtask}
+          onMarkDone={onMarkDone} onSaveItem={onSaveItem} rowIndex={rowIndex} DAY_W={DAY_W}
+          colWidths={colWidths} LEFT_W={LEFT_W} holidays={holidays}
+          onInsertSubtask={onInsertSubtask} onReorderSubtasks={onReorderSubtasks} onDeleteSubtask={onDeleteSubtask}
+          statusNotes={statusNotes} onUpdateNote={onUpdateNote}
+        />
+      </div>
     </div>
   );
 }
@@ -4472,7 +4525,7 @@ export default function App() {
   );
 
   return (
-    <div style={{ minHeight: "100vh", background: "#f5f6f8", color: "#111827", fontFamily: "Arial, Helvetica, sans-serif", display: "flex", flexDirection: "column", width: "100vw", overflowX: "hidden" }}>
+    <div style={{ minHeight: "100vh", background: "#f5f6f8", color: "#111827", fontFamily: "Arial, Helvetica, sans-serif", display: "flex", flexDirection: "column", width: "100vw", overflowX: "hidden", overflowY: "auto" }}>
       <style>{`
         
         * { box-sizing: border-box; margin: 0; padding: 0; } html, body, #root { width: 100%; max-width: 100vw; overflow-x: hidden; }
@@ -4562,7 +4615,7 @@ export default function App() {
       </header>
 
       {/* Main */}
-      <main style={{ flex: 1, padding: "14px 16px", overflow: "auto", display: "flex", flexDirection: "column", gap: 14, boxSizing: "border-box", width: "100%", minWidth: 0 }}>
+      <main style={{ flex: 1, padding: "14px 16px", overflow: "visible", display: "flex", flexDirection: "column", gap: 14, boxSizing: "border-box", width: "100%", minWidth: 0 }}>
         {/* Project pills */}
         <div style={{ display: "flex", gap: 7, flexWrap: "wrap", alignItems: "center" }}>
           {projects.map(proj => {
