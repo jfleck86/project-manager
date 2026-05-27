@@ -648,9 +648,9 @@ function TaskModal({ item, projectColor, allItems, onClose, onSave, allPeople, o
   };
 
   return (
-    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.3)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000, backdropFilter: "blur(6px)" }}
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.3)", display: "flex", alignItems: "flex-start", justifyContent: "center", zIndex: 1000, backdropFilter: "blur(6px)", overflowY: "auto", padding: "40px 16px" }}
       onClick={e => e.target === e.currentTarget && onClose()}>
-      <div style={{ background: "#ffffff", border: "1px solid rgba(0,0,0,0.09)", borderRadius: 12, width: 580, maxHeight: "92vh", overflow: "auto", boxShadow: "0 30px 90px rgba(0,0,0,0.35)" }}>
+      <div style={{ background: "#ffffff", border: "1px solid rgba(0,0,0,0.09)", borderRadius: 12, width: 580, maxHeight: "none", overflow: "visible", boxShadow: "0 30px 90px rgba(0,0,0,0.35)" }}>
         {/* Header */}
         <div style={{ borderBottom: "1px solid rgba(0,0,0,0.06)", padding: "18px 22px", display: "flex", alignItems: "center", gap: 12 }}>
           <div style={{ width: 4, height: 22, background: projectColor, borderRadius: 2, flexShrink: 0 }} />
@@ -839,10 +839,14 @@ function DashboardAddButton({ projects, onAddDeliverable, onNewProject }) {
   );
 }
 
-function DashboardView({ projects, people, onEditItem, onAddDeliverable, onAddSubtask, onNewProject, holidays = [] }) {
+function DashboardView({ projects, people, onEditItem, onAddDeliverable, onAddSubtask, onNewProject, holidays = [], pto = [], savePto }) {
   const allDeliverables = projects.flatMap(p => p.deliverables.map(d => ({ ...d, projectId: p.id, projectName: p.name, projectColor: p.color })));
   const allSubtasks = projects.flatMap(p => p.deliverables.flatMap(d => d.subtasks.map(s => ({ ...s, projectId: p.id, projectName: p.name, projectColor: p.color, deliverableId: d.id }))));
   const allItems = [...allDeliverables, ...allSubtasks];
+  const _tod = new Date(); _tod.setHours(0,0,0,0);
+  const _todStr = _tod.toISOString().slice(0,10);
+  const [showOooForm, setShowOooForm] = useState(false);
+  const [oooForm, setOooForm] = useState({ personId: people[0]?.id || "", start: _todStr, end: _todStr, note: "" });
   const [sortCol, setSortCol] = useState("start");
   const [sortDir, setSortDir] = useState("asc");
   const toggleSort = (col) => { if (sortCol === col) setSortDir(d => d === "asc" ? "desc" : "asc"); else { setSortCol(col); setSortDir("asc"); } };
@@ -985,6 +989,106 @@ function DashboardView({ projects, people, onEditItem, onAddDeliverable, onAddSu
             </div>
           ))}
         </div>
+
+        {/* ── Upcoming Out of Office ── */}
+        {(() => {
+          const today = new Date(); today.setHours(0,0,0,0);
+          const todayStr = today.toISOString().slice(0,10);
+          const cutoff = new Date(today); cutoff.setDate(cutoff.getDate() + 28);
+          const cutoffStr = cutoff.toISOString().slice(0,10);
+          const upcoming = pto
+            .filter(p => p.end >= todayStr && p.start <= cutoffStr)
+            .sort((a, b) => a.start.localeCompare(b.start));
+          return (
+            <div style={{ background: "#ffffff", border: "1px solid rgba(0,0,0,0.07)", borderRadius: 10, padding: "16px 18px" }}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
+                <SectionHeader noMargin>Upcoming Out of Office</SectionHeader>
+                <button onClick={() => setShowOooForm(f => !f)} style={{ fontSize: 10, fontWeight: 700, background: BRAND_TEAL_L, border: `1px solid ${BRAND_TEAL}50`, color: BRAND_TEAL_D, borderRadius: 5, padding: "3px 10px", cursor: "pointer", fontFamily: "inherit" }}>
+                  {showOooForm ? "Cancel" : "+ Add"}
+                </button>
+              </div>
+              {showOooForm && (
+                <div style={{ background: "rgba(0,0,0,0.02)", border: "1px solid rgba(0,0,0,0.07)", borderRadius: 8, padding: 12, marginBottom: 14, display: "flex", flexDirection: "column", gap: 8 }}>
+                  <div>
+                    <div style={{ fontSize: 10, fontWeight: 600, color: "#6b7280", marginBottom: 4 }}>Person</div>
+                    <select value={oooForm.personId} onChange={e => setOooForm(f => ({...f, personId: e.target.value}))}
+                      style={{ width: "100%", fontSize: 11, border: "1px solid rgba(0,0,0,0.12)", borderRadius: 5, padding: "5px 8px", fontFamily: "inherit", background: "#fff" }}>
+                      {people.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+                    </select>
+                  </div>
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                    <div>
+                      <div style={{ fontSize: 10, fontWeight: 600, color: "#6b7280", marginBottom: 4 }}>Start</div>
+                      <input type="date" value={oooForm.start} onChange={e => setOooForm(f => ({...f, start: e.target.value}))}
+                        style={{ width: "100%", fontSize: 11, border: "1px solid rgba(0,0,0,0.12)", borderRadius: 5, padding: "5px 8px", fontFamily: "inherit", boxSizing: "border-box" }} />
+                    </div>
+                    <div>
+                      <div style={{ fontSize: 10, fontWeight: 600, color: "#6b7280", marginBottom: 4 }}>End</div>
+                      <input type="date" value={oooForm.end} onChange={e => setOooForm(f => ({...f, end: e.target.value}))}
+                        style={{ width: "100%", fontSize: 11, border: "1px solid rgba(0,0,0,0.12)", borderRadius: 5, padding: "5px 8px", fontFamily: "inherit", boxSizing: "border-box" }} />
+                    </div>
+                  </div>
+                  <div>
+                    <div style={{ fontSize: 10, fontWeight: 600, color: "#6b7280", marginBottom: 4 }}>Note (optional)</div>
+                    <input value={oooForm.note} onChange={e => setOooForm(f => ({...f, note: e.target.value}))}
+                      placeholder="Vacation, Conference, Medical…"
+                      style={{ width: "100%", fontSize: 11, border: "1px solid rgba(0,0,0,0.12)", borderRadius: 5, padding: "5px 8px", fontFamily: "inherit", boxSizing: "border-box" }} />
+                  </div>
+                  <button
+                    onClick={() => {
+                      if (!oooForm.personId || !oooForm.start || !oooForm.end) return;
+                      savePto && savePto({ id: "pto_" + Date.now(), personId: oooForm.personId, start: oooForm.start, end: oooForm.end, note: oooForm.note });
+                      setShowOooForm(false);
+                      setOooForm({ personId: people[0]?.id || "", start: _todStr, end: _todStr, note: "" });
+                    }}
+                    style={{ background: BRAND_TEAL, border: "none", borderRadius: 5, color: BRAND_NAVY, fontSize: 11, fontWeight: 700, padding: "7px 0", cursor: "pointer", fontFamily: "inherit" }}
+                  >Save Time Off</button>
+                </div>
+              )}
+              {upcoming.length === 0 ? (
+                <div style={{ fontSize: 11, color: "#9ca3af", padding: "8px 0" }}>No scheduled time off in the next 4 weeks.</div>
+              ) : (
+                <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                  {upcoming.map(p => {
+                    const person = people.find(x => x.id === p.personId);
+                    if (!person) return null;
+                    const isNow = p.start <= todayStr && p.end >= todayStr;
+                    const startD = parseDate(p.start);
+                    const endD   = parseDate(p.end);
+                    const days   = Math.round((endD - startD) / 86400000) + 1;
+                    return (
+                      <div key={p.id} style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                        <Avatar person={person} size={28} />
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                            <span style={{ fontSize: 11, fontWeight: 700, color: "#1f2937" }}>{person.name}</span>
+                            {isNow && <span style={{ fontSize: 9, fontWeight: 700, background: "#fef3c7", color: "#d97706", borderRadius: 4, padding: "1px 5px" }}>Out now</span>}
+                          </div>
+                          <div style={{ fontSize: 10, color: "#6b7280", marginTop: 1 }}>
+                            {fmt(startD)}{days > 1 ? ` – ${fmt(endD)}` : ""} · {days} day{days !== 1 ? "s" : ""}
+                            {p.note ? <span style={{ color: "#9ca3af" }}> · {p.note}</span> : ""}
+                          </div>
+                        </div>
+                        {/* Mini timeline bar */}
+                        {(() => {
+                          const total = 28;
+                          const daysFromToday = Math.max(0, Math.round((startD - today) / 86400000));
+                          const barLeft = Math.min(100, (daysFromToday / total) * 100);
+                          const barW = Math.min(100 - barLeft, (days / total) * 100);
+                          return (
+                            <div style={{ width: 80, height: 6, background: "rgba(0,0,0,0.06)", borderRadius: 3, flexShrink: 0, position: "relative", overflow: "hidden" }} title={`${fmt(startD)} – ${fmt(endD)}`}>
+                              <div style={{ position: "absolute", left: `${barLeft}%`, width: `${Math.max(barW, 4)}%`, height: "100%", background: person.color, borderRadius: 3, opacity: isNow ? 1 : 0.6 }} />
+                            </div>
+                          );
+                        })()}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          );
+        })()}
       </div>
       {/* Task table */}
       <div style={{ background: "#ffffff", border: "1px solid rgba(0,0,0,0.07)", borderRadius: 10, overflow: "hidden" }}>
@@ -1251,7 +1355,7 @@ function dayOffset(dateStr) {
   return Math.ceil((parseDate(dateStr) - TIMELINE_START) / 86400000);
 }
 
-function TimelineView({ projects, people, onEditItem, onAddDeliverable, onAddSubtask, onMarkDone, onSaveItem, holidays = [], onInsertSubtask, onReorderSubtasks, onDeleteSubtask, statusNotes = {}, onUpdateNote }) {
+function TimelineView({ projects, people, onEditItem, onAddDeliverable, onAddSubtask, onMarkDone, onSaveItem, holidays = [], onInsertSubtask, onReorderSubtasks, onDeleteSubtask, statusNotes = {}, onUpdateNote, clipboard, onCopySubtask, onCopyDeliverable, onPasteSubtask, onPasteDeliverable }) {
   const [collapsed, setCollapsed] = useState(() => {
     try { return JSON.parse(localStorage.getItem('planr_collapsed') || '{}'); } catch { return {}; }
   });
@@ -1441,13 +1545,15 @@ function TimelineView({ projects, people, onEditItem, onAddDeliverable, onAddSub
           colWidths={colWidths} LEFT_W={LEFT_W} holidays={holidays}
           onInsertSubtask={onInsertSubtask} onReorderSubtasks={onReorderSubtasks} onDeleteSubtask={onDeleteSubtask}
           statusNotes={statusNotes} onUpdateNote={onUpdateNote}
+          clipboard={clipboard} onCopySubtask={onCopySubtask} onCopyDeliverable={onCopyDeliverable}
+          onPasteSubtask={onPasteSubtask} onPasteDeliverable={onPasteDeliverable}
         />
       </div>
     </div>
   );
 }
 
-function TimelineBody({ projects, people, collapsed, toggle, weeks, todayOff, allItemsFlat, onEditItem, headerScrollRef, onAddDeliverable, onAddSubtask, onMarkDone, onSaveItem, rowIndex, DAY_W, colWidths, LEFT_W, holidays = [], onInsertSubtask, onReorderSubtasks, onDeleteSubtask, statusNotes = {}, onUpdateNote }) {
+function TimelineBody({ projects, people, collapsed, toggle, weeks, todayOff, allItemsFlat, onEditItem, headerScrollRef, onAddDeliverable, onAddSubtask, onMarkDone, onSaveItem, rowIndex, DAY_W, colWidths, LEFT_W, holidays = [], onInsertSubtask, onReorderSubtasks, onDeleteSubtask, statusNotes = {}, onUpdateNote, clipboard, onCopySubtask, onCopyDeliverable, onPasteSubtask, onPasteDeliverable }) {
   const bodyRef = useRef(null);
 
   const syncScroll = (e) => {
@@ -1480,7 +1586,8 @@ function TimelineBody({ projects, people, collapsed, toggle, weeks, todayOff, al
             onAddDeliverable={onAddDeliverable} onAddSubtask={onAddSubtask} onMarkDone={onMarkDone}
             onSaveItem={onSaveItem} rowIndex={rowIndex} DAY_W={DAY_W} colWidths={colWidths} LEFT_W={LEFT_W}
             onInsertSubtask={onInsertSubtask} onReorderSubtasks={onReorderSubtasks} onDeleteSubtask={onDeleteSubtask}
-            statusNotes={statusNotes} onUpdateNote={onUpdateNote} holidays={holidays} />
+            statusNotes={statusNotes} onUpdateNote={onUpdateNote} holidays={holidays}
+            clipboard={clipboard} onCopySubtask={onCopySubtask} onCopyDeliverable={onCopyDeliverable} onPasteSubtask={onPasteSubtask} onPasteDeliverable={onPasteDeliverable} />
         ))}
         {/* Today footer */}
         <div style={{ display: "flex", height: 22, background: "#e8eaee", borderTop: "1px solid rgba(0,0,0,0.06)" }}>
@@ -1494,7 +1601,7 @@ function TimelineBody({ projects, people, collapsed, toggle, weeks, todayOff, al
   );
 }
 
-function ProjectSection({ proj, people, collapsed, toggle, weeks, todayOff, allItemsFlat, onEditItem, onAddDeliverable, onAddSubtask, onMarkDone, onSaveItem, rowIndex, DAY_W, colWidths, LEFT_W, onInsertSubtask, onReorderSubtasks, onDeleteSubtask, statusNotes = {}, onUpdateNote, holidays = [] }) {
+function ProjectSection({ proj, people, collapsed, toggle, weeks, todayOff, allItemsFlat, onEditItem, onAddDeliverable, onAddSubtask, onMarkDone, onSaveItem, rowIndex, DAY_W, colWidths, LEFT_W, onInsertSubtask, onReorderSubtasks, onDeleteSubtask, statusNotes = {}, onUpdateNote, holidays = [], clipboard, onCopySubtask, onCopyDeliverable, onPasteSubtask, onPasteDeliverable }) {
   const isProjCollapsed = !!collapsed[proj.id];
 
   // Span the whole project across the chart for the summary bar
@@ -1566,7 +1673,9 @@ function ProjectSection({ proj, people, collapsed, toggle, weeks, todayOff, allI
           onAddSubtask={() => onAddSubtask(proj, del)} onMarkDone={onMarkDone}
           onSaveItem={onSaveItem} rowIndex={rowIndex} DAY_W={DAY_W} colWidths={colWidths} LEFT_W={LEFT_W}
           onInsertSubtask={onInsertSubtask} onReorderSubtasks={onReorderSubtasks} onDeleteSubtask={onDeleteSubtask}
-          statusNotes={statusNotes} onUpdateNote={onUpdateNote} holidays={holidays} />
+          statusNotes={statusNotes} onUpdateNote={onUpdateNote} holidays={holidays}
+          clipboard={clipboard} onCopySubtask={onCopySubtask} onCopyDeliverable={onCopyDeliverable}
+          onPasteSubtask={onPasteSubtask} onPasteDeliverable={onPasteDeliverable} />
       ))}
 
       {/* Empty state */}
@@ -1621,7 +1730,7 @@ function ContextMenu({ x, y, items, onClose }) {
   );
 }
 
-function DeliverableRow({ del, proj, people, collapsed, toggle, weeks, todayOff, allItemsFlat, onEditItem, onAddSubtask, onMarkDone, onSaveItem, rowIndex, DAY_W, colWidths, LEFT_W, onInsertSubtask, onReorderSubtasks, onDeleteSubtask, statusNotes = {}, onUpdateNote, holidays = [] }) {
+function DeliverableRow({ del, proj, people, collapsed, toggle, weeks, todayOff, allItemsFlat, onEditItem, onAddSubtask, onMarkDone, onSaveItem, rowIndex, DAY_W, colWidths, LEFT_W, onInsertSubtask, onReorderSubtasks, onDeleteSubtask, statusNotes = {}, onUpdateNote, holidays = [], clipboard, onCopySubtask, onCopyDeliverable, onPasteSubtask, onPasteDeliverable }) {
   const isCollapsed = collapsed[del.id];
   const rowNum = rowIndex.index[del.id] || "?";
   const startOff = dayOffset(del.start);
@@ -1635,6 +1744,7 @@ function DeliverableRow({ del, proj, people, collapsed, toggle, weeks, todayOff,
 
   const depsDisplay = (del.depsText || "");
   const [ctxMenu, setCtxMenu] = useState(null);
+  const [delCtxMenu, setDelCtxMenu] = useState(null);
   const [dragState, setDragState] = useState({ dragIdx: null, overIdx: null });
   const dragRef = useRef(null); // { startY, idx, rowHeight }
 
@@ -1689,7 +1799,23 @@ function DeliverableRow({ del, proj, people, collapsed, toggle, weeks, todayOff,
 
   return (
     <div>
+      {/* Deliverable row — right-click for copy/paste */}
+      {delCtxMenu && (
+        <ContextMenu x={delCtxMenu.x} y={delCtxMenu.y} onClose={() => setDelCtxMenu(null)} items={[
+          { icon: "⎘", label: "Copy deliverable (with subtasks)", action: () => onCopyDeliverable && onCopyDeliverable(del) },
+          { icon: "⎘", label: "Copy subtasks only", action: () => { del.subtasks.forEach(s => onCopySubtask && onCopySubtask(s)); } },
+          ...(clipboard?.type === "deliverable" ? [
+            "divider",
+            { icon: "⊞", label: `Paste "${clipboard.data.title.slice(0,22)}…" into ${proj.name}`, action: () => onPasteDeliverable && onPasteDeliverable(proj.id) },
+          ] : []),
+          ...(clipboard?.type === "subtask" ? [
+            "divider",
+            { icon: "⊞", label: `Paste "${clipboard.data.title.slice(0,22)}…" as subtask`, action: () => onPasteSubtask && onPasteSubtask(proj.id, del.id) },
+          ] : []),
+        ]} />
+      )}
       <div style={{ display: "flex", height: D_ROW, borderBottom: "1px solid rgba(0,0,0,0.05)", alignItems: "center", background: "rgba(245,158,11,0.03)", position: "relative" }}
+        onContextMenu={e => { e.preventDefault(); setDelCtxMenu({ x: e.clientX, y: e.clientY }); }}
         onMouseEnter={e => e.currentTarget.style.background = "rgba(245,158,11,0.06)"}
         onMouseLeave={e => e.currentTarget.style.background = "rgba(245,158,11,0.03)"}>
         {/* Row # */}
@@ -1809,14 +1935,29 @@ function DeliverableRow({ del, proj, people, collapsed, toggle, weeks, todayOff,
         <ContextMenu x={ctxMenu.x} y={ctxMenu.y} onClose={() => setCtxMenu(null)} items={[
           { icon: '↑', label: 'Insert subtask above', action: () => {
             const afterId = ctxMenu.subIdx > 0 ? del.subtasks[ctxMenu.subIdx - 1].id : null;
-            const newSub = { id: 's_' + Date.now(), title: 'New subtask', status: 'Not Started', priority: 'Medium', assignees: [], start: del.start, end: del.end, progress: 0, dependencies: [], department: '' };
+            const newSub = { id: 's_' + Date.now(), title: 'New subtask', status: 'Not Started', priority: 'Medium', assignees: [], start: del.start, end: del.end, progress: 0, dependencies: [], department: '', effort: 'M' };
             onInsertSubtask(proj.id, del.id, afterId, newSub);
           }},
           { icon: '↓', label: 'Insert subtask below', action: () => {
             const afterId = del.subtasks[ctxMenu.subIdx]?.id || null;
-            const newSub = { id: 's_' + Date.now(), title: 'New subtask', status: 'Not Started', priority: 'Medium', assignees: [], start: del.start, end: del.end, progress: 0, dependencies: [], department: '' };
+            const newSub = { id: 's_' + Date.now(), title: 'New subtask', status: 'Not Started', priority: 'Medium', assignees: [], start: del.start, end: del.end, progress: 0, dependencies: [], department: '', effort: 'M' };
             onInsertSubtask(proj.id, del.id, afterId, newSub);
           }},
+          'divider',
+          { icon: '⎘', label: 'Copy this subtask', action: () => {
+            const sub = del.subtasks[ctxMenu.subIdx];
+            if (sub && onCopySubtask) onCopySubtask(sub);
+          }},
+          ...(clipboard?.type === 'subtask' ? [
+            { icon: '⊞', label: `Paste "${(clipboard.data.title || '').slice(0,22)}…" above`, action: () => {
+              const afterId = ctxMenu.subIdx > 0 ? del.subtasks[ctxMenu.subIdx - 1].id : null;
+              onPasteSubtask && onPasteSubtask(proj.id, del.id, afterId);
+            }},
+            { icon: '⊞', label: `Paste "${(clipboard.data.title || '').slice(0,22)}…" below`, action: () => {
+              const afterId = del.subtasks[ctxMenu.subIdx]?.id || null;
+              onPasteSubtask && onPasteSubtask(proj.id, del.id, afterId);
+            }},
+          ] : []),
           'divider',
           { icon: '⊗', label: 'Delete subtask', danger: true, action: () => {
             const sub = del.subtasks[ctxMenu.subIdx];
@@ -2139,7 +2280,7 @@ function InlineAssignees({ assignees, onChange, people }) {
 }
 
 // --- PEOPLE VIEW ──────────────────────────────────────────────────────────────
-function PeopleView({ projects, people, onEditItem, onMarkDone, onSaveItem, holidays = [] }) {
+function PeopleView({ projects, people, onEditItem, onMarkDone, onSaveItem, holidays = [], pto = [] }) {
   const allDeliverables = projects.flatMap(p => p.deliverables.map(d => ({ ...d, projectId: p.id, projectName: p.name, projectColor: p.color })));
   const allSubtasks = projects.flatMap(p => p.deliverables.flatMap(d => d.subtasks.map(s => ({ ...s, projectId: p.id, projectName: p.name, projectColor: p.color, deliverableId: d.id }))));
   const allItems = [...allDeliverables, ...allSubtasks];
@@ -2269,6 +2410,24 @@ function PeopleView({ projects, people, onEditItem, onMarkDone, onSaveItem, holi
                     <div style={{ width: 160, flexShrink: 0, borderRight: "1px solid rgba(0,0,0,0.06)", padding: "6px 10px", fontSize: 10, fontWeight: 700, color: "#9ca3af", letterSpacing: "0.07em" }}>DELIVERABLE</div>
                     <div style={{ width: 160, flexShrink: 0, borderRight: "1px solid rgba(0,0,0,0.06)", padding: "6px 10px", fontSize: 10, fontWeight: 700, color: "#9ca3af", letterSpacing: "0.07em" }}>TASK</div>
                     <div style={{ flex: 1, position: "relative", height: 28 }}>
+                      {/* PTO bands in header */}
+                      {pto.filter(p => p.personId === selected).map(p => {
+                        const pStart = gOffset(p.start);
+                        const pEnd   = gOffset(p.end);
+                        if (pEnd < 0 || pStart > ganttDays + 2) return null;
+                        const left  = Math.max(0, pStart) * GDAY_W;
+                        const right = Math.min(ganttDays + 2, pEnd + 1) * GDAY_W;
+                        return (
+                          <div key={p.id} title={`PTO: ${p.start} – ${p.end}${p.note ? " · " + p.note : ""}`}
+                            style={{ position: "absolute", left, top: 0, bottom: 0, width: right - left,
+                              background: "rgba(0,0,0,0.07)", display: "flex", alignItems: "center",
+                              justifyContent: "center", overflow: "hidden", zIndex: 2, pointerEvents: "none" }}>
+                            <span style={{ fontSize: 8, fontWeight: 700, color: "rgba(0,0,0,0.35)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "clip", letterSpacing: "0.08em" }}>
+                              🌴 PTO
+                            </span>
+                          </div>
+                        );
+                      })}
                       {/* Generate week markers */}
                       {Array.from({ length: Math.ceil(ganttDays / 7) }, (_, wi) => {
                         const d = new Date(ganttStart.getTime() + wi * 7 * 86400000);
@@ -2329,6 +2488,21 @@ function PeopleView({ projects, people, onEditItem, onMarkDone, onSaveItem, holi
                             const hOff = gOffset(h.date);
                             if (hOff < 0 || hOff > ganttDays + 2) return null;
                             return <div key={h.date} style={{ position: "absolute", left: hOff * GDAY_W, top: 0, bottom: 0, width: GDAY_W, background: "rgba(251,146,60,0.1)", pointerEvents: "none" }} />;
+                          })}
+                          {/* PTO shading — grey out days the person is on leave */}
+                          {pto.filter(p => p.personId === selected).map(p => {
+                            const pStart = gOffset(p.start);
+                            const pEnd   = gOffset(p.end);
+                            if (pEnd < 0 || pStart > ganttDays + 2) return null;
+                            const left  = Math.max(0, pStart) * GDAY_W;
+                            const right = Math.min(ganttDays + 2, pEnd + 1) * GDAY_W;
+                            return (
+                              <div key={p.id} title={`PTO${p.note ? ": " + p.note : ""} (${p.start} – ${p.end})`}
+                                style={{ position: "absolute", left, top: 0, bottom: 0, width: right - left,
+                                  background: "repeating-linear-gradient(45deg, rgba(0,0,0,0.04) 0px, rgba(0,0,0,0.04) 4px, rgba(0,0,0,0.08) 4px, rgba(0,0,0,0.08) 8px)",
+                                  borderLeft: "1px solid rgba(0,0,0,0.1)", borderRight: "1px solid rgba(0,0,0,0.1)",
+                                  pointerEvents: "none", zIndex: 1 }} />
+                            );
                           })}
                           {/* Week grid */}
                           {Array.from({ length: Math.ceil(ganttDays / 7) }, (_, wi) => (
@@ -2881,6 +3055,356 @@ function WorkloadView({ projects, people, onEditItem }) {
     </div>
   );
 }
+
+// ─── MY HUB VIEW ─────────────────────────────────────────────────────────────
+// Personal operational command center. Insert before StatusView in App.jsx.
+
+function MyHubView({ projects, people, holidays, pto = [], currentUserId, onSetCurrentUser, onEditItem, onMarkDone, savePto, deletePto }) {
+  const TODAY = new Date(); TODAY.setHours(0,0,0,0);
+  const todayStr = TODAY.toISOString().slice(0,10);
+
+  // Week bounds (Mon–Sun)
+  const weekStart = new Date(TODAY);
+  const day = weekStart.getDay(); weekStart.setDate(weekStart.getDate() - (day === 0 ? 6 : day - 1));
+  const weekEnd = new Date(weekStart); weekEnd.setDate(weekEnd.getDate() + 6);
+  const weekStartStr = weekStart.toISOString().slice(0,10);
+  const weekEndStr   = weekEnd.toISOString().slice(0,10);
+
+  const EFFORT_VAL = { S: 1, M: 2, L: 3 };
+  const efv = (e) => EFFORT_VAL[e] || 2;
+
+  const [showPtoForm, setShowPtoForm] = useState(false);
+  const [ptoForm, setPtoForm] = useState({ start: todayStr, end: todayStr, note: "" });
+
+  // ── Resolve current user ──────────────────────────────────────────────────
+  const me = people.find(p => p.id === currentUserId) || people[0];
+  const meId = me?.id || "";
+
+  // ── Flatten all tasks assigned to me ─────────────────────────────────────
+  const allMyTasks = projects.flatMap(proj =>
+    proj.deliverables.flatMap(del => {
+      const items = [
+        { ...del, projId: proj.id, projName: proj.name, projColor: proj.color,
+          delId: del.id, delTitle: del.title, isSubtask: false, deliverableId: null },
+        ...del.subtasks.map(s => ({
+          ...s, projId: proj.id, projName: proj.name, projColor: proj.color,
+          delId: del.id, delTitle: del.title, isSubtask: true, deliverableId: del.id }))
+      ];
+      return items.filter(t => (t.assignees || []).includes(meId));
+    })
+  );
+
+  // ── All tasks across all projects (for dependency analysis) ───────────────
+  const allTasksFlat = projects.flatMap(proj =>
+    proj.deliverables.flatMap(del => [
+      { ...del, projId: proj.id },
+      ...del.subtasks.map(s => ({ ...s, projId: proj.id, delId: del.id }))
+    ])
+  );
+  const taskById = Object.fromEntries(allTasksFlat.map(t => [t.id, t]));
+
+  // ── Dependency helpers ────────────────────────────────────────────────────
+  const isDependencyClear = (task) => {
+    if (!task.dependencies?.length) return true;
+    return task.dependencies.every(depId => taskById[depId]?.status === "Done");
+  };
+  const blockedBy = (task) =>
+    (task.dependencies || []).map(id => taskById[id]).filter(d => d && d.status !== "Done");
+  const tasksBlockedByMe = allTasksFlat.filter(t =>
+    t.status !== "Done" && (t.dependencies || []).some(depId => {
+      const dep = taskById[depId];
+      return dep && dep.status !== "Done" && (dep.assignees || []).includes(meId);
+    })
+  );
+  const recentlyUnblocked = allMyTasks.filter(t =>
+    t.status !== "Done" && isDependencyClear(t) &&
+    (t.dependencies || []).length > 0
+  );
+
+  // ── Date helpers ──────────────────────────────────────────────────────────
+  const daysDiff = (dateStr) => {
+    if (!dateStr) return 999;
+    return Math.ceil((new Date(dateStr + "T00:00:00") - TODAY) / 86400000);
+  };
+  const isOverdue    = (t) => t.end && daysDiff(t.end) < 0  && t.status !== "Done";
+  const isDueSoon    = (t) => t.end && daysDiff(t.end) >= 0 && daysDiff(t.end) <= 7 && t.status !== "Done";
+  const isDueThisWk  = (t) => t.end && t.end >= weekStartStr && t.end <= weekEndStr;
+  const isActive     = (t) => t.status !== "Done" && t.status !== "Blocked";
+
+  // ── Smart priority score (hidden from user) ───────────────────────────────
+  const score = (task) => {
+    let s = 0;
+    const d = daysDiff(task.end);
+    if (d < 0)  s += 100;              // overdue
+    if (d <= 2) s += 50;               // due in 2 days
+    if (d <= 7) s += 30;               // due this week
+    if (task.status === "In Progress") s += 20;
+    if (task.priority === "Critical")  s += 25;
+    if (task.priority === "High")      s += 15;
+    if (efv(task.effort) === 3)        s += 10;  // large = high value
+    if (isDependencyClear(task))       s += 10;  // unblocked = actionable
+    if (recentlyUnblocked.find(t => t.id === task.id)) s += 15; // just became ready
+    return s;
+  };
+
+  // ── Section data ──────────────────────────────────────────────────────────
+  const activeTasks   = allMyTasks.filter(t => t.status !== "Done");
+  const overdueTasks  = allMyTasks.filter(isOverdue).sort((a,b) => daysDiff(a.end) - daysDiff(b.end));
+  const dueSoonTasks  = allMyTasks.filter(t => !isOverdue(t) && isDueSoon(t)).sort((a,b) => daysDiff(a.end) - daysDiff(b.end));
+  const blockedTasks  = allMyTasks.filter(t => t.status === "Blocked" || (t.status !== "Done" && blockedBy(t).length > 0));
+  const readyTasks    = allMyTasks.filter(t => t.status !== "Done" && t.status !== "Blocked" && isDependencyClear(t));
+  const recommended   = [...readyTasks].sort((a,b) => score(b) - score(a)).slice(0, 8);
+  const waitingTasks  = allMyTasks.filter(t =>
+    t.status !== "Done" && (t.dependencies || []).some(depId => {
+      const dep = taskById[depId];
+      return dep && dep.status !== "Done" && !(dep.assignees || []).includes(meId);
+    })
+  );
+  const weekTasks     = allMyTasks.filter(t => t.status !== "Done" && isDueThisWk(t));
+  const highEffort    = allMyTasks.filter(t => t.status !== "Done" && efv(t.effort) >= 3 && isDueThisWk(t));
+
+  // ── Weekly workload (effort points this week) ─────────────────────────────
+  const weekPoints = weekTasks.reduce((s,t) => s + efv(t.effort), 0);
+  const loadLabel = weekPoints <= 3 ? "Light" : weekPoints <= 7 ? "Moderate" : weekPoints <= 12 ? "Busy" : "Heavy";
+  const loadColor = weekPoints <= 3 ? "#34d399" : weekPoints <= 7 ? "#fbbf24" : weekPoints <= 12 ? "#fb923c" : "#f87171";
+
+  // ── PTO this week for me ──────────────────────────────────────────────────
+  const myPto  = pto.filter(p => p.personId === meId && p.end >= todayStr);
+  const onPtoNow = myPto.some(p => todayStr >= p.start && todayStr <= p.end);
+  const ptoThisWk = myPto.filter(p => p.start <= weekEndStr && p.end >= weekStartStr);
+
+  // ── Render helpers ────────────────────────────────────────────────────────
+  const TaskCard = ({ task, badge, badgeColor }) => {
+    const d = daysDiff(task.end);
+    const overdue = isOverdue(task);
+    const cleared = isDependencyClear(task);
+    const blocked = blockedBy(task);
+    return (
+      <div onClick={() => onEditItem({ ...task, projectId: task.projId, projectName: task.projName, projectColor: task.projColor })}
+        style={{ background: "#fff", border: `1px solid ${overdue ? "rgba(248,113,113,0.3)" : "rgba(0,0,0,0.07)"}`, borderLeft: `3px solid ${task.projColor}`, borderRadius: 8, padding: "11px 14px", cursor: "pointer", transition: "box-shadow 0.12s" }}
+        onMouseEnter={e => e.currentTarget.style.boxShadow = "0 2px 12px rgba(0,0,0,0.08)"}
+        onMouseLeave={e => e.currentTarget.style.boxShadow = "none"}
+      >
+        <div style={{ display: "flex", alignItems: "flex-start", gap: 8 }}>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontSize: 12, fontWeight: 700, color: "#1f2937", marginBottom: 3, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{task.title}</div>
+            <div style={{ fontSize: 10, color: task.projColor, fontWeight: 600, marginBottom: 5 }}>{task.projName}{task.isSubtask ? ` · ${task.delTitle}` : ""}</div>
+            <div style={{ display: "flex", gap: 5, flexWrap: "wrap", alignItems: "center" }}>
+              {badge && <span style={{ fontSize: 9, fontWeight: 700, background: badgeColor + "18", color: badgeColor, borderRadius: 4, padding: "2px 6px" }}>{badge}</span>}
+              {task.status !== "Not Started" && <StatusBadge status={task.status} small />}
+              {task.effort !== "M" && <span style={{ fontSize: 9, color: "#6b7280", background: "rgba(0,0,0,0.05)", borderRadius: 3, padding: "1px 5px" }}>{EFFORT_LABEL[task.effort]}</span>}
+              {!cleared && blocked.length > 0 && (
+                <span style={{ fontSize: 9, color: "#f87171", background: "rgba(248,113,113,0.1)", borderRadius: 4, padding: "2px 6px" }}>
+                  Blocked by {blocked.map(b => b.title).join(", ").slice(0,40)}
+                </span>
+              )}
+              {task.end && (
+                <span style={{ fontSize: 9, color: overdue ? "#f87171" : d <= 2 ? "#fb923c" : "#9ca3af", marginLeft: "auto", fontWeight: overdue ? 700 : 400 }}>
+                  {overdue ? `${Math.abs(d)}d overdue` : d === 0 ? "Due today" : d === 1 ? "Due tomorrow" : `Due in ${d}d`}
+                </span>
+              )}
+            </div>
+          </div>
+          <button onClick={e => { e.stopPropagation(); onMarkDone(task.projId, task.isSubtask ? task.delId : task.id, task.isSubtask ? task.id : null); }}
+            style={{ flexShrink: 0, width: 20, height: 20, borderRadius: "50%", border: "2px solid rgba(0,0,0,0.15)", background: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 10 }}
+            title="Mark done"
+          >✓</button>
+        </div>
+      </div>
+    );
+  };
+
+  const Section = ({ title, icon, count, color = "#6b7280", children, empty, collapsed: initCollapsed = false }) => {
+    const [open, setOpen] = useState(!initCollapsed);
+    if (!count) return null;
+    return (
+      <div style={{ display: "flex", flexDirection: "column", gap: 0 }}>
+        <button onClick={() => setOpen(o => !o)} style={{ display: "flex", alignItems: "center", gap: 7, background: "none", border: "none", cursor: "pointer", padding: "6px 0", textAlign: "left", fontFamily: "inherit" }}>
+          <span style={{ fontSize: 11, color: open ? "#1f2937" : "#6b7280", fontWeight: 700 }}>{icon} {title}</span>
+          <span style={{ fontSize: 10, background: color + "18", color, borderRadius: 10, padding: "1px 7px", fontWeight: 700 }}>{count}</span>
+          <span style={{ fontSize: 10, color: "#9ca3af", marginLeft: "auto" }}>{open ? "▲" : "▼"}</span>
+        </button>
+        {open && <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>{children}</div>}
+      </div>
+    );
+  };
+
+  if (!me) return (
+    <div style={{ background: "#fff", border: "1px solid rgba(0,0,0,0.07)", borderRadius: 10, padding: 40, textAlign: "center" }}>
+      <div style={{ fontSize: 14, color: "#6b7280" }}>No team members yet. Add people in ⚙ Settings → Team Members.</div>
+    </div>
+  );
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+
+      {/* ── Top bar: user selector ── */}
+      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+        <div style={{ width: 36, height: 36, borderRadius: "50%", background: me.color, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 13, fontWeight: 800, color: "#fff", flexShrink: 0 }}>
+          {me.name.split(" ").map(n=>n[0]).join("").slice(0,2)}
+        </div>
+        <div>
+          <div style={{ fontSize: 16, fontWeight: 800, color: "#1f2937" }}>{me.name}'s Hub</div>
+          <div style={{ fontSize: 11, color: "#9ca3af" }}>Your personal work command center</div>
+        </div>
+        <div style={{ marginLeft: "auto", display: "flex", gap: 8, alignItems: "center" }}>
+          <select value={meId} onChange={e => onSetCurrentUser(e.target.value)}
+            style={{ fontSize: 11, border: "1px solid rgba(0,0,0,0.1)", borderRadius: 6, padding: "5px 10px", background: "#fff", fontFamily: "inherit" }}>
+            {people.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+          </select>
+        </div>
+      </div>
+
+      {/* ── Summary cards ── */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(160px, 1fr))", gap: 10 }}>
+        {[
+          { label: "Active Tasks", value: activeTasks.length, color: BRAND_TEAL, icon: "◉" },
+          { label: "Due This Week", value: weekTasks.length, color: weekTasks.length > 5 ? "#fb923c" : "#34d399", icon: "◷" },
+          { label: "Overdue", value: overdueTasks.length, color: overdueTasks.length > 0 ? "#f87171" : "#9ca3af", icon: "⚠" },
+          { label: "Blocked", value: blockedTasks.length, color: blockedTasks.length > 0 ? "#f87171" : "#9ca3af", icon: "⊘" },
+          { label: "Blocking Others", value: tasksBlockedByMe.length, color: tasksBlockedByMe.length > 0 ? "#fb923c" : "#9ca3af", icon: "◎" },
+        ].map(card => (
+          <div key={card.label} style={{ background: "#fff", border: "1px solid rgba(0,0,0,0.07)", borderRadius: 10, padding: "14px 16px" }}>
+            <div style={{ fontSize: 20, color: card.color, fontWeight: 900, lineHeight: 1 }}>{card.value}</div>
+            <div style={{ fontSize: 10, color: "#6b7280", marginTop: 4, fontWeight: 600 }}>{card.label}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* ── This week: workload + PTO ── */}
+      <div style={{ background: "#fff", border: "1px solid rgba(0,0,0,0.07)", borderRadius: 10, padding: "14px 18px" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+          <div style={{ flex: 1, minWidth: 200 }}>
+            <div style={{ fontSize: 11, fontWeight: 700, color: "#1f2937", marginBottom: 6 }}>This week's workload</div>
+            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              <div style={{ flex: 1, height: 8, background: "rgba(0,0,0,0.06)", borderRadius: 4, overflow: "hidden" }}>
+                <div style={{ height: "100%", width: `${Math.min(100, (weekPoints/15)*100)}%`, background: loadColor, borderRadius: 4, transition: "width 0.3s" }} />
+              </div>
+              <span style={{ fontSize: 11, fontWeight: 700, color: loadColor, minWidth: 55 }}>{loadLabel}</span>
+            </div>
+            <div style={{ fontSize: 10, color: "#9ca3af", marginTop: 4 }}>
+              {weekTasks.length} task{weekTasks.length !== 1 ? "s" : ""} · {highEffort.length > 0 ? `${highEffort.length} large` : "no large tasks"}
+            </div>
+          </div>
+
+          {/* PTO strip */}
+          <div style={{ borderLeft: "1px solid rgba(0,0,0,0.07)", paddingLeft: 16 }}>
+            <div style={{ fontSize: 11, fontWeight: 700, color: "#1f2937", marginBottom: 6, display: "flex", alignItems: "center", gap: 6 }}>
+              🌴 Time Off
+              <button onClick={() => setShowPtoForm(f => !f)} style={{ fontSize: 9, background: BRAND_TEAL_L, border: `1px solid ${BRAND_TEAL}50`, color: BRAND_TEAL_D, borderRadius: 4, padding: "2px 7px", cursor: "pointer", fontFamily: "inherit" }}>+ Add</button>
+            </div>
+            {myPto.length === 0 ? (
+              <div style={{ fontSize: 10, color: "#9ca3af" }}>No upcoming PTO</div>
+            ) : myPto.slice(0,3).map(p => (
+              <div key={p.id} style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 4 }}>
+                <span style={{ fontSize: 10, color: "#374151" }}>{fmt(parseDate(p.start))} – {fmt(parseDate(p.end))}</span>
+                {p.note && <span style={{ fontSize: 9, color: "#9ca3af" }}>{p.note}</span>}
+                <button onClick={() => deletePto(p.id)} style={{ fontSize: 9, background: "none", border: "none", color: "#d1d5db", cursor: "pointer", padding: "0 2px" }}>×</button>
+              </div>
+            ))}
+            {showPtoForm && (
+              <div style={{ marginTop: 8, display: "flex", flexDirection: "column", gap: 6, background: "rgba(0,0,0,0.02)", borderRadius: 6, padding: 10 }}>
+                <div style={{ display: "flex", gap: 6 }}>
+                  <input type="date" value={ptoForm.start} onChange={e => setPtoForm(f => ({...f, start: e.target.value}))}
+                    style={{ fontSize: 10, border: "1px solid rgba(0,0,0,0.12)", borderRadius: 4, padding: "3px 6px", fontFamily: "inherit" }} />
+                  <span style={{ fontSize: 10, color: "#9ca3af", alignSelf: "center" }}>–</span>
+                  <input type="date" value={ptoForm.end} onChange={e => setPtoForm(f => ({...f, end: e.target.value}))}
+                    style={{ fontSize: 10, border: "1px solid rgba(0,0,0,0.12)", borderRadius: 4, padding: "3px 6px", fontFamily: "inherit" }} />
+                </div>
+                <input value={ptoForm.note} onChange={e => setPtoForm(f => ({...f, note: e.target.value}))}
+                  placeholder="Optional note (Vacation, Conference…)"
+                  style={{ fontSize: 10, border: "1px solid rgba(0,0,0,0.12)", borderRadius: 4, padding: "3px 8px", fontFamily: "inherit" }} />
+                <div style={{ display: "flex", gap: 6 }}>
+                  <button onClick={() => { savePto({ ...ptoForm, personId: meId, id: "pto_" + Date.now() }); setShowPtoForm(false); setPtoForm({ start: todayStr, end: todayStr, note: "" }); }}
+                    style={{ flex: 1, background: BRAND_TEAL, border: "none", borderRadius: 4, color: BRAND_NAVY, fontSize: 10, fontWeight: 700, padding: "5px 0", cursor: "pointer", fontFamily: "inherit" }}>Save</button>
+                  <button onClick={() => setShowPtoForm(false)}
+                    style={{ flex: 1, background: "none", border: "1px solid rgba(0,0,0,0.1)", borderRadius: 4, color: "#6b7280", fontSize: 10, padding: "5px 0", cursor: "pointer", fontFamily: "inherit" }}>Cancel</button>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* ── Dependency intelligence ── */}
+      {(recentlyUnblocked.length > 0 || tasksBlockedByMe.length > 0 || waitingTasks.length > 0) && (
+        <div style={{ background: "rgba(80,192,192,0.06)", border: `1px solid ${BRAND_TEAL}30`, borderRadius: 10, padding: "12px 16px", display: "flex", flexDirection: "column", gap: 6 }}>
+          <div style={{ fontSize: 11, fontWeight: 700, color: BRAND_TEAL_D, marginBottom: 2 }}>Dependency Updates</div>
+          {recentlyUnblocked.length > 0 && (
+            <div style={{ fontSize: 11, color: "#374151" }}>
+              ✅ <strong>{recentlyUnblocked.length} task{recentlyUnblocked.length !== 1 ? "s" : ""}</strong> just became ready — dependencies completed
+            </div>
+          )}
+          {tasksBlockedByMe.length > 0 && (
+            <div style={{ fontSize: 11, color: "#374151" }}>
+              ⚠️ You are blocking <strong>{tasksBlockedByMe.length} downstream task{tasksBlockedByMe.length !== 1 ? "s" : ""}</strong>
+            </div>
+          )}
+          {waitingTasks.length > 0 && (() => {
+            const waitingOn = [...new Set(waitingTasks.flatMap(t =>
+              (t.dependencies || []).map(depId => {
+                const dep = taskById[depId];
+                if (!dep || dep.status === "Done") return null;
+                return (dep.assignees || []).filter(a => a !== meId).map(a => people.find(p => p.id === a)?.name).filter(Boolean);
+              }).flat().filter(Boolean)
+            ))].slice(0,3);
+            return (
+              <div style={{ fontSize: 11, color: "#374151" }}>
+                ⏳ Waiting on {waitingOn.length > 0 ? waitingOn.join(", ") : "others"} for {waitingTasks.length} task{waitingTasks.length !== 1 ? "s" : ""}
+              </div>
+            );
+          })()}
+        </div>
+      )}
+
+      {/* ── Sections ── */}
+      <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+
+        <Section title="Recommended Next" icon="⚡" count={recommended.length} color={BRAND_TEAL}>
+          {recommended.map(t => <TaskCard key={t.id} task={t} />)}
+        </Section>
+
+        <Section title="Overdue" icon="⚠" count={overdueTasks.length} color="#f87171">
+          {overdueTasks.map(t => <TaskCard key={t.id} task={t} badge="Overdue" badgeColor="#f87171" />)}
+        </Section>
+
+        <Section title="Due Soon" icon="◷" count={dueSoonTasks.length} color="#fb923c">
+          {dueSoonTasks.map(t => <TaskCard key={t.id} task={t} />)}
+        </Section>
+
+        <Section title="Blocked" icon="⊘" count={blockedTasks.length} color="#f87171">
+          {blockedTasks.map(t => {
+            const blockers = blockedBy(t);
+            return <TaskCard key={t.id} task={t} badge={blockers.length ? `Blocked · ${blockers.length}` : "Blocked"} badgeColor="#f87171" />;
+          })}
+        </Section>
+
+        <Section title="Blocking Others" icon="◎" count={tasksBlockedByMe.length} color="#fb923c" collapsed={true}>
+          {tasksBlockedByMe.map(t => {
+            const blockingCount = allTasksFlat.filter(dt =>
+              dt.status !== "Done" && (dt.dependencies || []).some(depId => taskById[depId]?.id === t.id)
+            ).length;
+            return <TaskCard key={t.id} task={t} badge={`Blocking ${blockingCount}`} badgeColor="#fb923c" />;
+          })}
+        </Section>
+
+        <Section title="Waiting on Others" icon="⏳" count={waitingTasks.length} color="#9ca3af" collapsed={true}>
+          {waitingTasks.map(t => <TaskCard key={t.id} task={t} badge="Waiting" badgeColor="#9ca3af" />)}
+        </Section>
+
+        <Section title="Ready to Start" icon="→" count={readyTasks.filter(t => t.status === "Not Started").length} color="#34d399" collapsed={true}>
+          {readyTasks.filter(t => t.status === "Not Started").map(t => <TaskCard key={t.id} task={t} />)}
+        </Section>
+
+        <Section title="High Effort This Week" icon="◈" count={highEffort.length} color="#a78bfa" collapsed={true}>
+          {highEffort.map(t => <TaskCard key={t.id} task={t} badge="Large" badgeColor="#a78bfa" />)}
+        </Section>
+
+      </div>
+    </div>
+  );
+}
+
 
 // --- STATUS VIEW ─────────────────────────────────────────────────────────────
 const TODAY_STR = "2026-05-20";
@@ -4421,7 +4945,7 @@ function NewSubtaskModal({ project, deliverable, onClose, onAdd, allPeople }) {
 // --- SHARED MODAL PRIMITIVES ──────────────────────────────────────────────────
 function Overlay({ children, onClose }) {
   return (
-    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.3)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000, backdropFilter: "blur(6px)" }}
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.3)", display: "flex", alignItems: "flex-start", justifyContent: "center", zIndex: 1000, backdropFilter: "blur(6px)", overflowY: "auto", padding: "40px 16px" }}
       onClick={e => e.target === e.currentTarget && onClose()}>
       {children}
     </div>
@@ -4449,6 +4973,23 @@ function ModalFooter({ onClose, onSave, saveLabel, color }) {
 }
 
 // --- APP ──────────────────────────────────────────────────────────────────────
+// ─── COPY/PASTE HELPERS ──────────────────────────────────────────────────────
+// Deep-clone a subtask with fresh IDs so the paste is independent
+function cloneSubtask(sub) {
+  return { ...sub, id: "s_" + Date.now() + "_" + Math.random().toString(36).slice(2, 6) };
+}
+// Deep-clone a deliverable + all its subtasks with fresh IDs
+function cloneDeliverable(del) {
+  const newId = "d_" + Date.now() + "_" + Math.random().toString(36).slice(2, 6);
+  return {
+    ...del,
+    id: newId,
+    title: del.title + " (copy)",
+    dependencies: [], // don't carry over cross-deliverable deps
+    subtasks: del.subtasks.map(s => cloneSubtask({ ...s, dependencies: [] })),
+  };
+}
+
 // ─── SHAPE CONVERTERS — module-level pure functions (no env dependency) ──────
 function rowToSubtask(r) {
   return {
@@ -4493,6 +5034,24 @@ function subToRow(s, delId, projId, pos = 0) {
     progress: s.progress ?? 0, dependencies: s.dependencies ?? [], assignees: s.assignees ?? [],
     effort: s.effort || "M", position: pos,
   };
+}
+
+function ptoToRow(p) {
+  return {
+    id: p.id, person_id: p.personId, start_date: p.start,
+    end_date: p.end, note: p.note || "",
+  };
+}
+function rowToPto(r) {
+  return { id: r.id, personId: r.person_id, start: r.start_date, end: r.end_date, note: r.note || "" };
+}
+
+// ── PTO HELPERS ──────────────────────────────────────────────────────────────
+function isOnPto(personId, dateStr, ptoList) {
+  return ptoList.some(p => p.personId === personId && dateStr >= p.start && dateStr <= p.end);
+}
+function ptoOverlap(personId, startStr, endStr, ptoList) {
+  return ptoList.filter(p => p.personId === personId && p.start <= endStr && p.end >= startStr);
 }
 
 export default function App() {
@@ -4565,6 +5124,18 @@ export default function App() {
   const [showArchived, setShowArchived] = useState(false);
   const [newDeliverable, setNewDeliverable] = useState(null);
   const [newSubtask, setNewSubtask] = useState(null);
+  // Clipboard for copy/paste on timeline
+
+  // ── PTO & current user ──────────────────────────────────────────────────
+  const [pto, setPto] = useState([]);
+  const [currentUserId, setCurrentUserId] = useState(() => {
+    try { return localStorage.getItem("planr_current_user") || ""; } catch { return ""; }
+  });
+  const setCurrentUser = (id) => {
+    setCurrentUserId(id);
+    try { localStorage.setItem("planr_current_user", id); } catch {}
+  };
+  const [clipboard, setClipboard] = useState(null); // { type: "subtask"|"deliverable", data }
   const [zoomId, setZoomId] = useState(() => {
     try { return localStorage.getItem("planr_zoom") || "standard"; } catch { return "standard"; }
   });
@@ -4600,7 +5171,7 @@ export default function App() {
     console.log("[PulseX] loadAll — URL:", SB_URL ? "set" : "MISSING");
     setDbError(null);
     try {
-      const [pR, dR, sR, mR, hR, nR, tR] = await Promise.all([
+      const [pR, dR, sR, mR, hR, nR, tR, ptR] = await Promise.all([
         sb.select("projects",     "order=position.asc,created_at.asc"),
         sb.select("deliverables", "order=position.asc,created_at.asc"),
         sb.select("subtasks",     "order=position.asc,created_at.asc"),
@@ -4608,8 +5179,9 @@ export default function App() {
         sb.select("holidays",     "order=date.asc"),
         sb.select("status_notes", ""),
         sb.select("templates",    "order=created_at.asc"),
+        sb.select("pto",          "order=start_date.asc"),
       ]);
-      for (const r of [pR, dR, sR, mR, hR, nR, tR]) {
+      for (const r of [pR, dR, sR, mR, hR, nR, tR, ptR]) {
         if (r.error) throw new Error(r.error);
       }
       // Seed if empty
@@ -4631,6 +5203,7 @@ export default function App() {
       (nR.data || []).forEach(n => { notes[`${n.project_id}::${n.deliverable_id}`] = n.note; });
       setStatusNotes(notes);
       setSavedTemplates((tR.data || []).map(t => ({ ...t.data, id: t.id, name: t.name })));
+      setPto((ptR.data || []).map(rowToPto));
     } catch (e) {
       console.error("[PulseX] loadAll failed:", e.message);
       setDbError(e.message);
@@ -4788,6 +5361,23 @@ export default function App() {
     alert(`"${proj.name}" saved as a template!`);
   };
 
+  const savePto = async (ptoEntry) => {
+    const entry = { ...ptoEntry, id: ptoEntry.id || ("pto_" + Date.now()) };
+    setPto(prev => [...prev.filter(p => p.id !== entry.id), entry]);
+    if (SB_READY) {
+      const { error } = await sb.upsert("pto", ptoToRow(entry));
+      if (error) { console.error("[PulseX] savePto:", error); loadAll(); }
+    }
+  };
+
+  const deletePto = async (id) => {
+    setPto(prev => prev.filter(p => p.id !== id));
+    if (SB_READY) {
+      const { error } = await sb.delete("pto", id);
+      if (error) { console.error("[PulseX] deletePto:", error); loadAll(); }
+    }
+  };
+
   const handleAddDeliverable = (projectId, del) => optimistic(
     () => setProjects(projs => projs.map(p => p.id !== projectId ? p : { ...p, deliverables: [...p.deliverables, del] })),
     async () => {
@@ -4821,6 +5411,31 @@ export default function App() {
     () => setProjects(projs => projs.map(p => p.id !== projectId ? p : { ...p, deliverables: p.deliverables.map(d => d.id !== deliverableId ? d : { ...d, subtasks: d.subtasks.filter(s => s.id !== subtaskId) }) })),
     async () => { const { error } = await sb.delete("subtasks", subtaskId); return error; }
   );
+
+  // ── Copy/Paste handlers ──────────────────────────────────────────────────
+  const handleCopySubtask = (sub) => {
+    setClipboard({ type: "subtask", data: sub });
+    console.log("[PulseX] Copied subtask:", sub.title);
+  };
+
+  const handleCopyDeliverable = (del) => {
+    setClipboard({ type: "deliverable", data: del });
+    console.log("[PulseX] Copied deliverable:", del.title, "with", del.subtasks?.length, "subtasks");
+  };
+
+  const handlePasteSubtask = (projectId, deliverableId, afterSubtaskId = null) => {
+    if (!clipboard || clipboard.type !== "subtask") return;
+    const newSub = cloneSubtask(clipboard.data);
+    handleInsertSubtask(projectId, deliverableId, afterSubtaskId, newSub);
+    console.log("[PulseX] Pasted subtask:", newSub.title);
+  };
+
+  const handlePasteDeliverable = (projectId) => {
+    if (!clipboard || clipboard.type !== "deliverable") return;
+    const newDel = cloneDeliverable(clipboard.data);
+    handleAddDeliverable(projectId, newDel);
+    console.log("[PulseX] Pasted deliverable:", newDel.title);
+  };
 
   const handleInsertSubtask = (projectId, deliverableId, afterSubtaskId, newSub) => optimistic(
     () => setProjects(projs => projs.map(p => p.id !== projectId ? p : { ...p, deliverables: p.deliverables.map(d => {
@@ -4908,6 +5523,7 @@ export default function App() {
   };
 
   const navItems = [
+    { id: "myhub",     label: "My Hub",    icon: "⊙" },
     { id: "dashboard", label: "Dashboard", icon: "◈" },
     { id: "timeline",  label: "Timeline",  icon: "▬" },
     { id: "people",    label: "By Person", icon: "◎" },
@@ -5103,7 +5719,15 @@ export default function App() {
           </div>
         )}
 
-        {view === "dashboard" && <DashboardView projects={projects} people={people} holidays={holidays} onEditItem={handleEditItem} onAddDeliverable={(proj) => setNewDeliverable(proj)} onAddSubtask={(proj, del) => setNewSubtask({ project: proj, deliverable: del })} onNewProject={() => setShowNewProject(true)} />}
+        {view === "myhub" && (
+          <MyHubView
+            projects={projects} people={people} holidays={holidays} pto={pto}
+            currentUserId={currentUserId} onSetCurrentUser={setCurrentUser}
+            onEditItem={handleEditItem} onMarkDone={handleMarkDone}
+            savePto={savePto} deletePto={deletePto}
+          />
+        )}
+        {view === "dashboard" && <DashboardView projects={projects} people={people} holidays={holidays} pto={pto} savePto={savePto} onEditItem={handleEditItem} onAddDeliverable={(proj) => setNewDeliverable(proj)} onAddSubtask={(proj, del) => setNewSubtask({ project: proj, deliverable: del })} onNewProject={() => setShowNewProject(true)} />}
         {view === "timeline"  && (
           <TimelineView projects={projects} people={people} onEditItem={handleEditItem}
             onAddDeliverable={(proj) => setNewDeliverable(proj)}
@@ -5114,9 +5738,14 @@ export default function App() {
             onDeleteSubtask={handleDeleteSubtask}
             statusNotes={statusNotes}
             onUpdateNote={handleUpdateNote}
+            clipboard={clipboard}
+            onCopySubtask={handleCopySubtask}
+            onCopyDeliverable={handleCopyDeliverable}
+            onPasteSubtask={handlePasteSubtask}
+            onPasteDeliverable={handlePasteDeliverable}
           />
         )}
-        {view === "people"  && <PeopleView projects={projects} people={people} onEditItem={handleEditItem} onMarkDone={handleMarkDone} onSaveItem={handleSaveItem} holidays={holidays} />}
+        {view === "people"  && <PeopleView projects={projects} people={people} onEditItem={handleEditItem} onMarkDone={handleMarkDone} onSaveItem={handleSaveItem} holidays={holidays} pto={pto} />}
         {view === "workload" && (
           <WorkloadView projects={projects} people={people} onEditItem={handleEditItem} />
         )}
