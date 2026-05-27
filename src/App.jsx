@@ -602,7 +602,7 @@ function CheckButton({ isDone, onClick }) {
 }
 
 // ─── PROJECT DETAILS MODAL ───────────────────────────────────────────────────
-function ProjectDetailsModal({ proj, people, onClose, onSave }) {
+function ProjectDetailsModal({ proj, people, onClose, onSave, onArchive, onDelete, onSaveAsTemplate }) {
   const [form, setForm] = useState({
     name:           proj.name,
     client:         proj.client || "",
@@ -744,21 +744,44 @@ function ProjectDetailsModal({ proj, people, onClose, onSave }) {
 
         {/* Footer */}
         <div style={{ padding: "14px 22px", borderTop: "1px solid rgba(0,0,0,0.07)",
-          display: "flex", justifyContent: "space-between", alignItems: "center",
-          background: "#fafafa" }}>
-          <div style={{ fontSize: 11, color: "#9ca3af" }}>
-            {owner ? <span>Lead: <strong style={{ color: owner.color }}>{owner.name}</strong></span> : "No lead assigned"}
-            {teamMembers.length > 0 && <span style={{ marginLeft: 12 }}>Team: {teamMembers.length}</span>}
+          background: "#fafafa", display: "flex", flexDirection: "column", gap: 10 }}>
+          {/* Project actions */}
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            {onSaveAsTemplate && (
+              <button onClick={() => { onSaveAsTemplate(proj); }}
+                style={{ padding: "7px 14px", borderRadius: 7, border: "1px solid rgba(167,139,250,0.4)",
+                  background: "rgba(167,139,250,0.08)", color: "#7c3aed", fontSize: 11, fontWeight: 600,
+                  cursor: "pointer", fontFamily: "inherit" }}>📋 Save as Template</button>
+            )}
+            {onArchive && !proj.archived && (
+              <button onClick={() => window.confirm(`Archive "${proj.name}"?`) && onArchive(proj.id)}
+                style={{ padding: "7px 14px", borderRadius: 7, border: "1px solid rgba(251,191,36,0.4)",
+                  background: "rgba(251,191,36,0.08)", color: "#b45309", fontSize: 11, fontWeight: 600,
+                  cursor: "pointer", fontFamily: "inherit" }}>⊡ Archive</button>
+            )}
+            {onDelete && (
+              <button onClick={() => window.confirm(`Permanently delete "${proj.name}"? This cannot be undone.`) && onDelete(proj.id)}
+                style={{ padding: "7px 14px", borderRadius: 7, border: "1px solid rgba(239,68,68,0.3)",
+                  background: "rgba(239,68,68,0.06)", color: "#dc2626", fontSize: 11, fontWeight: 600,
+                  cursor: "pointer", fontFamily: "inherit" }}>🗑 Delete</button>
+            )}
           </div>
-          <div style={{ display: "flex", gap: 8 }}>
-            <button onClick={onClose} style={{ padding: "8px 18px", borderRadius: 7, border: "1px solid rgba(0,0,0,0.1)",
-              background: "transparent", color: "#6b7280", fontSize: 12, fontWeight: 600,
-              cursor: "pointer", fontFamily: "inherit" }}>Cancel</button>
-            <button onClick={handleSave} style={{ padding: "8px 20px", borderRadius: 7, border: "none",
-              background: saved ? "#34d399" : proj.color, color: "#fff", fontSize: 12, fontWeight: 700,
-              cursor: "pointer", fontFamily: "inherit", transition: "background 0.2s" }}>
-              {saved ? "✓ Saved" : "Save"}
-            </button>
+          {/* Save/cancel */}
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <div style={{ fontSize: 11, color: "#9ca3af" }}>
+              {owner ? <span>Lead: <strong style={{ color: owner.color }}>{owner.name}</strong></span> : "No lead assigned"}
+              {teamMembers.length > 0 && <span style={{ marginLeft: 12 }}>Team: {teamMembers.length}</span>}
+            </div>
+            <div style={{ display: "flex", gap: 8 }}>
+              <button onClick={onClose} style={{ padding: "8px 18px", borderRadius: 7, border: "1px solid rgba(0,0,0,0.1)",
+                background: "transparent", color: "#6b7280", fontSize: 12, fontWeight: 600,
+                cursor: "pointer", fontFamily: "inherit" }}>Cancel</button>
+              <button onClick={handleSave} style={{ padding: "8px 20px", borderRadius: 7, border: "none",
+                background: saved ? "#34d399" : proj.color, color: "#fff", fontSize: 12, fontWeight: 700,
+                cursor: "pointer", fontFamily: "inherit", transition: "background 0.2s" }}>
+                {saved ? "✓ Saved" : "Save"}
+              </button>
+            </div>
           </div>
         </div>
       </div>
@@ -830,11 +853,31 @@ function TaskModal({ item, projectColor, allItems, onClose, onSave, allPeople, o
       onClick={e => e.target === e.currentTarget && onClose()}>
       <div style={{ background: "#ffffff", border: "1px solid rgba(0,0,0,0.09)", borderRadius: 12, width: 580, maxHeight: "none", overflow: "visible", boxShadow: "0 30px 90px rgba(0,0,0,0.35)" }}>
         {/* Header */}
-        <div style={{ borderBottom: "1px solid rgba(0,0,0,0.06)", padding: "18px 22px", display: "flex", alignItems: "center", gap: 12 }}>
-          <div style={{ width: 4, height: 22, background: projectColor, borderRadius: 2, flexShrink: 0 }} />
-          <input value={form.title} onChange={e => set("title", e.target.value)}
-            style={{ flex: 1, background: "none", border: "none", outline: "none", color: "#111827", fontSize: fs(17), fontWeight: 700, fontFamily: "inherit" }} />
-          <button onClick={onClose} style={{ background: "none", border: "none", color: "#6b7280", cursor: "pointer", fontSize: 22, lineHeight: 1 }}>×</button>
+        <div style={{ borderBottom: "1px solid rgba(0,0,0,0.06)", padding: "14px 22px 14px", display: "flex", alignItems: "flex-start", gap: 12 }}>
+          <div style={{ width: 4, height: "100%", minHeight: 38, background: projectColor, borderRadius: 2, flexShrink: 0, alignSelf: "stretch" }} />
+          <div style={{ flex: 1, minWidth: 0 }}>
+            {/* Breadcrumb: Project → Deliverable → Task */}
+            <div style={{ display: "flex", alignItems: "center", gap: 5, marginBottom: 5, flexWrap: "wrap" }}>
+              <span style={{ fontSize: 10, fontWeight: 700, color: projectColor, letterSpacing: "0.04em" }}>{item.projectName || ""}</span>
+              {item.deliverableId && item.delTitle && (
+                <>
+                  <span style={{ fontSize: 10, color: "#d1d5db" }}>›</span>
+                  <span style={{ fontSize: 10, color: "#6b7280", fontWeight: 600 }}>{item.delTitle}</span>
+                  <span style={{ fontSize: 10, color: "#d1d5db" }}>›</span>
+                  <span style={{ fontSize: 10, color: "#9ca3af" }}>Task</span>
+                </>
+              )}
+              {!item.deliverableId && (
+                <>
+                  <span style={{ fontSize: 10, color: "#d1d5db" }}>›</span>
+                  <span style={{ fontSize: 10, color: "#9ca3af" }}>Deliverable</span>
+                </>
+              )}
+            </div>
+            <input value={form.title} onChange={e => set("title", e.target.value)}
+              style={{ width: "100%", background: "none", border: "none", outline: "none", color: "#111827", fontSize: fs(17), fontWeight: 700, fontFamily: "inherit" }} />
+          </div>
+          <button onClick={onClose} style={{ background: "none", border: "none", color: "#6b7280", cursor: "pointer", fontSize: 22, lineHeight: 1, flexShrink: 0 }}>×</button>
         </div>
         <div style={{ padding: 22, display: "flex", flexDirection: "column", gap: 18 }}>
           {/* Status + Priority */}
@@ -1726,21 +1769,22 @@ function TimelineView({ projects, people, onEditItem, onAddDeliverable, onAddSub
         {projects.map(p => (
           <div key={p.id} style={{
             display: "flex", alignItems: "center", gap: 0,
-            borderRadius: 12, overflow: "hidden",
+            borderRadius: 12,
             border: `1px solid ${selectedProjects.includes(p.id) ? p.color + "80" : "rgba(0,0,0,0.1)"}`,
             background: selectedProjects.includes(p.id) ? p.color + "18" : "transparent",
           }}>
             {/* Click name → project details modal */}
-            <span onClick={() => onOpenProject && onOpenProject(p.id)}
+            <button onClick={() => onOpenProject && onOpenProject(p.id)}
               style={{ padding: "3px 8px 3px 10px", cursor: "pointer", fontSize: 11, fontWeight: 700,
-                color: selectedProjects.includes(p.id) ? p.color : "#6b7280" }}
-              title="View project details">{p.name}</span>
+                color: selectedProjects.includes(p.id) ? p.color : "#6b7280",
+                background: "none", border: "none", fontFamily: "inherit" }}
+              title="View project details">{p.name}</button>
             {/* Click dot → toggle filter */}
-            <span onClick={() => toggleProjFilter(p.id)}
-              title="Toggle filter"
+            <button onClick={() => toggleProjFilter(p.id)}
+              title="Toggle project filter"
               style={{ padding: "3px 8px 3px 2px", cursor: "pointer", fontSize: 9,
                 color: selectedProjects.includes(p.id) ? p.color : "#9ca3af",
-                lineHeight: 1 }}>⬤</span>
+                lineHeight: 1, background: "none", border: "none" }}>⬤</button>
           </div>
         ))}
       </div>
@@ -2428,9 +2472,12 @@ function SubtaskRow({ sub, del, proj, people, weeks, todayOff, allItemsFlat, onE
   }).filter(Boolean);
 
   return (
-    <div style={{ display: "flex", height: S_ROW, borderBottom: "1px solid rgba(0,0,0,0.03)", alignItems: "center", background: "rgba(0,0,0,0.025)" }}
-      onMouseEnter={e => e.currentTarget.style.background = "rgba(0,0,0,0.04)"}
-      onMouseLeave={e => e.currentTarget.style.background = "rgba(0,0,0,0.025)"}>
+    <div style={{ display: "flex", height: S_ROW, borderBottom: "1px solid rgba(0,0,0,0.03)", alignItems: "center",
+        background: (() => { const t=new Date().toLocaleDateString('en-CA'); return sub.end&&sub.end<t&&sub.status==="In Progress"?"rgba(239,68,68,0.18)":sub.end&&sub.end<t&&sub.status!=="Done"?"rgba(239,68,68,0.09)":sub.end&&sub.end===t&&sub.status!=="Done"?"rgba(251,146,60,0.16)":"rgba(0,0,0,0.025)"; })(),
+        borderLeft: (() => { const t=new Date().toLocaleDateString('en-CA'); return sub.end&&sub.end<t&&sub.status==="In Progress"?"3px solid #ef4444":sub.end&&sub.end===t&&sub.status!=="Done"?"3px solid #f97316":"none"; })(),
+      }}
+      onMouseEnter={e => { const t=new Date().toLocaleDateString('en-CA'); e.currentTarget.style.background=sub.end&&sub.end<t&&sub.status==="In Progress"?"rgba(239,68,68,0.24)":sub.end&&sub.end<t&&sub.status!=="Done"?"rgba(239,68,68,0.13)":"rgba(0,0,0,0.04)"; }}
+      onMouseLeave={e => { const t=new Date().toLocaleDateString('en-CA'); e.currentTarget.style.background=sub.end&&sub.end<t&&sub.status==="In Progress"?"rgba(239,68,68,0.18)":sub.end&&sub.end<t&&sub.status!=="Done"?"rgba(239,68,68,0.09)":sub.end&&sub.end===t&&sub.status!=="Done"?"rgba(251,146,60,0.16)":"rgba(0,0,0,0.025)"; }}>
 
       {/* Row # */}
       <LeftCell width={colWidths.num} center>
@@ -3262,17 +3309,21 @@ function WorkloadView({ projects, people, onEditItem }) {
                         return person && pTasks.length ? { name: person.name.split(" ")[0], color: person.color, count: pTasks.length } : null;
                       }).filter(Boolean);
                       const ttH = 28 + personBreakdown.length * 14 + 14;
+                      // Flip tooltip below bar if bar top is within ttH+8px of chart top
+                      const showBelow = stackY < ttH + 8;
+                      const ttY = showBelow ? MAX_H + 16 : stackY - ttH - 4;
+                      const labelY = showBelow ? MAX_H + 16 + 14 : stackY - ttH + 14;
                       return (
                         <g>
-                          <rect x={x - 14} y={stackY - ttH - 4} width={BAR_W + 28} height={ttH} rx={5} fill="#1f2937" opacity={0.95} />
-                          <text x={x + BAR_W/2} y={stackY - ttH + 14} textAnchor="middle" fontSize={10} fontWeight={700} fill="#fff">{wkTasks.length} task{wkTasks.length !== 1 ? "s" : ""}</text>
+                          <rect x={x - 14} y={ttY} width={BAR_W + 28} height={ttH} rx={5} fill="#1f2937" opacity={0.95} />
+                          <text x={x + BAR_W/2} y={labelY} textAnchor="middle" fontSize={10} fontWeight={700} fill="#fff">{wkTasks.length} task{wkTasks.length !== 1 ? "s" : ""}</text>
                           {personBreakdown.map((pb, pi) => (
                             <g key={pb.name}>
-                              <rect x={x - 6} y={stackY - ttH + 22 + pi * 14} width={7} height={7} rx={1} fill={pb.color} />
-                              <text x={x + 6} y={stackY - ttH + 29 + pi * 14} fontSize={9} fill="#d1d5db">{pb.name}: {pb.count}</text>
+                              <rect x={x - 6} y={labelY + 8 + pi * 14} width={7} height={7} rx={1} fill={pb.color} />
+                              <text x={x + 6} y={labelY + 15 + pi * 14} fontSize={9} fill="#d1d5db">{pb.name}: {pb.count}</text>
                             </g>
                           ))}
-                          <text x={x + BAR_W/2} y={stackY - 9} textAnchor="middle" fontSize={8} fill="#6b7280">click to drill in</text>
+                          {!showBelow && <text x={x + BAR_W/2} y={stackY - 9} textAnchor="middle" fontSize={8} fill="#6b7280">click to drill in</text>}
                         </g>
                       );
                     })()}
@@ -5974,7 +6025,7 @@ export default function App() {
       `}</style>
 
       {/* Nav */}
-      <header style={{ borderBottom: `1px solid rgba(255,255,255,0.08)`, padding: "0 12px 0 16px", display: "flex", alignItems: "center", height: 52, flexShrink: 0, background: BRAND_NAVY, width: "100%", boxSizing: "border-box", overflowX: "auto", overflowY: "hidden" }}>
+      <header style={{ borderBottom: `1px solid rgba(255,255,255,0.08)`, padding: "0 12px 0 16px", display: "flex", alignItems: "center", height: 52, flexShrink: 0, background: BRAND_NAVY, width: "100%", boxSizing: "border-box", overflow: "visible" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 9, marginRight: 36 }}>
           <div style={{ width: 28, height: 28, background: BRAND_TEAL, borderRadius: 6, display: "flex", alignItems: "center", justifyContent: "center" }}>
             <span style={{ fontSize: 14, fontWeight: 900, color: BRAND_NAVY, fontFamily: '"Roboto", Arial, sans-serif' }}>X</span>
@@ -6013,7 +6064,7 @@ export default function App() {
             }}>⚙ SETTINGS {showSettingsMenu ? "▲" : "▼"}</button>
             {showSettingsMenu && (
               <div style={{
-                position: "absolute", right: 0, top: "calc(100% + 6px)", zIndex: 200,
+                position: "fixed", right: 12, top: 58, zIndex: 1500,
                 background: "#ffffff", border: "1px solid rgba(0,0,0,0.1)", borderRadius: 10,
                 boxShadow: "0 4px 20px rgba(0,0,0,0.12)", minWidth: 200, overflow: "hidden",
               }}>
@@ -6067,7 +6118,14 @@ export default function App() {
             return (
               <div key={proj.id} style={{ display: "flex", alignItems: "center", gap: 6, padding: "5px 10px 5px 12px", background: proj.color + "10", border: `1px solid ${proj.color}28`, borderRadius: 16, fontSize: 11, color: proj.color, fontWeight: 700 }}>
                 <span style={{ width: 5, height: 5, borderRadius: "50%", background: proj.color, display: "inline-block" }} />
-                {proj.name}
+                {/* Project name → opens project details modal */}
+                <span
+                  onClick={() => setProjectDetailsId(proj.id)}
+                  title="View project details"
+                  style={{ cursor: "pointer", textDecoration: "underline dotted", textUnderlineOffset: 2 }}
+                  onMouseEnter={e => e.currentTarget.style.opacity = "0.75"}
+                  onMouseLeave={e => e.currentTarget.style.opacity = "1"}
+                >{proj.name}</span>
                 <span style={{ opacity: 0.45, fontWeight: 400 }}>{total} items</span>
                 <span onClick={() => setNewDeliverable(proj)} title="Add deliverable" style={{ cursor: "pointer", opacity: 0.4, fontWeight: 900, fontSize: 13, lineHeight: 1, transition: "opacity 0.12s" }}
                   onMouseEnter={e => e.currentTarget.style.opacity = 1}
@@ -6296,6 +6354,9 @@ export default function App() {
           people={people}
           onClose={() => setProjectDetailsId(null)}
           onSave={handleSaveProjectDetails}
+          onArchive={(id) => { handleArchiveProject(id); setProjectDetailsId(null); }}
+          onDelete={(id) => { handleDeleteProject(id); setProjectDetailsId(null); }}
+          onSaveAsTemplate={(proj) => { handleSaveAsTemplate(proj); }}
         />
       )}
       {editingItem && (
