@@ -497,10 +497,18 @@ function busyDays(start, end, holidaySet = new Set()) {
 }
 
 const statusMeta = {
-  "Not Started":      { color: "#6b7280", bg: "rgba(100,116,139,0.15)" },
-  "In Progress":      { color: "#38bdf8", bg: "rgba(56,189,248,0.15)"  },
-  "Done":             { color: "#34d399", bg: "rgba(52,211,153,0.15)"  },
-  "Blocked":          { color: "#f87171", bg: "rgba(248,113,113,0.15)" },
+  "Not Started":        { color: "#64748b", bg: "rgba(100,116,139,0.1)",  icon: "○",  border: "rgba(100,116,139,0.35)" },
+  "In Progress":        { color: "#0ea5e9", bg: "rgba(14,165,233,0.1)",   icon: "◑",  border: "rgba(14,165,233,0.4)"  },
+  "Done":               { color: "#10b981", bg: "rgba(16,185,129,0.1)",   icon: "✓",  border: "rgba(16,185,129,0.4)"  },
+  "Blocked":            { color: "#ef4444", bg: "rgba(239,68,68,0.1)",    icon: "⊘",  border: "rgba(239,68,68,0.4)"   },
+  "Editorial Review":   { color: "#8b5cf6", bg: "rgba(139,92,246,0.1)",  icon: "✍",  border: "rgba(139,92,246,0.4)"  },
+  "Design Review":      { color: "#f59e0b", bg: "rgba(245,158,11,0.1)",  icon: "◈",  border: "rgba(245,158,11,0.4)"  },
+  "Proof Review":       { color: "#f97316", bg: "rgba(249,115,22,0.1)",  icon: "⊙",  border: "rgba(249,115,22,0.4)"  },
+  "Internal Review":    { color: "#6366f1", bg: "rgba(99,102,241,0.1)",  icon: "◎",  border: "rgba(99,102,241,0.4)"  },
+  "Client Review":      { color: "#ec4899", bg: "rgba(236,72,153,0.1)",  icon: "◉",  border: "rgba(236,72,153,0.4)"  },
+  "On Track":           { color: "#10b981", bg: "rgba(16,185,129,0.1)",  icon: "↑",  border: "rgba(16,185,129,0.4)"  },
+  "At Risk":            { color: "#f59e0b", bg: "rgba(245,158,11,0.1)",  icon: "⚠",  border: "rgba(245,158,11,0.4)"  },
+  "Off Track":          { color: "#ef4444", bg: "rgba(239,68,68,0.1)",   icon: "↓",  border: "rgba(239,68,68,0.4)"   },
 };
 const priorityMeta = {
   "Low":      { color: "#4b5563" },
@@ -526,10 +534,15 @@ function StatusBadge({ status, small }) {
   const m = statusMeta[status] || statusMeta["Not Started"];
   return (
     <span style={{
-      background: m.bg, color: m.color, border: `1px solid ${m.color}40`,
+      background: m.bg, color: m.color,
+      border: `1px solid ${m.border || m.color + "40"}`,
       borderRadius: 4, padding: small ? "1px 6px" : "2px 8px",
-      fontSize: small ? 10 : 11, fontWeight: 600, letterSpacing: "0.05em", whiteSpace: "nowrap",
-    }}>{status}</span>
+      fontSize: small ? 10 : 11, fontWeight: 600, letterSpacing: "0.04em",
+      whiteSpace: "nowrap", display: "inline-flex", alignItems: "center", gap: 3,
+    }}>
+      {m.icon && <span style={{ fontSize: small ? 8 : 9, opacity: 0.9 }}>{m.icon}</span>}
+      {status}
+    </span>
   );
 }
 
@@ -589,7 +602,7 @@ function CheckButton({ isDone, onClick }) {
 }
 
 // --- TASK EDIT MODAL ──────────────────────────────────────────────────────────
-function TaskModal({ item, projectColor, allItems, onClose, onSave, allPeople, onDelete, holidays = [] }) {
+function TaskModal({ item, projectColor, allItems, onClose, onSave, allPeople, onDelete, holidays = [], statusNotes = {}, onUpdateNote, trackStatus }) {
   const [form, setForm] = useState({ ...item });
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
   const togglePerson = (id) => set("assignees", form.assignees.includes(id)
@@ -767,6 +780,63 @@ function TaskModal({ item, projectColor, allItems, onClose, onSave, allPeople, o
               </div>
             </div>
           )}
+
+          {/* ── Track Status (from Status tab) ── */}
+          {trackStatus && (() => {
+            const meta = statusMeta[trackStatus] || statusMeta["On Track"];
+            return (
+              <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 14px", background: meta.bg + "60", border: `1px solid ${meta.color}25`, borderRadius: 8 }}>
+                <span style={{ fontSize: 13 }}>{meta.icon}</span>
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontSize: 10, fontWeight: 700, color: "#6b7280", letterSpacing: "0.08em", textTransform: "uppercase", marginBottom: 2 }}>Project Track Status</div>
+                  <div style={{ fontSize: 12, fontWeight: 700, color: meta.color }}>{trackStatus}</div>
+                </div>
+                <div style={{ fontSize: 10, color: "#9ca3af" }}>Set on Status tab</div>
+              </div>
+            );
+          })()}
+
+          {/* ── File Link ── */}
+          <div>
+            <div style={labelStyle}>File / Link</div>
+            <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+              <input
+                value={form.file_url || ""}
+                onChange={e => set("file_url", e.target.value)}
+                placeholder="https://docs.google.com/… or any URL"
+                style={{ ...selectStyle, flex: 1 }}
+              />
+              {form.file_url && (
+                <a href={form.file_url} target="_blank" rel="noopener noreferrer"
+                  style={{ flexShrink: 0, background: projectColor + "18", border: `1px solid ${projectColor}40`, color: projectColor, borderRadius: 6, padding: "7px 12px", fontSize: 11, fontWeight: 700, textDecoration: "none", whiteSpace: "nowrap" }}
+                  onClick={e => e.stopPropagation()}
+                >Open ↗</a>
+              )}
+            </div>
+          </div>
+
+          {/* ── Notes ── */}
+          <div>
+            <div style={labelStyle}>Notes</div>
+            <textarea
+              value={(() => {
+                const noteKey = item.deliverableId
+                  ? `${item.projectId}::${item.deliverableId}`
+                  : `${item.projectId}::${item.id}`;
+                return statusNotes[noteKey] || "";
+              })()}
+              onChange={e => {
+                if (!onUpdateNote) return;
+                const noteKey = item.deliverableId
+                  ? `${item.projectId}::${item.deliverableId}`
+                  : `${item.projectId}::${item.id}`;
+                onUpdateNote(noteKey, e.target.value);
+              }}
+              placeholder="Add notes, context, or updates…"
+              rows={3}
+              style={{ ...selectStyle, resize: "vertical", lineHeight: 1.5, fontFamily: "inherit" }}
+            />
+          </div>
         </div>
         {/* Footer */}
         <div style={{ borderTop: "1px solid rgba(0,0,0,0.07)", padding: "14px 22px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
@@ -3191,7 +3261,7 @@ function MyHubView({ projects, people, holidays, pto = [], currentUserId, onSetC
             <div style={{ fontSize: 10, color: task.projColor, fontWeight: 600, marginBottom: 5 }}>{task.projName}{task.isSubtask ? ` · ${task.delTitle}` : ""}</div>
             <div style={{ display: "flex", gap: 5, flexWrap: "wrap", alignItems: "center" }}>
               {badge && <span style={{ fontSize: 9, fontWeight: 700, background: badgeColor + "18", color: badgeColor, borderRadius: 4, padding: "2px 6px" }}>{badge}</span>}
-              {task.status !== "Not Started" && <StatusBadge status={task.status} small />}
+              <StatusBadge status={task.status} small />
               {task.effort !== "M" && <span style={{ fontSize: 9, color: "#6b7280", background: "rgba(0,0,0,0.05)", borderRadius: 3, padding: "1px 5px" }}>{EFFORT_LABEL[task.effort]}</span>}
               {!cleared && blocked.length > 0 && (
                 <span style={{ fontSize: 9, color: "#f87171", background: "rgba(248,113,113,0.1)", borderRadius: 4, padding: "2px 6px" }}>
@@ -4997,6 +5067,7 @@ function rowToSubtask(r) {
     department: r.department || "", start: r.start_date || "", end: r.end_date || "",
     progress: r.progress ?? 0, dependencies: r.dependencies ?? [], assignees: r.assignees ?? [],
     effort: r.effort || "M",
+    file_url: r.file_url || "",
   };
 }
 function rowToDeliverable(r, subs) {
@@ -5006,6 +5077,7 @@ function rowToDeliverable(r, subs) {
     progress: r.progress ?? 0, dependencies: r.dependencies ?? [], assignees: r.assignees ?? [],
     trackOverride: r.track_override || null,
     effort: r.effort || "M",
+    file_url: r.file_url || "",
     subtasks: (subs || []).filter(s => s.deliverable_id === r.id)
       .sort((a, b) => a.position - b.position).map(rowToSubtask),
   };
@@ -5023,7 +5095,7 @@ function delToRow(d, projectId, pos = 0) {
     id: d.id, project_id: projectId, title: d.title, status: d.status, priority: d.priority,
     department: d.department || null, start_date: d.start || null, end_date: d.end || null,
     progress: d.progress ?? 0, dependencies: d.dependencies ?? [], assignees: d.assignees ?? [],
-    track_override: d.trackOverride || null, effort: d.effort || "M", position: pos,
+    track_override: d.trackOverride || null, effort: d.effort || "M", file_url: d.file_url || null, position: pos,
   };
 }
 function subToRow(s, delId, projId, pos = 0) {
@@ -5032,7 +5104,7 @@ function subToRow(s, delId, projId, pos = 0) {
     status: s.status, priority: s.priority, department: s.department || null,
     start_date: s.start || null, end_date: s.end || null,
     progress: s.progress ?? 0, dependencies: s.dependencies ?? [], assignees: s.assignees ?? [],
-    effort: s.effort || "M", position: pos,
+    effort: s.effort || "M", file_url: s.file_url || null, position: pos,
   };
 }
 
@@ -5896,6 +5968,16 @@ export default function App() {
               ? () => handleDeleteDeliverable(editingItem.projectId, editingItem.id)
               : null
           }
+          statusNotes={statusNotes}
+          onUpdateNote={handleUpdateNote}
+          trackStatus={(() => {
+            // Find the deliverable-level track status for this item
+            const projId = editingItem.projectId;
+            const delId  = editingItem.deliverableId || editingItem.id;
+            const proj   = projects.find(p => p.id === projId);
+            const del    = proj?.deliverables.find(d => d.id === delId);
+            return del?.trackOverride || null;
+          })()}
         />
       )}
     </div>
