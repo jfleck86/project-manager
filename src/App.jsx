@@ -1456,7 +1456,7 @@ function DashboardView({ projects, people, onEditItem, onAddDeliverable, onAddSu
                       onMouseEnter={e => e.currentTarget.style.background = "rgba(0,0,0,0.035)"}
                       onMouseLeave={e => e.currentTarget.style.background = "rgba(0,0,0,0.015)"}>
                       <td style={{ padding: "6px 14px 6px 28px", fontSize: fs(11), color: sub.status === "Done" ? "#9ca3af" : "#374151", textDecoration: sub.status === "Done" ? "line-through" : "none", cursor: "pointer" }}
-                        onClick={() => onEditItem({ ...sub, projectId: d.projectId, projectName: d.projectName, projectColor: d.projectColor, deliverableId: d.id })}>
+                        onClick={() => onEditItem({ ...sub, projectId: d.projectId, projectName: d.projectName, projectColor: d.projectColor, deliverableId: d.id, delTitle: d.title })}>
                         <span style={{ display: "flex", alignItems: "center", gap: 7 }}>
                           <span style={{ width: 2, height: 12, background: d.projectColor + "80", borderRadius: 1, flexShrink: 0 }} />
                           <span style={{ width: 5, height: 5, borderRadius: "50%", background: (statusMeta[sub.status] || statusMeta["Not Started"]).color, flexShrink: 0 }} />
@@ -2495,7 +2495,7 @@ function SubtaskRow({ sub, del, proj, people, weeks, todayOff, allItemsFlat, onE
             <button onClick={e => { e.stopPropagation(); save({ status: "In Progress" }); }} title="Start task"
               style={{ background: "none", border: "none", cursor: "pointer", color: "#34d399", fontSize: 10, padding: 0, lineHeight: 1, flexShrink: 0 }}>▶</button>
           )}
-          <span onClick={() => onEditItem({ ...sub, projectId: proj.id, projectName: proj.name, projectColor: proj.color, deliverableId: del.id })} style={{ fontSize: fs(11), color: sub.status === "Done" ? "#9ca3af" : "#374151", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", textDecoration: sub.status === "Done" ? "line-through" : "none", flex: 1, cursor: "pointer" }} title={"Click to edit · Right-click for options"}>{sub.title}</span>
+          <span onClick={() => onEditItem({ ...sub, projectId: proj.id, projectName: proj.name, projectColor: proj.color, deliverableId: del.id, delTitle: del.title })} style={{ fontSize: fs(11), color: sub.status === "Done" ? "#9ca3af" : "#374151", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", textDecoration: sub.status === "Done" ? "line-through" : "none", flex: 1, cursor: "pointer" }} title={"Click to edit · Right-click for options"}>{sub.title}</span>
         </div>
       </LeftCell>
 
@@ -5414,7 +5414,7 @@ function rowToDeliverable(r, subs) {
     trackOverride: r.track_override || null,
     effort: r.effort || "M",
     file_url: r.file_url || "",
-    subtasks: (subs || []).filter(s => s.deliverable_id === r.id)
+    subtasks: (subs || []).filter(s => s.deliverable_id != null && s.deliverable_id === r.id)
       .sort((a, b) => a.position - b.position).map(rowToSubtask),
   };
 }
@@ -5427,7 +5427,7 @@ function rowToProject(r, dels, subs) {
     notes: r.notes || "",
     meta: r.meta || {},
     deliverables: (dels || []).filter(d => d.project_id === r.id)
-      .sort((a, b) => a.position - b.position).map(d => rowToDeliverable(d, subs)),
+      .sort((a, b) => (a.position ?? 0) - (b.position ?? 0)).map(d => rowToDeliverable(d, subs)),
   };
 }
 function delToRow(d, projectId, pos = 0) {
