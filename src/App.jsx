@@ -3372,7 +3372,7 @@ function WorkloadView({ projects, people, onEditItem, pto = [], holidays = [] })
               : drillTasks.map(t => {
                   const effortColors = { S: "#34d399", M: "#fbbf24", L: "#f87171" };
                   return (
-                    <div key={t.id} onClick={() => onEditItem && onEditItem({ ...t, projectId: t.projId, projectName: t.projName, projectColor: t.projColor })} style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 18px", borderBottom: "1px solid rgba(0,0,0,0.04)", cursor: "pointer" }}
+                    <div key={t.id} onClick={() => onEditItem && onEditItem({ ...t, projectId: t.projId, projectName: t.projName, projectColor: t.projColor, deliverableId: t.isSubtask ? t.delId : null, delTitle: t.isSubtask ? t.delTitle : null })} style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 18px", borderBottom: "1px solid rgba(0,0,0,0.04)", cursor: "pointer" }}
                       onMouseEnter={e => e.currentTarget.style.background = "rgba(0,0,0,0.025)"}
                       onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
                       <div style={{ width: 3, height: 32, background: t.projColor, borderRadius: 2, flexShrink: 0 }} />
@@ -3617,7 +3617,7 @@ function MyHubView({ projects, people, holidays, pto = [], currentUserId, onSetC
     const cleared = isDependencyClear(task);
     const blocked = blockedBy(task);
     return (
-      <div onClick={() => onEditItem({ ...task, projectId: task.projId, projectName: task.projName, projectColor: task.projColor })}
+      <div onClick={() => onEditItem({ ...task, projectId: task.projId, projectName: task.projName, projectColor: task.projColor, deliverableId: task.isSubtask ? (task.deliverableId || task.delId) : null, delTitle: task.isSubtask ? task.delTitle : null })}
         style={{ background: "#fff", border: `1px solid ${overdue ? "rgba(248,113,113,0.3)" : "rgba(0,0,0,0.07)"}`, borderLeft: `3px solid ${task.projColor}`, borderRadius: 8, padding: "11px 14px", cursor: "pointer", transition: "box-shadow 0.12s" }}
         onMouseEnter={e => e.currentTarget.style.boxShadow = "0 2px 12px rgba(0,0,0,0.08)"}
         onMouseLeave={e => e.currentTarget.style.boxShadow = "none"}
@@ -4055,7 +4055,7 @@ function StatusView({ projects, people, statusNotes, onUpdateNote, onAddDelivera
                   if (!onEditItem) return;
                   const activeSub = del.subtasks.find(s => s.status === "In Progress") || del.subtasks.find(s => s.status === "Not Started");
                   if (activeSub) {
-                    onEditItem({ ...activeSub, projectId: proj.id, projectName: proj.name, projectColor: proj.color, deliverableId: del.id });
+                    onEditItem({ ...activeSub, projectId: proj.id, projectName: proj.name, projectColor: proj.color, deliverableId: del.id, delTitle: del.title });
                   } else {
                     onEditItem({ ...del, projectId: proj.id, projectName: proj.name, projectColor: proj.color });
                   }
@@ -5736,6 +5736,10 @@ export default function App() {
           let ns = new Date(new Date(parseDate(latestPred).getTime() + 86400000).toISOString().slice(0,10) + "T00:00:00");
           while (ns.getDay() === 0 || ns.getDay() === 6 || holidaySet.has(ns.toISOString().slice(0,10))) ns = new Date(ns.getTime() + 86400000);
           const newStart = ns.toISOString().slice(0,10);
+          // Only push forward — never move a task backward
+          if (newStart <= sanitized.start) {
+            // dependency already satisfied, no date change needed
+          } else {
           const dur = Math.max(1, durDays(sanitized.start, sanitized.end));
           let ne = new Date(ns.getTime()); let added = 0;
           while (added < dur - 1) { ne = new Date(ne.getTime() + 86400000); if (ne.getDay() !== 0 && ne.getDay() !== 6 && !holidaySet.has(ne.toISOString().slice(0,10))) added++; }
@@ -5746,6 +5750,7 @@ export default function App() {
                 return { ...del, subtasks: del.subtasks.map(s => s.id === sanitized.id ? { ...s, start: newStart, end: newEnd } : s) }; }) }; });
             newProjs = cascadeDates(newProjs, sanitized.id, newEnd, holidays);
           }
+          } // end forward-only guard
         }
       }
       return newProjs;
@@ -5757,14 +5762,19 @@ export default function App() {
         const newProjs = doSave(projects);
         const item = newProjs.flatMap(p => [...p.deliverables, ...p.deliverables.flatMap(d => d.subtasks)]).find(x => x.id === updated.id);
         if (!item) return null;
-        if (updated.deliverableId) {
-          const proj = newProjs.find(p => p.id === updated.projectId);
-          const del = proj?.deliverables.find(d => d.id === updated.deliverableId);
+        // Determine true item type: check if it exists as a subtask in the DB model
+        // This prevents subtasks from being accidentally saved as deliverables
+        const proj = newProjs.find(p => p.id === updated.projectId);
+        const parentDel = proj?.deliverables.find(d => d.subtasks.some(s => s.id === updated.id));
+        const isActuallySubtask = !!(parentDel || updated.deliverableId);
+        const actualDelId = parentDel?.id || updated.deliverableId;
+
+        if (isActuallySubtask && actualDelId) {
+          const del = proj?.deliverables.find(d => d.id === actualDelId);
           const pos = del?.subtasks.findIndex(s => s.id === updated.id) ?? 0;
-          const { error } = await sb.upsert("subtasks", subToRow(item, updated.deliverableId, updated.projectId, pos));
+          const { error } = await sb.upsert("subtasks", subToRow(item, actualDelId, updated.projectId, pos));
           return error;
         } else {
-          const proj = newProjs.find(p => p.id === updated.projectId);
           const pos = proj?.deliverables.findIndex(d => d.id === updated.id) ?? 0;
           const { error } = await sb.upsert("deliverables", delToRow(item, updated.projectId, pos));
           return error;
@@ -6059,6 +6069,7 @@ export default function App() {
         ::-webkit-scrollbar-thumb { background: #c4c9d4; border-radius: 3px; }
         input[type=date]::-webkit-calendar-picker-indicator { filter: invert(0); cursor: pointer; }
         input[type=range] { cursor: pointer; }
+        nav::-webkit-scrollbar { display: none; }
         select option { background: #ffffff; color: #1a1d23; }
         [data-timeline-body] { cursor: default; }
         [data-timeline-body]:not(:has(input:focus)):not(:has(textarea:focus)) { cursor: grab; }
@@ -6074,15 +6085,15 @@ export default function App() {
           </div>
           <span style={{ fontSize: 15, fontWeight: 800, color: "#ffffff", fontFamily: '"Roboto", Arial, sans-serif', letterSpacing: "-0.01em" }}>PulseX</span>
         </div>
-        <nav style={{ display: "flex", gap: 3 }}>
+        <nav style={{ display: "flex", gap: 3, overflowX: "auto", overflowY: "visible", flex: 1, scrollbarWidth: "none", msOverflowStyle: "none", WebkitOverflowScrolling: "touch" }}>
           {navItems.map(n => (
             <button key={n.id} onClick={() => setView(n.id)} style={{
               background: view === n.id ? BRAND_TEAL_L : "none",
               border: `1px solid ${view === n.id ? BRAND_TEAL + "50" : "rgba(255,255,255,0.1)"}` ,
               color: view === n.id ? BRAND_TEAL : "rgba(255,255,255,0.65)", padding: "5px 14px",
               borderRadius: 5, cursor: "pointer", fontSize: 11, fontWeight: 700,
-              letterSpacing: "0.07em", fontFamily: "inherit", display: "flex", alignItems: "center", gap: 5, transition: "all 0.12s",
-            }}><span>{n.icon}</span>{n.label}</button>
+              letterSpacing: "0.07em", fontFamily: "inherit", display: "flex", alignItems: "center", gap: 5, transition: "all 0.12s", flexShrink: 0,
+            }}><span>{n.icon}</span><span className="nav-label">{n.label}</span></button>
           ))}
         </nav>
         <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 12 }}>
