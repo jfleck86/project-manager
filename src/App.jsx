@@ -1,6 +1,61 @@
-import React, { useState, useRef, useEffect, useCallback, useMemo } from "react";
+import React, { useState, useEffect, useCallback, useMemo, useRef } from "react";
 
-// --- PEOPLE ───────────────────────────────────────────────────────────────────
+// ── Constants ─────────────────────────────────────────────────────────────────
+import { BRAND_TEAL, BRAND_NAVY, BRAND_TEAL_D, BRAND_TEAL_L } from "./constants/brand.js";
+import { STATUSES, statusMeta } from "./constants/statuses.js";
+import { PRIORITIES, priorityMeta, DEPARTMENTS, deptMeta } from "./constants/priorities.js";
+import {
+  EFFORT_OPTS, EFFORT_LABEL, EFFORT_HOURS, EFFORT_VAL,
+  WEEKLY_HOURS, HOURS_LIGHT, HOURS_MEDIUM,
+} from "./constants/effort.js";
+import { TIMELINE_START, TIMELINE_END } from "./constants/timeline.js";
+import { MIN_DAY_W, MAX_DAY_W, D_ROW, S_ROW, COL_DEFAULTS } from "./constants/columns.js";
+import { PROJECT_COLORS } from "./constants/colors.js";
+
+// ── Utils ─────────────────────────────────────────────────────────────────────
+import { parseDate, fmt, fmtFull, fmtMonth, durDays, dayOffset, busyDays, addWorkingDays } from "./utils/dates.js";
+import { effortHours, classifyLoad, ptoDaysInWeek, availableHours } from "./utils/workload.js";
+import { getInitials } from "./utils/formatting.js";
+
+// ── Data converters + PTO helpers ────────────────────────────────────────────
+import {
+  rowToSubtask, rowToDeliverable, rowToProject,
+  delToRow, subToRow, ptoToRow, rowToPto,
+  isOnPto, ptoOverlap,
+} from "./lib/dataConverters.js";
+
+// ── UI-only constants (stay in App.jsx — pure presentation) ─────────────────
+const MEMBER_COLORS = [
+  "#f59e0b","#38bdf8","#34d399","#a78bfa","#fb923c",
+  "#f87171","#60a5fa","#c084fc","#4ade80","#facc15",
+];
+
+const ZOOM_LEVELS = [
+  { id: "compact",  label: "Compact",    base: 11, scale: 0.85 },
+  { id: "standard", label: "Standard",   base: 13, scale: 1.00 },
+  { id: "large",    label: "Large",      base: 15, scale: 1.15 },
+  { id: "xl",       label: "Extra Large",base: 17, scale: 1.30 },
+];
+let _zoomRatio = 1.0;
+const fs = (px) => Math.round(px * _zoomRatio);
+
+// Derived from imported constants
+const totalDays = Math.ceil((TIMELINE_END - TIMELINE_START) / 86400000);
+const TODAY     = (() => { const d = new Date(); d.setHours(0,0,0,0); return d; })();
+const TODAY_DATE = TODAY;
+
+// ── Copy/paste helpers (used only in App handlers) ───────────────────────────
+function cloneSubtask(sub) {
+  return { ...sub, id: "s_" + Date.now() + "_" + Math.random().toString(36).slice(2, 6) };
+}
+function cloneDeliverable(del) {
+  const newId = "d_" + Date.now() + "_" + Math.random().toString(36).slice(2, 6);
+  return {
+    ...del, id: newId, title: del.title + " (copy)", dependencies: [],
+    subtasks: del.subtasks.map(s => cloneSubtask({ ...s, dependencies: [] })),
+  };
+}
+
 const initialPeople = [
   { id: "p1", name: "Maya Chen",     color: "#f59e0b" },
   { id: "p2", name: "Jordan Rivers", color: "#38bdf8" },
@@ -9,77 +64,7 @@ const initialPeople = [
   { id: "p5", name: "Alex Kim",      color: "#f87171" },
 ];
 
-function getInitials(name) {
-  return name.split(" ").filter(Boolean).map(w => w[0]).join("").slice(0, 2).toUpperCase();
-}
 
-const STATUSES = ["Not Started", "In Progress", "Done", "Blocked"];
-const PRIORITIES   = ["Low", "Medium", "High", "Critical"];
-const DEPARTMENTS  = ["Editorial", "Design", "Proof", "Strategy", "Account", "Production", "Client Review"];
-// ── BRAND COLORS ─────────────────────────────────────────────────────────────
-const BRAND_TEAL   = "#50C0C0";  // primary accent
-const BRAND_NAVY   = "#002A4E";  // dark background / headers
-const BRAND_TEAL_D = "#009090";  // darker teal for hover / text on light bg
-const BRAND_TEAL_L = "rgba(80,192,192,0.13)"; // light teal for selected bg
-
-const EFFORT_OPTS  = ["S", "M", "L"];
-const ZOOM_LEVELS  = [
-  { id: "compact",  label: "Compact",    base: 11, scale: 0.85 },
-  { id: "standard", label: "Standard",   base: 13, scale: 1.00 },
-  { id: "large",    label: "Large",      base: 15, scale: 1.15 },
-  { id: "xl",       label: "Extra Large",base: 17, scale: 1.30 },
-];
-// Font-size scaler — multiply any px size by the zoom ratio
-// zoomRatio is set inside App() based on selected zoom level
-let _zoomRatio = 1.0;
-const fs = (px) => Math.round(px * _zoomRatio);
-// ── CAPACITY ENGINE ──────────────────────────────────────────────────────────
-// Hidden from users — only Small/Medium/Large labels are shown in UI
-const EFFORT_HOURS  = { S: 1, M: 4, L: 8 };  // hours per task
-const WEEKLY_HOURS  = 40;                      // standard capacity per person per week
-const HOURS_LIGHT   = 20;                      // 0–20h = Light
-const HOURS_MEDIUM  = 40;                      // 20–40h = Medium  (>40 = Heavy)
-
-// Still expose EFFORT_VAL for legacy score/sort logic (uses relative units)
-const EFFORT_VAL    = { S: 1, M: 4, L: 8 };  // now mirrors EFFORT_HOURS
-
-// Centralized effort → hours
-const effortHours = (e) => EFFORT_HOURS[e] || EFFORT_HOURS["M"];
-
-// Workload classification (hours-based, hidden from users)
-function classifyLoad(hoursPlanned, hoursAvailable) {
-  const pct = hoursAvailable > 0 ? hoursPlanned / hoursAvailable : hoursPlanned > 0 ? 2 : 0;
-  if (hoursPlanned <= HOURS_LIGHT)  return { label: "Light",    color: "#34d399", pct };
-  if (hoursPlanned <= HOURS_MEDIUM) return { label: "Moderate", color: "#fbbf24", pct };
-  if (hoursPlanned <= hoursAvailable + 8) return { label: "Busy",  color: "#fb923c", pct };
-  return { label: "Heavy", color: "#f87171", pct };
-}
-
-// Count PTO business days in a week (Mon–Fri)
-function ptoDaysInWeek(personId, weekStart, ptoList, holidaySet) {
-  let days = 0;
-  for (let i = 0; i < 5; i++) {
-    const d = new Date(weekStart.getTime() + i * 86400000);
-    const ds = d.toISOString().slice(0, 10);
-    if (ptoList.some(p => p.personId === personId && ds >= p.start && ds <= p.end)) days++;
-  }
-  return days;
-}
-
-// Available hours for a person in a week (accounts for PTO + holidays)
-function availableHours(personId, weekStartStr, ptoList, holidaySet) {
-  const ws = new Date(weekStartStr + "T00:00:00");
-  const ptoDays = ptoDaysInWeek(personId, ws, ptoList, holidaySet);
-  let holidayDays = 0;
-  for (let i = 0; i < 5; i++) {
-    const d = new Date(ws.getTime() + i * 86400000);
-    const ds = d.toISOString().slice(0, 10);
-    if (holidaySet.has(ds)) holidayDays++;
-  }
-  const offDays = Math.min(5, ptoDays + holidayDays);
-  return Math.max(0, WEEKLY_HOURS - offDays * 8);
-}
-const EFFORT_LABEL = { S: "Small", M: "Medium", L: "Large" };
 
 // --- DATA - deliverables = specific outputs; subtasks = production workflow steps
 const initialProjects = [
@@ -519,49 +504,8 @@ const initialProjects = [
 ];
 
 // --- HELPERS ──────────────────────────────────────────────────────────────────
-const TIMELINE_START = new Date("2026-05-12");
-const TIMELINE_END   = new Date("2026-07-10");
-const parseDate = (s) => new Date(s + "T00:00:00");
-const fmt = (d) => d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
-const fmtFull = (d) => d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
-const fmtMonth = (d) => d.toLocaleDateString("en-US", { month: "short", year: "2-digit" });
-const durDays = (start, end) => Math.ceil((parseDate(end) - parseDate(start)) / 86400000) + 1;
 
 // Business days between two date strings (inclusive), skipping weekends + provided holidays
-function busyDays(start, end, holidaySet = new Set()) {
-  if (!start || !end) return 0;
-  let d = new Date(start + "T00:00:00");
-  const e = new Date(end + "T00:00:00");
-  let count = 0;
-  while (d <= e) {
-    const ds = d.toISOString().slice(0,10);
-    if (d.getDay() !== 0 && d.getDay() !== 6 && !holidaySet.has(ds)) count++;
-    d = new Date(d.getTime() + 86400000);
-  }
-  return Math.max(1, count);
-}
-
-const statusMeta = {
-  "Not Started":        { color: "#64748b", bg: "rgba(100,116,139,0.1)",  icon: "○",  border: "rgba(100,116,139,0.35)" },
-  "In Progress":        { color: "#0ea5e9", bg: "rgba(14,165,233,0.1)",   icon: "◑",  border: "rgba(14,165,233,0.4)"  },
-  "Done":               { color: "#10b981", bg: "rgba(16,185,129,0.1)",   icon: "✓",  border: "rgba(16,185,129,0.4)"  },
-  "Blocked":            { color: "#ef4444", bg: "rgba(239,68,68,0.1)",    icon: "⊘",  border: "rgba(239,68,68,0.4)"   },
-  "Editorial Review":   { color: "#8b5cf6", bg: "rgba(139,92,246,0.1)",  icon: "✍",  border: "rgba(139,92,246,0.4)"  },
-  "Design Review":      { color: "#f59e0b", bg: "rgba(245,158,11,0.1)",  icon: "◈",  border: "rgba(245,158,11,0.4)"  },
-  "Proof Review":       { color: "#f97316", bg: "rgba(249,115,22,0.1)",  icon: "⊙",  border: "rgba(249,115,22,0.4)"  },
-  "Internal Review":    { color: "#6366f1", bg: "rgba(99,102,241,0.1)",  icon: "◎",  border: "rgba(99,102,241,0.4)"  },
-  "Client Review":      { color: "#ec4899", bg: "rgba(236,72,153,0.1)",  icon: "◉",  border: "rgba(236,72,153,0.4)"  },
-  "On Track":           { color: "#10b981", bg: "rgba(16,185,129,0.1)",  icon: "↑",  border: "rgba(16,185,129,0.4)"  },
-  "At Risk":            { color: "#f59e0b", bg: "rgba(245,158,11,0.1)",  icon: "⚠",  border: "rgba(245,158,11,0.4)"  },
-  "Off Track":          { color: "#ef4444", bg: "rgba(239,68,68,0.1)",   icon: "↓",  border: "rgba(239,68,68,0.4)"   },
-};
-const priorityMeta = {
-  "Low":      { color: "#4b5563" },
-  "Medium":   { color: "#fbbf24" },
-  "High":     { color: "#f97316" },
-  "Critical": { color: "#ef4444" },
-};
-
 function Avatar({ person, size = 26 }) {
   const initials = getInitials(person.name);
   return (
@@ -595,16 +539,6 @@ function PriorityDot({ priority }) {
   const m = priorityMeta[priority] || priorityMeta["Low"];
   return <span style={{ color: m.color, fontWeight: 700, fontSize: 10, letterSpacing: "0.03em" }}>● {priority}</span>;
 }
-
-const deptMeta = {
-  "Editorial":  { color: "#f59e0b", icon: "✍" },
-  "Design":     { color: "#e879f9", icon: "◈" },
-  "Proof":      { color: "#fb923c", icon: "◉" },
-  "Strategy":   { color: "#38bdf8", icon: "◆" },
-  "Account":    { color: "#34d399", icon: "◎" },
-  "Production": { color: "#4b5563", icon: "▣" },
-  "Client Review": { color: "#a78bfa", icon: "◎" },
-};
 
 function DeptBadge({ dept }) {
   if (!dept) return null;
@@ -1551,15 +1485,8 @@ function SectionHeader({ children, noMargin }) {
 }
 
 // --- TIMELINE ────────────────────────────────────────────────────────────────
-const MIN_DAY_W = 20; const MAX_DAY_W = 32;
-const D_ROW = 44;
-const S_ROW = 36;
-const TODAY = (() => { const d = new Date(); d.setHours(0,0,0,0); return d; })();
-const totalDays = Math.ceil((TIMELINE_END - TIMELINE_START) / 86400000);
 
-// Column widths for the left table
-const COL_DEFAULTS = { num: 38, title: 280, start: 82, end: 82, dur: 48, deps: 88, assignees: 82, notes: 150 };
-// LEFT_W is now computed dynamically from colWidths state
+// Column widths for the left table// LEFT_W is now computed dynamically from colWidths state
 
 // Build a flat numbered index of all items across all projects
 function buildRowIndex(projects) {
@@ -1700,9 +1627,6 @@ function cascadeDates(projects, changedId, newEnd, holidays = []) {
 }
 
 
-function dayOffset(dateStr) {
-  return Math.ceil((parseDate(dateStr) - TIMELINE_START) / 86400000);
-}
 
 function TimelineView({ projects, people, onEditItem, onAddDeliverable, onAddSubtask, onMarkDone, onSaveItem, holidays = [], onInsertSubtask, onReorderSubtasks, onDeleteSubtask, statusNotes = {}, onUpdateNote, onSaveProject, onOpenProject, clipboard, onCopySubtask, onCopyDeliverable, onPasteSubtask, onPasteDeliverable }) {
   const [collapsed, setCollapsed] = useState(() => {
@@ -3503,7 +3427,8 @@ function WorkloadView({ projects, people, onEditItem, pto = [], holidays = [] })
 // Personal operational command center. Insert before StatusView in App.jsx.
 
 function MyHubView({ projects, people, holidays, pto = [], currentUserId, onSetCurrentUser, onEditItem, onMarkDone, savePto, deletePto }) {
-  const TODAY = new Date(); TODAY.setHours(0,0,0,0);
+ const TODAY = new Date(); 
+TODAY.setHours(0,0,0,0);
 
   // Week bounds (Mon–Sun)
   const weekStart = new Date(TODAY);
@@ -3885,8 +3810,6 @@ function MyHubView({ projects, people, holidays, pto = [], currentUserId, onSetC
 
 
 // --- STATUS VIEW ─────────────────────────────────────────────────────────────
-const TODAY_STR = TODAY.toISOString().slice(0, 10);
-const TODAY_DATE = TODAY;
 
 function getTrackStatus(del) {
   if (del.status === "Done") return "done";
@@ -4282,11 +4205,6 @@ function StatusNoteCell({ note, color, onSave }) {
 }
 
 // --- TEAM SETTINGS MODAL ─────────────────────────────────────────────────────
-const MEMBER_COLORS = [
-  "#f59e0b","#38bdf8","#a78bfa","#34d399","#f87171",
-  "#fb923c","#e879f9","#4ade80","#60a5fa","#facc15","#64748b",
-];
-
 function TeamSettingsModal({ people, onClose, onSave }) {
   const [members, setMembers] = useState(people.map(p => ({ ...p })));
   const updateMember = (id, field, val) =>
@@ -4531,19 +4449,6 @@ function HolidaysModal({ holidays, onClose, onSave }) {
 }
 
 // Helper: advance a date string by n working days (skipping holidays)
-function addWorkingDays(dateStr, days, holidayDates) {
-  const hSet = new Set(holidayDates);
-  let d = new Date(dateStr + "T00:00:00");
-  let added = 0;
-  while (added < days) {
-    d = new Date(d.getTime() + 86400000);
-    const ds = d.toISOString().slice(0,10);
-    const dow = d.getDay();
-    if (dow !== 0 && dow !== 6 && !hSet.has(ds)) added++;
-  }
-  return d.toISOString().slice(0,10);
-}
-
 function ExcelImportModal({ onClose, onImport, existingColors }) {
   const [step, setStep] = useState("upload"); // upload → map → preview → done
   const [rows, setRows] = useState([]);        // raw rows from sheet
@@ -4879,12 +4784,6 @@ function ExcelImportModal({ onClose, onImport, existingColors }) {
     </Overlay>
   );
 }
-
-// --- COLOR PALETTE FOR NEW PROJECTS ──────────────────────────────────────────
-const PROJECT_COLORS = [
-  "#f59e0b","#38bdf8","#a78bfa","#34d399","#f87171",
-  "#fb923c","#e879f9","#4ade80","#60a5fa","#facc15",
-];
 
 // ─── BUILT-IN TEMPLATES ───────────────────────────────────────────────────────
 const BUILT_IN_TEMPLATES = [
@@ -5477,93 +5376,6 @@ function ModalFooter({ onClose, onSave, saveLabel, color }) {
 }
 
 // --- APP ──────────────────────────────────────────────────────────────────────
-// ─── COPY/PASTE HELPERS ──────────────────────────────────────────────────────
-// Deep-clone a subtask with fresh IDs so the paste is independent
-function cloneSubtask(sub) {
-  return { ...sub, id: "s_" + Date.now() + "_" + Math.random().toString(36).slice(2, 6) };
-}
-// Deep-clone a deliverable + all its subtasks with fresh IDs
-function cloneDeliverable(del) {
-  const newId = "d_" + Date.now() + "_" + Math.random().toString(36).slice(2, 6);
-  return {
-    ...del,
-    id: newId,
-    title: del.title + " (copy)",
-    dependencies: [], // don't carry over cross-deliverable deps
-    subtasks: del.subtasks.map(s => cloneSubtask({ ...s, dependencies: [] })),
-  };
-}
-
-// ─── SHAPE CONVERTERS — module-level pure functions (no env dependency) ──────
-function rowToSubtask(r) {
-  return {
-    id: r.id, title: r.title, status: r.status, priority: r.priority,
-    department: r.department || "", start: r.start_date || "", end: r.end_date || "",
-    progress: r.progress ?? 0, dependencies: r.dependencies ?? [], assignees: r.assignees ?? [],
-    effort: r.effort || "M",
-    file_url: r.file_url || "",
-  };
-}
-function rowToDeliverable(r, subs) {
-  return {
-    id: r.id, title: r.title, status: r.status, priority: r.priority,
-    department: r.department || "", start: r.start_date || "", end: r.end_date || "",
-    progress: r.progress ?? 0, dependencies: r.dependencies ?? [], assignees: r.assignees ?? [],
-    trackOverride: r.track_override || null,
-    effort: r.effort || "M",
-    file_url: r.file_url || "",
-    subtasks: (subs || []).filter(s => s.deliverable_id != null && s.deliverable_id === r.id)
-      .sort((a, b) => a.position - b.position).map(rowToSubtask),
-  };
-}
-function rowToProject(r, dels, subs) {
-  return {
-    id: r.id, name: r.name, client: r.client || "", color: r.color,
-    archived: r.archived, archivedAt: r.archived_at || null,
-    ownerId: r.owner_id || null,
-    teamMemberIds: r.team_member_ids || [],
-    notes: r.notes || "",
-    meta: r.meta || {},
-    deliverables: (dels || []).filter(d => d.project_id === r.id)
-      .sort((a, b) => (a.position ?? 0) - (b.position ?? 0)).map(d => rowToDeliverable(d, subs)),
-  };
-}
-function delToRow(d, projectId, pos = 0) {
-  return {
-    id: d.id, project_id: projectId, title: d.title, status: d.status, priority: d.priority,
-    department: d.department || null, start_date: d.start || null, end_date: d.end || null,
-    progress: d.progress ?? 0, dependencies: d.dependencies ?? [], assignees: d.assignees ?? [],
-    track_override: d.trackOverride || null, effort: d.effort || "M", file_url: d.file_url || null, position: pos,
-  };
-}
-function subToRow(s, delId, projId, pos = 0) {
-  return {
-    id: s.id, deliverable_id: delId, project_id: projId, title: s.title,
-    status: s.status, priority: s.priority, department: s.department || null,
-    start_date: s.start || null, end_date: s.end || null,
-    progress: s.progress ?? 0, dependencies: s.dependencies ?? [], assignees: s.assignees ?? [],
-    effort: s.effort || "M", file_url: s.file_url || null, position: pos,
-  };
-}
-
-function ptoToRow(p) {
-  return {
-    id: p.id, person_id: p.personId, start_date: p.start,
-    end_date: p.end, note: p.note || "",
-  };
-}
-function rowToPto(r) {
-  return { id: r.id, personId: r.person_id, start: r.start_date, end: r.end_date, note: r.note || "" };
-}
-
-// ── PTO HELPERS ──────────────────────────────────────────────────────────────
-function isOnPto(personId, dateStr, ptoList) {
-  return ptoList.some(p => p.personId === personId && dateStr >= p.start && dateStr <= p.end);
-}
-function ptoOverlap(personId, startStr, endStr, ptoList) {
-  return ptoList.filter(p => p.personId === personId && p.start <= endStr && p.end >= startStr);
-}
-
 export default function App() {
   // ── SUPABASE CONFIG — read after main.jsx has set window vars ────────────
   // Reading inside App() guarantees main.jsx has already run and set these.
