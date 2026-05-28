@@ -5776,22 +5776,45 @@ export default function App() {
         const newProjs = doSave(projects);
         const item = newProjs.flatMap(p => [...p.deliverables, ...p.deliverables.flatMap(d => d.subtasks)]).find(x => x.id === updated.id);
         if (!item) return null;
-        // Determine true item type: check if it exists as a subtask in the DB model
-        // This prevents subtasks from being accidentally saved as deliverables
-        const proj = newProjs.find(p => p.id === updated.projectId);
-        const parentDel = proj?.deliverables.find(d => d.subtasks.some(s => s.id === updated.id));
-        const isActuallySubtask = !!(parentDel || updated.deliverableId);
-        const actualDelId = parentDel?.id || updated.deliverableId;
+        // ── Determine true item type ──────────────────────────────────────────
+        // Search ALL projects to find the item's true parent — never trust
+        // only updated.projectId since it may be set from projId (a different field)
+        let trueProjectId = updated.projectId;
+        let trueParentDel = null;
 
-        if (isActuallySubtask && actualDelId) {
-          const del = proj?.deliverables.find(d => d.id === actualDelId);
-          const pos = del?.subtasks.findIndex(s => s.id === updated.id) ?? 0;
-          const { error } = await sb.upsert("subtasks", subToRow(item, actualDelId, updated.projectId, pos));
+        // First: search by deliverableId if provided
+        if (updated.deliverableId) {
+          for (const p of newProjs) {
+            const d = p.deliverables.find(d => d.id === updated.deliverableId);
+            if (d) { trueProjectId = p.id; trueParentDel = d; break; }
+          }
+        }
+
+        // Second: find by ID — is this item a subtask of any deliverable?
+        if (!trueParentDel) {
+          for (const p of newProjs) {
+            const d = p.deliverables.find(d => d.subtasks.some(s => s.id === updated.id));
+            if (d) { trueProjectId = p.id; trueParentDel = d; break; }
+          }
+        }
+
+        // Third: is it a top-level deliverable?
+        const trueProj = newProjs.find(p => p.id === trueProjectId);
+        const isDeliverable = !trueParentDel && trueProj?.deliverables.some(d => d.id === updated.id);
+
+        if (trueParentDel) {
+          const pos = trueParentDel.subtasks.findIndex(s => s.id === updated.id);
+          console.log("[PulseX] saving as SUBTASK — del:", trueParentDel.id, "pos:", pos);
+          const { error } = await sb.upsert("subtasks", subToRow(item, trueParentDel.id, trueProjectId, Math.max(0, pos)));
+          return error;
+        } else if (isDeliverable) {
+          const pos = trueProj.deliverables.findIndex(d => d.id === updated.id);
+          console.log("[PulseX] saving as DELIVERABLE — proj:", trueProjectId, "pos:", pos);
+          const { error } = await sb.upsert("deliverables", delToRow(item, trueProjectId, Math.max(0, pos)));
           return error;
         } else {
-          const pos = proj?.deliverables.findIndex(d => d.id === updated.id) ?? 0;
-          const { error } = await sb.upsert("deliverables", delToRow(item, updated.projectId, pos));
-          return error;
+          console.error("[PulseX] handleSaveItem: could not classify item", updated.id, "— skipping DB write");
+          return null;
         }
       }
     );
