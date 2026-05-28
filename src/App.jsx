@@ -33,7 +33,52 @@ const ZOOM_LEVELS  = [
 // zoomRatio is set inside App() based on selected zoom level
 let _zoomRatio = 1.0;
 const fs = (px) => Math.round(px * _zoomRatio);
-const EFFORT_VAL   = { S: 1, M: 2, L: 3 };
+// ── CAPACITY ENGINE ──────────────────────────────────────────────────────────
+// Hidden from users — only Small/Medium/Large labels are shown in UI
+const EFFORT_HOURS  = { S: 1, M: 4, L: 8 };  // hours per task
+const WEEKLY_HOURS  = 40;                      // standard capacity per person per week
+const HOURS_LIGHT   = 20;                      // 0–20h = Light
+const HOURS_MEDIUM  = 40;                      // 20–40h = Medium  (>40 = Heavy)
+
+// Still expose EFFORT_VAL for legacy score/sort logic (uses relative units)
+const EFFORT_VAL    = { S: 1, M: 4, L: 8 };  // now mirrors EFFORT_HOURS
+
+// Centralized effort → hours
+const effortHours = (e) => EFFORT_HOURS[e] || EFFORT_HOURS["M"];
+
+// Workload classification (hours-based, hidden from users)
+function classifyLoad(hoursPlanned, hoursAvailable) {
+  const pct = hoursAvailable > 0 ? hoursPlanned / hoursAvailable : hoursPlanned > 0 ? 2 : 0;
+  if (hoursPlanned <= HOURS_LIGHT)  return { label: "Light",    color: "#34d399", pct };
+  if (hoursPlanned <= HOURS_MEDIUM) return { label: "Moderate", color: "#fbbf24", pct };
+  if (hoursPlanned <= hoursAvailable + 8) return { label: "Busy",  color: "#fb923c", pct };
+  return { label: "Heavy", color: "#f87171", pct };
+}
+
+// Count PTO business days in a week (Mon–Fri)
+function ptoDaysInWeek(personId, weekStart, ptoList, holidaySet) {
+  let days = 0;
+  for (let i = 0; i < 5; i++) {
+    const d = new Date(weekStart.getTime() + i * 86400000);
+    const ds = d.toISOString().slice(0, 10);
+    if (ptoList.some(p => p.personId === personId && ds >= p.start && ds <= p.end)) days++;
+  }
+  return days;
+}
+
+// Available hours for a person in a week (accounts for PTO + holidays)
+function availableHours(personId, weekStartStr, ptoList, holidaySet) {
+  const ws = new Date(weekStartStr + "T00:00:00");
+  const ptoDays = ptoDaysInWeek(personId, ws, ptoList, holidaySet);
+  let holidayDays = 0;
+  for (let i = 0; i < 5; i++) {
+    const d = new Date(ws.getTime() + i * 86400000);
+    const ds = d.toISOString().slice(0, 10);
+    if (holidaySet.has(ds)) holidayDays++;
+  }
+  const offDays = Math.min(5, ptoDays + holidayDays);
+  return Math.max(0, WEEKLY_HOURS - offDays * 8);
+}
 const EFFORT_LABEL = { S: "Small", M: "Medium", L: "Large" };
 
 // --- DATA - deliverables = specific outputs; subtasks = production workflow steps
@@ -1767,25 +1812,12 @@ function TimelineView({ projects, people, onEditItem, onAddDeliverable, onAddSub
           color: selectedProjects.length === 0 ? "#111827" : "#6b7280",
         }}>All Projects</div>
         {projects.map(p => (
-          <div key={p.id} style={{
-            display: "flex", alignItems: "center", gap: 0,
-            borderRadius: 12,
+          <div key={p.id} onClick={() => toggleProjFilter(p.id)} style={{
+            padding: "3px 10px", borderRadius: 12, cursor: "pointer", fontSize: 11, fontWeight: 700,
             border: `1px solid ${selectedProjects.includes(p.id) ? p.color + "80" : "rgba(0,0,0,0.1)"}`,
             background: selectedProjects.includes(p.id) ? p.color + "18" : "transparent",
-          }}>
-            {/* Click name → project details modal */}
-            <button onClick={() => onOpenProject && onOpenProject(p.id)}
-              style={{ padding: "3px 8px 3px 10px", cursor: "pointer", fontSize: 11, fontWeight: 700,
-                color: selectedProjects.includes(p.id) ? p.color : "#6b7280",
-                background: "none", border: "none", fontFamily: "inherit" }}
-              title="View project details">{p.name}</button>
-            {/* Click dot → toggle filter */}
-            <button onClick={() => toggleProjFilter(p.id)}
-              title="Toggle project filter"
-              style={{ padding: "3px 8px 3px 2px", cursor: "pointer", fontSize: 9,
-                color: selectedProjects.includes(p.id) ? p.color : "#9ca3af",
-                lineHeight: 1, background: "none", border: "none" }}>⬤</button>
-          </div>
+            color: selectedProjects.includes(p.id) ? p.color : "#6b7280",
+          }}>{p.name}</div>
         ))}
       </div>
 
@@ -1798,6 +1830,14 @@ function TimelineView({ projects, people, onEditItem, onAddDeliverable, onAddSub
         Horizontal scroll is handled inside TimelineBody and synced to the
         header via headerScrollRef / syncScroll.
       */}
+      {/*
+        ── TIMELINE BOX ────────────────────────────────────────────────────
+        Single scroll owner for BOTH axes:
+          overflowX: auto  → one horizontal scrollbar, header + rows move together
+          overflowY: auto  → vertical scroll, sticky header stays pinned at top
+        The sticky header sticks vertically (top:0) but scrolls horizontally
+        with the content — no JS sync needed, no misalignment possible.
+      */}
       <div
         ref={containerRef}
         style={{
@@ -1805,16 +1845,17 @@ function TimelineView({ projects, people, onEditItem, onAddDeliverable, onAddSub
           border: "1px solid rgba(0,0,0,0.07)",
           borderRadius: 10,
           fontFamily: "inherit",
-          display: "flex",
-          flexDirection: "column",
-          /* Fill remaining viewport height below the header + filter pills */
           height: "calc(100vh - 130px)",
           minHeight: 300,
-          overflowY: "auto",   /* ← THIS div owns vertical scrolling */
-          overflowX: "hidden", /* horizontal scroll is inside TimelineBody via syncScroll */
+          overflowY: "auto",
+          overflowX: "auto",
+          WebkitOverflowScrolling: "touch",
         }}
       >
-        {/* ── STICKY COLUMN HEADER — sticks inside the timeline box ── */}
+        {/* Min-width wrapper so content never wraps */}
+        <div style={{ minWidth: LEFT_W + totalDays * DAY_W }}>
+
+        {/* ── STICKY HEADER ROW — sticks vertically, scrolls horizontally ── */}
         <div style={{
           position: "sticky",
           top: 0,
@@ -1825,9 +1866,10 @@ function TimelineView({ projects, people, onEditItem, onAddDeliverable, onAddSub
           background: "#f0f2f5",
           borderBottom: "1px solid rgba(0,0,0,0.09)",
           boxShadow: "0 2px 6px rgba(0,0,0,0.08)",
+          width: "100%",
         }}>
-          {/* Left: column labels with resize handles */}
-          <div style={{ width: LEFT_W, flexShrink: 0, display: "flex", background: "#f0f2f5", borderRight: "1px solid rgba(0,0,0,0.07)" }}>
+          {/* Left: column labels */}
+          <div style={{ display: "flex", flexShrink: 0, background: "#f0f2f5", borderRight: "1px solid rgba(0,0,0,0.07)" }}>
             {[["#","num"],["Title","title"],["Start","start"],["End","end"],["Dur","dur"],["Deps","deps"],["Assigned To","assignees"],["Notes","notes"]].map(([label, key]) => (
               <div key={key} style={{ width: colWidths[key], position: "relative", padding: "0 8px", fontSize: fs(10), fontWeight: 700, color: "#6b7280", letterSpacing: "0.09em", flexShrink: 0, borderRight: "1px solid rgba(0,0,0,0.05)", whiteSpace: "nowrap", overflow: "hidden", userSelect: "none", display: "flex", alignItems: "center" }}>
                 {label.toUpperCase()}
@@ -1842,44 +1884,24 @@ function TimelineView({ projects, people, onEditItem, onAddDeliverable, onAddSub
               onMouseLeave={e => e.currentTarget.style.color = "#c4c9d4"}
             >↺</button>
           </div>
-          {/* Right: month/date labels — synced with body horizontal scroll */}
-          <div style={{ flex: 1, overflow: "hidden" }} ref={scrollRef}>
-            <div style={{ width: totalDays * DAY_W, height: "100%", position: "relative", minWidth: "100%" }}>
-              {months.map((m, i) => (
-                <div key={i} style={{ position: "absolute", left: m.offset * DAY_W, width: m.days * DAY_W, height: "100%", display: "flex", alignItems: "center", paddingLeft: 8, fontSize: 10, fontWeight: 800, color: "#6b7280", letterSpacing: "0.1em", textTransform: "uppercase", borderRight: "1px solid rgba(0,0,0,0.06)" }}>{m.label}</div>
-              ))}
-              <div style={{ position: "absolute", left: todayOff * DAY_W, top: 0, bottom: 0, width: 2, background: BRAND_TEAL, opacity: 0.9 }} />
-            </div>
+          {/* Right: month/date labels — naturally aligned, no sync needed */}
+          <div style={{ flex: 1, position: "relative", height: "100%", width: totalDays * DAY_W }}>
+            {months.map((m, i) => (
+              <div key={i} style={{ position: "absolute", left: m.offset * DAY_W, width: m.days * DAY_W, height: "100%", display: "flex", alignItems: "center", paddingLeft: 8, fontSize: 10, fontWeight: 800, color: "#6b7280", letterSpacing: "0.1em", textTransform: "uppercase", borderRight: "1px solid rgba(0,0,0,0.06)" }}>{m.label}</div>
+            ))}
+            <div style={{ position: "absolute", left: todayOff * DAY_W, top: 0, bottom: 0, width: 2, background: BRAND_TEAL, opacity: 0.9 }} />
           </div>
         </div>
 
 
 
-        {/* ── STICKY TOP SCROLLBAR — only covers chart area, passes clicks through on left ── */}
-        <div style={{
-          position: "sticky", top: 38, zIndex: 29, height: 12, flexShrink: 0,
-          display: "flex", background: "#e8eaed", borderBottom: "1px solid rgba(0,0,0,0.08)",
-          pointerEvents: "none",  /* outer wrapper never intercepts — inner chart div enables its own */
-        }}>
-          <div style={{ width: LEFT_W, flexShrink: 0 }} />
-          <div
-            ref={topBarRef}
-            onScroll={e => {
-              if (scrollRef.current) scrollRef.current.scrollLeft = e.target.scrollLeft;
-              const box = containerRef.current;
-              if (box) { const b = box.querySelector("[data-timeline-body]"); if (b) b.scrollLeft = e.target.scrollLeft; }
-            }}
-            style={{ flex: 1, overflowX: "auto", overflowY: "hidden", pointerEvents: "all" }}
-          >
-            <div style={{ height: 1, width: totalDays * DAY_W }} />
-          </div>
-        </div>
 
         {/* ── BODY — scrolls vertically inside the timeline box ── */}
         <TimelineBody
           projects={visibleProjects} people={people} collapsed={collapsed} toggle={toggle}
           weeks={weeks} todayOff={todayOff} allItemsFlat={allItemsFlat}
           onEditItem={onEditItem} headerScrollRef={scrollRef} topScrollRef={topBarRef}
+          /* headerScrollRef/topScrollRef kept for API compat but scroll is now native */
           onAddDeliverable={onAddDeliverable} onAddSubtask={onAddSubtask}
           onMarkDone={onMarkDone} onSaveItem={onSaveItem} rowIndex={rowIndex} DAY_W={DAY_W}
           colWidths={colWidths} LEFT_W={LEFT_W} holidays={holidays}
@@ -1888,7 +1910,8 @@ function TimelineView({ projects, people, onEditItem, onAddDeliverable, onAddSub
           clipboard={clipboard} onCopySubtask={onCopySubtask} onCopyDeliverable={onCopyDeliverable}
           onPasteSubtask={onPasteSubtask} onPasteDeliverable={onPasteDeliverable}
         />
-      </div>
+        </div>{/* end minWidth wrapper */}
+      </div>{/* end containerRef timeline box */}
     </div>
   );
 }
@@ -1945,10 +1968,7 @@ function TimelineBody({ projects, people, collapsed, toggle, weeks, todayOff, al
   const bodyRef  = useRef(null);
   const panState = useRef(null);
 
-  const syncScroll = (e) => {
-    if (headerScrollRef.current) headerScrollRef.current.scrollLeft = e.target.scrollLeft;
-    if (topScrollRef?.current)   topScrollRef.current.scrollLeft   = e.target.scrollLeft;
-  };
+  // syncScroll removed — single scroll container handles both header and body
 
   // Shift+wheel → horizontal scroll
   const onWheel = (e) => {
@@ -2000,13 +2020,9 @@ function TimelineBody({ projects, people, collapsed, toggle, weeks, todayOff, al
     <div
       data-timeline-body="1"
       ref={bodyRef}
-      onScroll={syncScroll}
       onWheel={onWheel}
-      style={{ overflowX: "auto", overflowY: "visible", WebkitOverflowScrolling: "touch",
-               position: "relative" }}
+      style={{ position: "relative" }}
     >
-      {/* Edge fade indicators — show when content is offscreen */}
-      <EdgeFade bodyRef={bodyRef} leftWidth={LEFT_W} />
       <div style={{ minWidth: LEFT_W + totalDays * DAY_W, position: "relative" }}>
         {/* Holiday shading */}
         {holidays.map(h => {
@@ -2790,11 +2806,8 @@ function PeopleView({ projects, people, onEditItem, onMarkDone, onSaveItem, holi
 
   // ── Workload badge ────────────────────────────────────────────────────────
   const loadBadge = (items) => {
-    const pts = items.reduce((s,t) => s + (EFFORT_VAL[t.effort] || 2), 0);
-    if (pts <= 3)  return { label: "Light",    color: "#34d399" };
-    if (pts <= 8)  return { label: "Moderate", color: "#fbbf24" };
-    if (pts <= 14) return { label: "Busy",     color: "#fb923c" };
-    return             { label: "Heavy",    color: "#f87171" };
+    const hrs = items.reduce((s,t) => s + effortHours(t.effort), 0);
+    return classifyLoad(hrs, WEEKLY_HOURS);
   };
 
   // ── PersonPanel ────────────────────────────────────────────────────────────
@@ -3064,7 +3077,7 @@ function PeopleView({ projects, people, onEditItem, onMarkDone, onSaveItem, holi
 
 
 // --- WORKLOAD VIEW ────────────────────────────────────────────────────────────
-function WorkloadView({ projects, people, onEditItem }) {
+function WorkloadView({ projects, people, onEditItem, pto = [], holidays = [] }) {
   const [filterPerson,  setFilterPerson]  = useState("all");
   const [filterProject, setFilterProject] = useState("all");
   const [filterStatus,  setFilterStatus]  = useState("active"); // all | active | done
@@ -3088,7 +3101,7 @@ function WorkloadView({ projects, people, onEditItem }) {
     const d = new Date(key + "T00:00:00");
     return `W/O ${d.getMonth() + 1}/${d.getDate()}`;
   };
-  const effortVal = (e) => EFFORT_VAL[e] || EFFORT_VAL["M"];
+  const holidaySet = new Set((holidays||[]).map(h => h.date));
 
   // ── flatten all tasks ──────────────────────────────────────────────────────
   // Deliverables with subtasks are structural — only include leaf work items:
@@ -3117,28 +3130,23 @@ function WorkloadView({ projects, people, onEditItem }) {
     return true;
   });
 
-  // ── aggregate into weeks ──────────────────────────────────────────────────
-  // A task contributes effort to every week it spans (start → end)
-  const weekMap = {}; // weekKey → { personId → { pts, tasks[] }, _total }
+  // ── aggregate into weeks (hours-based) ───────────────────────────────────
+  // Tasks are split evenly across the weeks they span
+  const weekMap = {}; // weekKey → { personId → { hrs, tasks[] } }
   filteredTasks.forEach(task => {
     const assignees = task.assignees?.length ? task.assignees : ["_unassigned"];
     const start = new Date(task.start + "T00:00:00");
     const end   = new Date(task.end   + "T00:00:00");
-    // Count business weeks spanned
     const weeks = [];
     let cur = new Date(isoWeekStart(start));
-    while (cur <= end) {
-      weeks.push(weekKey(cur));
-      cur = new Date(cur.getTime() + 7 * 86400000);
-    }
-    const eff = effortVal(task.effort);
-    // Split effort evenly across weeks
-    const effPerWeek = eff / Math.max(1, weeks.length);
+    while (cur <= end) { weeks.push(weekKey(cur)); cur = new Date(cur.getTime() + 7 * 86400000); }
+    const hrsTotal = effortHours(task.effort);
+    const hrsPerWeek = hrsTotal / Math.max(1, weeks.length);
     weeks.forEach(wk => {
       if (!weekMap[wk]) weekMap[wk] = {};
       assignees.forEach(pid => {
-        if (!weekMap[wk][pid]) weekMap[wk][pid] = { pts: 0, tasks: [] };
-        weekMap[wk][pid].pts   += effPerWeek;
+        if (!weekMap[wk][pid]) weekMap[wk][pid] = { hrs: 0, tasks: [] };
+        weekMap[wk][pid].hrs  += hrsPerWeek;
         weekMap[wk][pid].tasks.push(task);
       });
     });
@@ -3157,14 +3165,10 @@ function WorkloadView({ projects, people, onEditItem }) {
   const LABEL_W = 48;
   const chartW = sortedWeeks.length * (BAR_W + GAP) + LABEL_W;
 
-  // Max total pts in any week (for Y scale)
-  const maxPts = Math.max(1, ...sortedWeeks.map(wk =>
-    visPersonIds.reduce((s, pid) => s + (weekMap[wk]?.[pid]?.pts || 0), 0)
+  // Max total hours in any week (for Y scale)
+  const maxHrs = Math.max(1, WEEKLY_HOURS, ...sortedWeeks.map(wk =>
+    visPersonIds.reduce((s, pid) => s + (weekMap[wk]?.[pid]?.hrs || 0), 0)
   ));
-
-  // capacity thresholds (total pts per week)
-  const CAP_GREEN  = 6;
-  const CAP_YELLOW = 10;
 
   // ── drill tasks ───────────────────────────────────────────────────────────
   const drillTasks = drillWeek
@@ -3233,9 +3237,10 @@ function WorkloadView({ projects, people, onEditItem }) {
                 );
               })}
               <div style={{ marginLeft: "auto", display: "flex", gap: 10, fontSize: 10, color: "#9ca3af", alignItems: "center" }}>
-                <span style={{ display: "flex", alignItems: "center", gap: 4 }}><span style={{ width: 8, height: 8, borderRadius: 2, background: "#34d399", display: "inline-block" }} />Light load</span>
-                <span style={{ display: "flex", alignItems: "center", gap: 4 }}><span style={{ width: 8, height: 8, borderRadius: 2, background: "#fbbf24", display: "inline-block" }} />Moderate load</span>
-                <span style={{ display: "flex", alignItems: "center", gap: 4 }}><span style={{ width: 8, height: 8, borderRadius: 2, background: "#f87171", display: "inline-block" }} />Heavy load</span>
+                <span style={{ display: "flex", alignItems: "center", gap: 4 }}><span style={{ width: 8, height: 8, borderRadius: 2, background: "#34d399", display: "inline-block" }} />Light</span>
+                <span style={{ display: "flex", alignItems: "center", gap: 4 }}><span style={{ width: 8, height: 8, borderRadius: 2, background: "#fbbf24", display: "inline-block" }} />Moderate</span>
+                <span style={{ display: "flex", alignItems: "center", gap: 4 }}><span style={{ width: 8, height: 8, borderRadius: 2, background: "#fb923c", display: "inline-block" }} />Busy</span>
+                <span style={{ display: "flex", alignItems: "center", gap: 4 }}><span style={{ width: 8, height: 8, borderRadius: 2, background: "#f87171", display: "inline-block" }} />Heavy</span>
               </div>
             </div>
 
@@ -3244,7 +3249,7 @@ function WorkloadView({ projects, people, onEditItem }) {
               {/* Y-axis grid lines */}
               {[0.25, 0.5, 0.75, 1].map(pct => {
                 const y = MAX_H - pct * MAX_H;
-                const pts = Math.round(pct * maxPts);
+                const pts = Math.round(pct * maxHrs);
                 return (
                   <g key={pct}>
                     <line x1={LABEL_W} y1={y} x2={chartW} y2={y} stroke="rgba(0,0,0,0.06)" strokeWidth={1} />
@@ -3256,8 +3261,9 @@ function WorkloadView({ projects, people, onEditItem }) {
               {/* Bars */}
               {sortedWeeks.map((wk, wi) => {
                 const x = LABEL_W + wi * (BAR_W + GAP);
-                const totalPts = visPersonIds.reduce((s, pid) => s + (weekMap[wk]?.[pid]?.pts || 0), 0);
-                const capColor = totalPts > CAP_YELLOW ? "#f87171" : totalPts > CAP_GREEN ? "#fbbf24" : "#34d399";
+                const totalHrs = visPersonIds.reduce((s, pid) => s + (weekMap[wk]?.[pid]?.hrs || 0), 0);
+                const load = classifyLoad(totalHrs, WEEKLY_HOURS * visPersonIds.length);
+                const capColor = load.color;
                 const isDrill = drillWeek === wk;
 
                 let stackY = MAX_H;
@@ -3267,14 +3273,19 @@ function WorkloadView({ projects, people, onEditItem }) {
                     onMouseEnter={() => setHovered(wk)}
                     onMouseLeave={() => setHovered(null)}
                   >
-                    {/* capacity indicator dot */}
+                    {/* capacity line at WEEKLY_HOURS mark */}
+                    {visPersonIds.length === 1 && (
+                      <line x1={x} y1={MAX_H - (WEEKLY_HOURS / maxHrs) * MAX_H}
+                            x2={x + BAR_W} y2={MAX_H - (WEEKLY_HOURS / maxHrs) * MAX_H}
+                            stroke="rgba(0,0,0,0.2)" strokeWidth={1} strokeDasharray="3,2" />
+                    )}
                     <circle cx={x + BAR_W / 2} cy={MAX_H + 6} r={3} fill={capColor} />
 
                     {/* stacked segments */}
                     {visPersonIds.map(pid => {
-                      const pts = weekMap[wk]?.[pid]?.pts || 0;
-                      if (!pts) return null;
-                      const segH = Math.max(2, (pts / maxPts) * MAX_H);
+                      const hrs = weekMap[wk]?.[pid]?.hrs || 0;
+                      if (!hrs) return null;
+                      const segH = Math.max(2, (hrs / maxHrs) * MAX_H);
                       stackY -= segH;
                       const person = people.find(p => p.id === pid);
                       const fill = person?.color || "#9ca3af";
@@ -3302,6 +3313,9 @@ function WorkloadView({ projects, people, onEditItem }) {
                       const s = wkTasks.filter(t=>(t.effort||"M")==="S").length;
                       const m = wkTasks.filter(t=>(t.effort||"M")==="M").length;
                       const l = wkTasks.filter(t=>(t.effort||"M")==="L").length;
+                      const wkHrs = Math.round(visPersonIds.reduce((acc,pid)=>acc+(weekMap[wk]?.[pid]?.hrs||0),0));
+                      const wkAvail = filterPerson !== "all" ? availableHours(filterPerson, wk, pto, holidaySet) : WEEKLY_HOURS * visPersonIds.length;
+                      const overloaded = wkHrs > wkAvail;
                       // Build per-person breakdown for tooltip
                       const personBreakdown = visPersonIds.map(pid => {
                         const person = people.find(p => p.id === pid);
@@ -3316,7 +3330,7 @@ function WorkloadView({ projects, people, onEditItem }) {
                       return (
                         <g>
                           <rect x={x - 14} y={ttY} width={BAR_W + 28} height={ttH} rx={5} fill="#1f2937" opacity={0.95} />
-                          <text x={x + BAR_W/2} y={labelY} textAnchor="middle" fontSize={10} fontWeight={700} fill="#fff">{wkTasks.length} task{wkTasks.length !== 1 ? "s" : ""}</text>
+                          <text x={x + BAR_W/2} y={labelY} textAnchor="middle" fontSize={10} fontWeight={700} fill="#fff">{wkTasks.length} task{wkTasks.length !== 1 ? "s" : ""}{overloaded ? " ⚠" : ""}</text>
                           {personBreakdown.map((pb, pi) => (
                             <g key={pb.name}>
                               <rect x={x - 6} y={labelY + 8 + pi * 14} width={7} height={7} rx={1} fill={pb.color} />
@@ -3400,7 +3414,7 @@ function WorkloadView({ projects, people, onEditItem }) {
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))", gap: 12 }}>
         {people.map(person => {
           const myTasks = filteredTasks.filter(t => (t.assignees || []).includes(person.id));
-          const totalPts = myTasks.reduce((s, t) => s + effortVal(t.effort), 0);
+          const totalPts = myTasks.reduce((s, t) => s + effortHours(t.effort), 0);
           const bySize = { S: myTasks.filter(t => (t.effort || "M") === "S").length, M: myTasks.filter(t => (t.effort || "M") === "M").length, L: myTasks.filter(t => (t.effort || "M") === "L").length };
           return (
             <div key={person.id} style={{ background: "#fff", border: "1px solid rgba(0,0,0,0.07)", borderRadius: 10, padding: "14px 16px" }}>
@@ -3419,10 +3433,34 @@ function WorkloadView({ projects, people, onEditItem }) {
                   </div>
                 ))}
               </div>
-              <div style={{ marginTop: 8, height: 4, borderRadius: 2, background: "rgba(0,0,0,0.06)", overflow: "hidden" }}>
-                <div style={{ height: "100%", width: `${Math.min(100, (totalPts / 20) * 100)}%`, background: person.color, borderRadius: 2, transition: "width 0.3s" }} />
-              </div>
-              <div style={{ fontSize: 9, color: "#9ca3af", marginTop: 3 }}>{myTasks.length} tasks assigned</div>
+              {(() => {
+                const cl = classifyLoad(totalPts, WEEKLY_HOURS);
+                return (
+                  <div style={{ marginTop: 8 }}>
+                    <div style={{ height: 4, borderRadius: 2, background: "rgba(0,0,0,0.06)", overflow: "hidden" }}>
+                      <div style={{ height: "100%", width: `${Math.min(100, (totalPts / (WEEKLY_HOURS * 2)) * 100)}%`, background: cl.color, borderRadius: 2, transition: "width 0.3s" }} />
+                    </div>
+                    {totalPts > WEEKLY_HOURS && (
+                      <div style={{ fontSize: 9, color: "#f87171", fontWeight: 700, marginTop: 2 }}>Over capacity</div>
+                    )}
+                  </div>
+                );
+              })()}
+              {/* Overloaded weeks callout */}
+              {(() => {
+                const overloadedWeeks = sortedWeeks.filter(wk => {
+                  const hrs = weekMap[wk]?.[person.id]?.hrs || 0;
+                  const avail = availableHours(person.id, wk, pto, holidaySet);
+                  return hrs > avail;
+                });
+                return overloadedWeeks.length > 0 ? (
+                  <div style={{ fontSize: 9, color: "#f87171", fontWeight: 700, marginTop: 3 }}>
+                    ⚠ Over capacity: {overloadedWeeks.map(wk => weekLabel(wk)).join(", ")}
+                  </div>
+                ) : (
+                  <div style={{ fontSize: 9, color: "#9ca3af", marginTop: 3 }}>{myTasks.length} tasks assigned</div>
+                );
+              })()}
             </div>
           );
         })}
@@ -3451,6 +3489,7 @@ function MyHubView({ projects, people, holidays, pto = [], currentUserId, onSetC
 
   const [showPtoForm, setShowPtoForm] = useState(false);
   const [ptoForm, setPtoForm] = useState({ start: todayStr, end: todayStr, note: "" });
+  const hubHolidaySet = new Set((holidays||[]).map(h => h.date));
 
   // ── Resolve current user ──────────────────────────────────────────────────
   const me = people.find(p => p.id === currentUserId) || people[0];
@@ -3558,10 +3597,13 @@ function MyHubView({ projects, people, holidays, pto = [], currentUserId, onSetC
   const weekTasks     = allMyTasks.filter(t => t.status !== "Done" && isDueThisWk(t));
   const highEffort    = allMyTasks.filter(t => t.status !== "Done" && efv(t.effort) >= 3 && isDueThisWk(t));
 
-  // ── Weekly workload (effort points this week) ─────────────────────────────
-  const weekPoints = weekTasks.reduce((s,t) => s + efv(t.effort), 0);
-  const loadLabel = weekPoints <= 3 ? "Light" : weekPoints <= 7 ? "Moderate" : weekPoints <= 12 ? "Busy" : "Heavy";
-  const loadColor = weekPoints <= 3 ? "#34d399" : weekPoints <= 7 ? "#fbbf24" : weekPoints <= 12 ? "#fb923c" : "#f87171";
+  // ── Weekly workload (hours-based) ─────────────────────────────────────────
+  const weekHours = weekTasks.reduce((s,t) => s + effortHours(t.effort), 0);
+  const weekAvail = availableHours(meId, weekStartStr, pto, hubHolidaySet);
+  const weekLoad  = classifyLoad(weekHours, weekAvail);
+  const loadLabel = weekLoad.label;
+  const loadColor = weekLoad.color;
+  const weekPoints = weekHours; // alias for bar width calc
 
   // ── PTO this week for me ──────────────────────────────────────────────────
   const myPto  = pto.filter(p => p.personId === meId && p.end >= todayStr);
@@ -3673,7 +3715,7 @@ function MyHubView({ projects, people, holidays, pto = [], currentUserId, onSetC
             <div style={{ fontSize: 11, fontWeight: 700, color: "#1f2937", marginBottom: 6 }}>This week's workload</div>
             <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
               <div style={{ flex: 1, height: 8, background: "rgba(0,0,0,0.06)", borderRadius: 4, overflow: "hidden" }}>
-                <div style={{ height: "100%", width: `${Math.min(100, (weekPoints/15)*100)}%`, background: loadColor, borderRadius: 4, transition: "width 0.3s" }} />
+                <div style={{ height: "100%", width: `${Math.min(100, (weekHours / Math.max(weekAvail, 8)) * 100)}%`, background: loadColor, borderRadius: 4, transition: "width 0.3s" }} />
               </div>
               <span style={{ fontSize: 11, fontWeight: 700, color: loadColor, minWidth: 55 }}>{loadLabel}</span>
             </div>
@@ -6214,7 +6256,7 @@ export default function App() {
         )}
         {view === "people"  && <PeopleView projects={projects} people={people} onEditItem={handleEditItem} onMarkDone={handleMarkDone} onSaveItem={handleSaveItem} holidays={holidays} pto={pto} />}
         {view === "workload" && (
-          <WorkloadView projects={projects} people={people} onEditItem={handleEditItem} />
+          <WorkloadView projects={projects} people={people} onEditItem={handleEditItem} pto={pto} holidays={holidays} />
         )}
         {view === "archived" && (
           <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
