@@ -5652,8 +5652,22 @@ export default function App() {
       console.log("[PulseX] Loaded — projects:", pR.data?.length, "deliverables:", dR.data?.length, "subtasks:", sR.data?.length);
       const active   = (pR.data || []).filter(p => !p.archived);
       const archived = (pR.data || []).filter(p => p.archived);
-      setProjects(active.map(p => rowToProject(p, dR.data, sR.data)));
-      setArchivedProjects(archived.map(p => rowToProject(p, dR.data, sR.data)));
+      // Guard: skip subtask rows that have a deliverable_id pointing to a
+      // non-existent deliverable (orphaned subtasks saved to wrong table)
+      const deliverableIds = new Set((dR.data || []).map(d => d.id));
+      const cleanSubtasks = (sR.data || []).filter(s => {
+        if (s.deliverable_id == null) {
+          console.warn("[PulseX] Orphan subtask (null deliverable_id):", s.id, s.title);
+          return false;
+        }
+        if (!deliverableIds.has(s.deliverable_id)) {
+          console.warn("[PulseX] Orphan subtask (missing deliverable):", s.id, s.title, "→", s.deliverable_id);
+          return false;
+        }
+        return true;
+      });
+      setProjects(active.map(p => rowToProject(p, dR.data, cleanSubtasks)));
+      setArchivedProjects(archived.map(p => rowToProject(p, dR.data, cleanSubtasks)));
       setPeople((mR.data || []).map(p => ({ id: p.id, name: p.name, color: p.color })));
       setHolidays((hR.data || []).map(h => ({ id: h.id, date: h.date, name: h.name })));
       const notes = {};
