@@ -13,23 +13,25 @@ import { MIN_DAY_W, MAX_DAY_W, D_ROW, S_ROW, COL_DEFAULTS } from "./constants/co
 import { PROJECT_COLORS } from "./constants/colors.js";
 
 // ── Utils ─────────────────────────────────────────────────────────────────────
-import { parseDate, fmt, fmtFull, fmtMonth, durDays, dayOffset, busyDays, addWorkingDays } from "./utils/dates.js";
+import {
+  parseDate, fmt, fmtFull, fmtMonth, durDays,
+  dayOffset, busyDays, addWorkingDays,
+} from "./utils/dates.js";
 import { effortHours, classifyLoad, ptoDaysInWeek, availableHours } from "./utils/workload.js";
 import { getInitials } from "./utils/formatting.js";
 
-// ── Data converters + PTO helpers ────────────────────────────────────────────
+// ── Data converters ───────────────────────────────────────────────────────────
 import {
   rowToSubtask, rowToDeliverable, rowToProject,
   delToRow, subToRow, ptoToRow, rowToPto,
   isOnPto, ptoOverlap,
 } from "./lib/dataConverters.js";
 
-// ── UI-only constants (stay in App.jsx — pure presentation) ─────────────────
+// ── UI-only (not extracted to modules) ───────────────────────────────────────
 const MEMBER_COLORS = [
-  "#f59e0b","#38bdf8","#34d399","#a78bfa","#fb923c",
-  "#f87171","#60a5fa","#c084fc","#4ade80","#facc15",
+  "#f59e0b","#38bdf8","#a78bfa","#34d399","#f87171",
+  "#fb923c","#e879f9","#4ade80","#60a5fa","#facc15","#64748b",
 ];
-
 const ZOOM_LEVELS = [
   { id: "compact",  label: "Compact",    base: 11, scale: 0.85 },
   { id: "standard", label: "Standard",   base: 13, scale: 1.00 },
@@ -38,13 +40,10 @@ const ZOOM_LEVELS = [
 ];
 let _zoomRatio = 1.0;
 const fs = (px) => Math.round(px * _zoomRatio);
-
-// Derived from imported constants
 const totalDays = Math.ceil((TIMELINE_END - TIMELINE_START) / 86400000);
 const TODAY     = (() => { const d = new Date(); d.setHours(0,0,0,0); return d; })();
-const TODAY_DATE = TODAY;
 
-// ── Copy/paste helpers (used only in App handlers) ───────────────────────────
+// ── Copy/paste helpers ────────────────────────────────────────────────────────
 function cloneSubtask(sub) {
   return { ...sub, id: "s_" + Date.now() + "_" + Math.random().toString(36).slice(2, 6) };
 }
@@ -55,16 +54,6 @@ function cloneDeliverable(del) {
     subtasks: del.subtasks.map(s => cloneSubtask({ ...s, dependencies: [] })),
   };
 }
-
-const initialPeople = [
-  { id: "p1", name: "Maya Chen",     color: "#f59e0b" },
-  { id: "p2", name: "Jordan Rivers", color: "#38bdf8" },
-  { id: "p3", name: "Sam Torres",    color: "#a78bfa" },
-  { id: "p4", name: "Riley Park",    color: "#34d399" },
-  { id: "p5", name: "Alex Kim",      color: "#f87171" },
-];
-
-
 
 // --- DATA - deliverables = specific outputs; subtasks = production workflow steps
 const initialProjects = [
@@ -505,7 +494,6 @@ const initialProjects = [
 
 // --- HELPERS ──────────────────────────────────────────────────────────────────
 
-// Business days between two date strings (inclusive), skipping weekends + provided holidays
 function Avatar({ person, size = 26 }) {
   const initials = getInitials(person.name);
   return (
@@ -1273,6 +1261,66 @@ function DashboardView({ projects, people, onEditItem, onAddDeliverable, onAddSu
           ))}
         </div>
 
+        {/* ── Overdue & Due Today ── */}
+        {(() => {
+          const todayD = new Date().toLocaleDateString("en-CA");
+          const allTasks = projects.flatMap(proj =>
+            proj.deliverables.flatMap(del => [
+              ...del.subtasks.filter(s => s.end && s.status !== "Done").map(s => ({
+                id: s.id, title: s.title, end: s.end,
+                client: proj.client || "—", projName: proj.name, projColor: proj.color,
+                delTitle: del.title,
+              })),
+              ...(del.subtasks.length === 0 && del.end && del.status !== "Done" ? [{
+                id: del.id, title: del.title, end: del.end,
+                client: proj.client || "—", projName: proj.name, projColor: proj.color,
+                delTitle: null,
+              }] : []),
+            ])
+          );
+          const overdue  = allTasks.filter(t => t.end < todayD).sort((a,b) => a.end.localeCompare(b.end));
+          const dueToday = allTasks.filter(t => t.end === todayD);
+          const total = overdue.length + dueToday.length;
+          const Row = ({ t, accent }) => (
+            <div style={{ display: "flex", alignItems: "flex-start", gap: 8, padding: "8px 0 8px 10px", borderBottom: "1px solid rgba(0,0,0,0.04)", borderLeft: `3px solid ${accent}` }}>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 11, fontWeight: 700, color: "#1f2937", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{t.title}</div>
+                <div style={{ fontSize: 10, color: "#6b7280", marginTop: 2, display: "flex", flexWrap: "wrap", gap: 3, alignItems: "center" }}>
+                  <span style={{ color: t.projColor, fontWeight: 700 }}>{t.client}</span>
+                  <span style={{ color: "#d1d5db" }}>·</span>
+                  <span>{t.projName}</span>
+                  {t.delTitle && <><span style={{ color: "#d1d5db" }}>·</span><span style={{ color: "#9ca3af" }}>{t.delTitle}</span></>}
+                </div>
+              </div>
+              <div style={{ fontSize: 9, color: accent, fontWeight: 700, flexShrink: 0, textAlign: "right" }}>
+                {t.end === todayD ? "Today" : (() => { const d = Math.ceil((new Date(todayD+"T00:00:00") - new Date(t.end+"T00:00:00"))/86400000); return `${d}d ago`; })()}
+              </div>
+            </div>
+          );
+          return (
+            <div style={{ background: "#fff", border: `1px solid ${total > 0 ? "rgba(239,68,68,0.2)" : "rgba(0,0,0,0.07)"}`, borderRadius: 10, padding: "16px 18px" }}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
+                <SectionHeader noMargin>Overdue &amp; Due Today</SectionHeader>
+                {total > 0 && <span style={{ fontSize: 10, fontWeight: 700, background: "rgba(239,68,68,0.1)", color: "#ef4444", borderRadius: 10, padding: "2px 8px" }}>{total}</span>}
+              </div>
+              {total === 0 ? (
+                <div style={{ fontSize: 11, color: "#9ca3af" }}>🎉 Nothing overdue or due today.</div>
+              ) : (
+                <div>
+                  {dueToday.length > 0 && <>
+                    <div style={{ fontSize: 9, fontWeight: 700, color: "#f97316", letterSpacing: "0.08em", marginBottom: 4, textTransform: "uppercase" }}>Due Today · {dueToday.length}</div>
+                    {dueToday.map(t => <Row key={t.id} t={t} accent="#f97316" />)}
+                  </>}
+                  {overdue.length > 0 && <>
+                    <div style={{ fontSize: 9, fontWeight: 700, color: "#ef4444", letterSpacing: "0.08em", margin: `${dueToday.length > 0 ? "10px" : "0"} 0 4px`, textTransform: "uppercase" }}>Overdue · {overdue.length}</div>
+                    {overdue.map(t => <Row key={t.id} t={t} accent="#ef4444" />)}
+                  </>}
+                </div>
+              )}
+            </div>
+          );
+        })()}
+
         {/* ── Upcoming Out of Office ── */}
         {(() => {
           const today = new Date(); today.setHours(0,0,0,0);
@@ -1486,8 +1534,6 @@ function SectionHeader({ children, noMargin }) {
 
 // --- TIMELINE ────────────────────────────────────────────────────────────────
 
-// Column widths for the left table// LEFT_W is now computed dynamically from colWidths state
-
 // Build a flat numbered index of all items across all projects
 function buildRowIndex(projects) {
   const index = {}; // id -> rowNum
@@ -1625,7 +1671,6 @@ function cascadeDates(projects, changedId, newEnd, holidays = []) {
     }),
   }));
 }
-
 
 
 function TimelineView({ projects, people, onEditItem, onAddDeliverable, onAddSubtask, onMarkDone, onSaveItem, holidays = [], onInsertSubtask, onReorderSubtasks, onDeleteSubtask, statusNotes = {}, onUpdateNote, onSaveProject, onOpenProject, clipboard, onCopySubtask, onCopyDeliverable, onPasteSubtask, onPasteDeliverable }) {
@@ -3427,9 +3472,6 @@ function WorkloadView({ projects, people, onEditItem, pto = [], holidays = [] })
 // Personal operational command center. Insert before StatusView in App.jsx.
 
 function MyHubView({ projects, people, holidays, pto = [], currentUserId, onSetCurrentUser, onEditItem, onMarkDone, savePto, deletePto }) {
- const TODAY = new Date(); 
-TODAY.setHours(0,0,0,0);
-
   // Week bounds (Mon–Sun)
   const weekStart = new Date(TODAY);
   const day = weekStart.getDay(); weekStart.setDate(weekStart.getDate() - (day === 0 ? 6 : day - 1));
@@ -3439,7 +3481,6 @@ TODAY.setHours(0,0,0,0);
 
   const todayStr = TODAY.toISOString().slice(0,10);
 
-  const EFFORT_VAL = { S: 1, M: 2, L: 3 };
   const efv = (e) => EFFORT_VAL[e] || 2;
 
   const [showPtoForm, setShowPtoForm] = useState(false);
@@ -3809,23 +3850,41 @@ TODAY.setHours(0,0,0,0);
 }
 
 
+
 // --- STATUS VIEW ─────────────────────────────────────────────────────────────
 
 function getTrackStatus(del) {
   if (del.status === "Done") return "done";
   if (del.status === "Blocked") return "blocked";
-  if (del.status === "Client Review")    return "client-review";
-  const end = parseDate(del.end);
+  if (del.status === "Client Review") return "client-review";
+
+  const end   = parseDate(del.end);
   const start = parseDate(del.start);
-  // If end has passed and not done → off track
-  if (end < TODAY_DATE && del.status !== "Done") return "off-track";
-  // If today is past start and progress is less than expected proportion
-  if (TODAY_DATE >= start) {
+  const today = new Date(); today.setHours(0,0,0,0);
+
+  // Overdue → off track
+  if (end < today && del.status !== "Done") return "off-track";
+
+  // Only check progress if we're past the start date
+  if (today >= start) {
     const totalDuration = Math.max(1, (end - start) / 86400000);
-    const elapsed = (TODAY_DATE - start) / 86400000;
-    const expectedPct = Math.min(100, Math.round((elapsed / totalDuration) * 100));
-    if (del.progress < expectedPct - 20) return "at-risk";
+    const elapsed       = (today - start) / 86400000;
+    const expectedPct   = Math.min(100, Math.round((elapsed / totalDuration) * 100));
+
+    let actualPct;
+    const subs = del.subtasks || [];
+    if (subs.length > 0) {
+      // Primary signal: subtask completion rate
+      const doneSubs = subs.filter(s => s.status === "Done").length;
+      actualPct = Math.round((doneSubs / subs.length) * 100);
+    } else {
+      // Fallback: manual progress field
+      actualPct = del.progress || 0;
+    }
+
+    if (actualPct < expectedPct - 20) return "at-risk";
   }
+
   return "on-track";
 }
 
@@ -3848,6 +3907,623 @@ function getCurrentTask(del) {
   if (del.status !== "Done") return del.title;
   return "Complete";
 }
+
+// ─── REPORTING DASHBOARD v2 ─────────────────────────────────────────────────
+// ─── REPORTING DASHBOARD v2 ───────────────────────────────────────────────────
+function ReportingDashboardView({ projects, people, holidays = [], pto = [] }) {
+  const [drawer, setDrawer] = useState(null); // { title, subtitle, rows, cols, groupBy }
+  const [drillClient, setDrillClient] = useState(null);
+  const [sortClientCol, setSortClientCol] = useState("client");
+  const [sortClientDir, setSortClientDir] = useState("asc");
+
+  const today = new Date(); today.setHours(0,0,0,0);
+  const todayStr = today.toISOString().slice(0,10);
+  const holidaySet = new Set(holidays.map(h => h.date));
+
+  const addDays = (d, n) => { const r = new Date(d); r.setDate(r.getDate()+n); return r.toISOString().slice(0,10); };
+
+  // ── Derived flat data ──────────────────────────────────────────────────────
+  const allDels  = projects.flatMap(p => p.deliverables.map(d => ({ ...d, proj: p })));
+  const allTasks = projects.flatMap(p => p.deliverables.flatMap(d =>
+    d.subtasks.length > 0
+      ? d.subtasks.map(s => ({ ...s, proj: p, del: d }))
+      : [{ ...d, proj: p, del: d }]
+  ));
+  const activeTasks = allTasks.filter(t => t.status !== "Done");
+
+  const getMonday = (d) => {
+    const day = d.getDay(), diff = day === 0 ? -6 : 1 - day;
+    const m = new Date(d); m.setDate(d.getDate() + diff); m.setHours(0,0,0,0); return m;
+  };
+
+  // ── Deliverable-level health (nuanced) ────────────────────────────────────
+  const delHealth = (d) => {
+    if (d.status === "Done") return "done";
+    if (d.trackOverride === "Off Track" || d.status === "Blocked") return "off-track";
+    if (d.trackOverride === "At Risk") return "at-risk";
+    const ts = getTrackStatus(d);
+    if (ts === "off-track") return "off-track";
+    if (ts === "at-risk")   return "at-risk";
+    return "on-track";
+  };
+
+  // ── Project health — soft rollup, not one-deliverable-kills-all ───────────
+  // Healthy:         all active deliverables on-track (or manual On Track)
+  // Watch:           1+ at-risk OR exactly 1 off-track OR ≤25% off-track
+  // Needs Attention: 2+ off-track OR >25% active dels off-track/blocked
+  const projectHealth = (proj) => {
+    const activeDels = proj.deliverables.filter(d => d.status !== "Done");
+    if (activeDels.length === 0) return "healthy"; // all done
+    const offTrack = activeDels.filter(d => delHealth(d) === "off-track").length;
+    const atRisk   = activeDels.filter(d => delHealth(d) === "at-risk").length;
+    const pctOff   = offTrack / activeDels.length;
+    if (offTrack >= 2 || pctOff > 0.25) return "needs-attention";
+    if (offTrack === 1 || atRisk >= 1)   return "watch";
+    return "healthy";
+  };
+
+  // Deliverable health counts across all active projects
+  const activeProjects = projects.filter(p => !p.archived);
+  const delHealthCounts = { "on-track": 0, "at-risk": 0, "off-track": 0 };
+  activeProjects.forEach(p => p.deliverables.filter(d => d.status !== "Done").forEach(d => {
+    const h = delHealth(d);
+    if (h !== "done") delHealthCounts[h === "off-track" ? "off-track" : h === "at-risk" ? "at-risk" : "on-track"]++;
+  }));
+
+  const projHealthCounts = { healthy: 0, watch: 0, "needs-attention": 0 };
+  activeProjects.forEach(p => projHealthCounts[projectHealth(p)]++);
+
+  // ── KPIs ──────────────────────────────────────────────────────────────────
+  const activeClients  = new Set(activeProjects.map(p => p.client).filter(Boolean)).size;
+  const thisMonthStr   = today.toISOString().slice(0,7);
+  const delsDueMonthList = allDels.filter(d => d.end && d.end.startsWith(thisMonthStr) && d.status !== "Done");
+  const atRiskProjList   = activeProjects.filter(p => { const h = projectHealth(p); return h === "watch" || h === "needs-attention"; });
+
+  const weekStarts = Array.from({length:4}, (_,i) => {
+    const w = new Date(getMonday(today)); w.setDate(w.getDate() + i*7); return w.toISOString().slice(0,10);
+  });
+  const personUtilization = people.map(person => {
+    let totalPlanned = 0, totalAvail = 0;
+    const weekBreakdown = weekStarts.map(ws => {
+      const avail = availableHours(person.id, ws, pto, holidaySet);
+      const planned = activeTasks
+        .filter(t => (t.assignees||[]).includes(person.id) && t.start && t.end)
+        .reduce((s,t) => {
+          const ts2 = new Date(t.start+"T00:00:00"), te = new Date(t.end+"T00:00:00");
+          const weeks = [];
+          let cur = new Date(getMonday(ts2));
+          while (cur <= te) { weeks.push(cur.toISOString().slice(0,10)); cur = new Date(cur.getTime()+7*86400000); }
+          return s + (weeks.includes(ws) ? effortHours(t.effort)/Math.max(1,weeks.length) : 0);
+        }, 0);
+      totalPlanned += planned; totalAvail += avail;
+      return { ws, planned: Math.round(planned), avail };
+    });
+    const utilPct = totalAvail > 0 ? Math.round((totalPlanned/totalAvail)*100) : 0;
+    const topProjs = [...new Set(
+      activeTasks.filter(t => (t.assignees||[]).includes(person.id)).map(t => t.proj?.name)
+    )].filter(Boolean).slice(0,3);
+    return { person, planned: Math.round(totalPlanned), avail: Math.round(totalAvail), utilPct, weekBreakdown, topProjs };
+  }).sort((a,b) => b.utilPct - a.utilPct);
+
+  const avgUtil    = personUtilization.length ? Math.round(personUtilization.reduce((s,p)=>s+p.utilPct,0)/personUtilization.length) : 0;
+  const overloaded = personUtilization.filter(p => p.utilPct > 100);
+  const maxUtil    = personUtilization[0]?.utilPct || 0;
+
+  const totalActiveDels = activeProjects.flatMap(p=>p.deliverables).filter(d=>d.status!=="Done").length;
+  const healthyPct = totalActiveDels ? Math.round((delHealthCounts["on-track"]/totalActiveDels)*100) : 100;
+
+  const in30 = addDays(today,30), in60 = addDays(today,60), in90 = addDays(today,90);
+  const forecastBuckets = [
+    { label:"Next 30 Days", end:in30 }, { label:"Next 60 Days", end:in60 }, { label:"Next 90 Days", end:in90 },
+  ].map(b => {
+    const dels = allDels.filter(d => d.end && d.end >= todayStr && d.end <= b.end && d.status !== "Done");
+    return { ...b, total:dels.length, dels,
+      atRisk:  dels.filter(d => ["at-risk","off-track"].includes(delHealth(d))).length,
+      blocked: dels.filter(d => d.status === "Blocked").length };
+  });
+
+  const since30 = addDays(today,-30);
+  const doneTasksLast30  = allTasks.filter(t => t.status==="Done" && t.end >= since30);
+  const doneDelsLast30   = allDels.filter(d => d.status==="Done" && d.end >= since30);
+  const doneProjsLast30  = activeProjects.filter(p => p.deliverables.length>0 && p.deliverables.every(d=>d.status==="Done") && p.deliverables.some(d=>d.end>=since30));
+  const effortDelivered  = doneTasksLast30.reduce((s,t) => s+effortHours(t.effort), 0);
+
+  // ── Client rows ───────────────────────────────────────────────────────────
+  const clientMap = {};
+  activeProjects.forEach(p => {
+    const c = p.client || "No Client";
+    if (!clientMap[c]) clientMap[c] = { client:c, projects:[], color:p.color };
+    clientMap[c].projects.push(p);
+  });
+  const clientRows = Object.values(clientMap).map(cm => {
+    const dels  = cm.projects.flatMap(p => p.deliverables);
+    const tasks = cm.projects.flatMap(p => p.deliverables.flatMap(d => d.subtasks.length ? d.subtasks : [d]));
+    const hs = cm.projects.map(p => projectHealth(p));
+    const health = hs.some(h=>h==="needs-attention") ? "needs-attention" : hs.some(h=>h==="watch") ? "watch" : "healthy";
+    const capHrs = tasks.filter(t=>t.status!=="Done").reduce((s,t)=>s+effortHours(t.effort),0);
+    return { ...cm, delCount:dels.length, taskCount:tasks.length, health, capHrs };
+  }).sort((a,b) => {
+    const dir = sortClientDir==="asc" ? 1 : -1;
+    if (sortClientCol==="client")   return dir*a.client.localeCompare(b.client);
+    if (sortClientCol==="projects") return dir*(a.projects.length-b.projects.length);
+    if (sortClientCol==="health")   return dir*a.health.localeCompare(b.health);
+    if (sortClientCol==="cap")      return dir*(a.capHrs-b.capHrs);
+    return 0;
+  });
+
+  // ── Drawer helpers ────────────────────────────────────────────────────────
+  const utilColor = (pct) => pct>120?"#ef4444":pct>100?"#f97316":pct>80?"#fbbf24":"#34d399";
+  const healthMeta = {
+    "healthy":         { label:"Healthy",         color:"#34d399", bg:"rgba(52,211,153,0.12)"  },
+    "watch":           { label:"Watch",            color:"#fbbf24", bg:"rgba(251,191,36,0.12)"  },
+    "needs-attention": { label:"Needs Attention",  color:"#f97316", bg:"rgba(249,115,22,0.12)"  },
+    "on-track":        { label:"On Track",         color:"#34d399", bg:"rgba(52,211,153,0.12)"  },
+    "at-risk":         { label:"At Risk",          color:"#fbbf24", bg:"rgba(251,191,36,0.12)"  },
+    "off-track":       { label:"Off Track",        color:"#ef4444", bg:"rgba(239,68,68,0.12)"   },
+    "blocked":         { label:"Blocked",          color:"#f87171", bg:"rgba(248,113,113,0.12)" },
+  };
+  const Hbadge = ({ h }) => { const m=healthMeta[h]||healthMeta["on-track"]; return <span style={{ fontSize:9, fontWeight:700, color:m.color, background:m.bg, borderRadius:4, padding:"2px 7px", whiteSpace:"nowrap" }}>{m.label}</span>; };
+
+  // ── ReportingDetailDrawer (inline) ────────────────────────────────────────
+  const Drawer = () => {
+    if (!drawer) return null;
+    return (
+      <div style={{ position:"fixed", inset:0, zIndex:2000, display:"flex", alignItems:"flex-start", justifyContent:"flex-end" }}
+        onClick={e => e.target===e.currentTarget && setDrawer(null)}>
+        <div style={{ width:"min(520px, 96vw)", height:"100vh", background:"#fff", boxShadow:"-4px 0 24px rgba(0,0,0,0.12)", display:"flex", flexDirection:"column", overflow:"hidden" }}>
+          {/* Header */}
+          <div style={{ padding:"20px 24px 14px", borderBottom:"1px solid rgba(0,0,0,0.07)", flexShrink:0 }}>
+            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start" }}>
+              <div>
+                <div style={{ fontSize:15, fontWeight:800, color:"#1f2937" }}>{drawer.title}</div>
+                <div style={{ fontSize:11, color:"#6b7280", marginTop:3 }}>{drawer.subtitle}</div>
+              </div>
+              <button onClick={()=>setDrawer(null)} style={{ background:"none", border:"none", fontSize:20, color:"#9ca3af", cursor:"pointer", lineHeight:1, padding:4 }}>×</button>
+            </div>
+            <div style={{ marginTop:10, fontSize:22, fontWeight:900, color:BRAND_TEAL }}>
+              {drawer.rows?.length ?? 0} <span style={{ fontSize:11, color:"#9ca3af", fontWeight:600 }}>{drawer.unit||"items"}</span>
+            </div>
+          </div>
+          {/* Body */}
+          <div style={{ flex:1, overflowY:"auto", padding:"14px 24px" }}>
+            {drawer.note && <div style={{ fontSize:10, color:"#9ca3af", background:"rgba(0,0,0,0.03)", borderRadius:6, padding:"7px 10px", marginBottom:12 }}>ℹ {drawer.note}</div>}
+            {drawer.rows?.length === 0 && <div style={{ fontSize:12, color:"#9ca3af", padding:"20px 0", textAlign:"center" }}>No items to show.</div>}
+            {drawer.renderRows ? drawer.renderRows(drawer.rows) : drawer.rows?.map((row, i) => (
+              <div key={i} style={{ padding:"10px 0", borderBottom:"1px solid rgba(0,0,0,0.05)", display:"flex", flexDirection:"column", gap:4 }}>
+                <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", gap:8 }}>
+                  <span style={{ fontSize:12, fontWeight:700, color:"#1f2937", flex:1 }}>{row.primary}</span>
+                  {row.badge && <Hbadge h={row.badge} />}
+                  {row.right && <span style={{ fontSize:10, color:"#9ca3af", flexShrink:0 }}>{row.right}</span>}
+                </div>
+                {row.secondary && <div style={{ fontSize:10, color:"#6b7280", display:"flex", gap:5, flexWrap:"wrap" }}>
+                  {row.secondary.map((s,j) => <span key={j}>{s}</span>)}
+                </div>}
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  // ── Drill-down data builders ──────────────────────────────────────────────
+  const openDelsDueMonth = () => setDrawer({
+    title:"Deliverables Due This Month", subtitle:`Due in ${today.toLocaleDateString("en-US",{month:"long",year:"numeric"})} — not yet complete`, unit:"deliverables",
+    rows: delsDueMonthList.map(d => ({ primary:d.title, badge:delHealth(d), right:d.end?.slice(5), secondary:[d.proj?.client||"—", d.proj?.name, `${d.subtasks?.length||0} tasks`] })),
+  });
+
+  const openAtRisk = () => {
+    const projRows = atRiskProjList.map(p => {
+      const activeDels   = p.deliverables.filter(d => d.status !== "Done");
+      const offTrackDels = activeDels.filter(d => delHealth(d) === "off-track");
+      const atRiskDels   = activeDels.filter(d => delHealth(d) === "at-risk");
+      return { p, activeDels, offTrackDels, atRiskDels };
+    });
+    setDrawer({
+      title: "At-Risk & Watch Projects",
+      subtitle: "Projects with one or more deliverables off track, at risk, or blocked",
+      unit: "projects",
+      renderRows: (rows) => rows.map(({ p, activeDels, offTrackDels, atRiskDels }, i) => {
+        const ProjRow = () => {
+          const [open, setOpen] = React.useState(false);
+          const h = projectHealth(p);
+          const hm = healthMeta[h] || healthMeta["watch"];
+          const delRows = [
+            ...offTrackDels.map(d => ({ d, health: "off-track" })),
+            ...atRiskDels.map(d =>   ({ d, health: "at-risk"   })),
+          ];
+          return (
+            <div style={{ borderBottom: "1px solid rgba(0,0,0,0.05)" }}>
+              <div onClick={() => setOpen(o => !o)} style={{ padding: "11px 0", display: "flex", alignItems: "center", gap: 10, cursor: "pointer" }}>
+                <div style={{ width: 8, height: 8, borderRadius: "50%", background: p.color, flexShrink: 0 }} />
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 12, fontWeight: 700, color: "#1f2937", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.name}</div>
+                  <div style={{ fontSize: 10, color: "#6b7280", marginTop: 2 }}>
+                    {p.client || "No client"} ·{" "}
+                    <span style={{ color: "#ef4444", fontWeight: 600 }}>{offTrackDels.length} off-track</span>
+                    {atRiskDels.length > 0 && <span style={{ color: "#fbbf24", fontWeight: 600 }}> · {atRiskDels.length} at risk</span>}
+                    {" · "}{activeDels.length} active deliverable{activeDels.length !== 1 ? "s" : ""}
+                  </div>
+                </div>
+                <span style={{ fontSize: 9, fontWeight: 700, color: hm.color, background: hm.bg, borderRadius: 4, padding: "2px 7px", flexShrink: 0 }}>{hm.label}</span>
+                <span style={{ fontSize: 11, color: "#9ca3af", transition: "transform 0.15s", display: "inline-block", transform: open ? "rotate(180deg)" : "rotate(0deg)" }}>▼</span>
+              </div>
+              {open && (
+                <div style={{ background: "rgba(0,0,0,0.02)", borderRadius: 6, margin: "0 0 10px 18px", padding: "6px 0" }}>
+                  {delRows.length === 0
+                    ? <div style={{ fontSize: 10, color: "#9ca3af", padding: "6px 12px" }}>No off-track or at-risk deliverables found.</div>
+                    : delRows.map(({ d, health }, j) => {
+                        const dm = healthMeta[health];
+                        const daysOverdue = health === "off-track" && d.end && d.end < todayStr
+                          ? Math.ceil((today - new Date(d.end + "T00:00:00")) / 86400000) : null;
+                        const signal = d.trackOverride ? `Manual override: ${d.trackOverride}`
+                          : daysOverdue ? `${daysOverdue}d overdue`
+                          : health === "at-risk"
+                            ? (d.subtasks?.length > 0
+                                ? `${d.subtasks.filter(s=>s.status==="Done").length}/${d.subtasks.length} subtasks done`
+                                : "Behind expected progress")
+                            : "";
+                        return (
+                          <div key={j} style={{ display: "flex", alignItems: "flex-start", gap: 8, padding: "7px 12px", borderTop: j > 0 ? "1px solid rgba(0,0,0,0.04)" : "none" }}>
+                            <div style={{ width: 3, minHeight: 28, background: dm.color, borderRadius: 2, flexShrink: 0, alignSelf: "stretch" }} />
+                            <div style={{ flex: 1, minWidth: 0 }}>
+                              <div style={{ fontSize: 11, fontWeight: 600, color: "#374151", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{d.title}</div>
+                              <div style={{ fontSize: 9, color: "#9ca3af", marginTop: 2, display: "flex", gap: 6, flexWrap: "wrap" }}>
+                                {signal && <span style={{ color: dm.color, fontWeight: 600 }}>{signal}</span>}
+                                {d.end && <span>Due {d.end.slice(5)}</span>}
+                                {d.status && <span>{d.status}</span>}
+                              </div>
+                            </div>
+                            <span style={{ fontSize: 9, fontWeight: 700, color: dm.color, background: dm.bg, borderRadius: 4, padding: "2px 6px", flexShrink: 0 }}>{dm.label}</span>
+                          </div>
+                        );
+                      })
+                  }
+                  {activeDels.length > delRows.length && (
+                    <div style={{ fontSize: 9, color: "#34d399", padding: "5px 12px", fontWeight: 600 }}>
+                      ✓ {activeDels.length - delRows.length} deliverable{activeDels.length - delRows.length !== 1 ? "s" : ""} on track
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          );
+        };
+        return <ProjRow key={i} />;
+      }),
+      rows: projRows,
+    });
+  };
+
+  const openOverloaded = () => setDrawer({
+    title:"Overloaded Team Members", subtitle:"People with >100% utilization over the next 4 weeks", unit:"people",
+    renderRows: (rows) => rows.map((r,i) => (
+      <div key={i} style={{ padding:"12px 0", borderBottom:"1px solid rgba(0,0,0,0.05)" }}>
+        <div style={{ display:"flex", alignItems:"center", gap:10, marginBottom:6 }}>
+          <div style={{ width:28, height:28, borderRadius:"50%", background:r.person.color, display:"flex", alignItems:"center", justifyContent:"center", fontSize:9, fontWeight:800, color:"#fff" }}>{r.person.name.split(" ").map(n=>n[0]).join("").slice(0,2)}</div>
+          <div style={{ flex:1 }}>
+            <div style={{ fontSize:12, fontWeight:700, color:"#1f2937" }}>{r.person.name}</div>
+            <div style={{ fontSize:10, color:"#6b7280" }}>{r.planned}h planned / {r.avail}h available</div>
+          </div>
+          <span style={{ fontSize:14, fontWeight:900, color:utilColor(r.utilPct) }}>{r.utilPct}%</span>
+        </div>
+        <div style={{ display:"flex", flexDirection:"column", gap:3 }}>
+          {r.weekBreakdown.filter(w=>w.planned>0).map(w => (
+            <div key={w.ws} style={{ display:"flex", alignItems:"center", gap:8, fontSize:10 }}>
+              <span style={{ color:"#9ca3af", width:60 }}>W/O {w.ws.slice(5)}</span>
+              <div style={{ flex:1, height:6, background:"rgba(0,0,0,0.06)", borderRadius:3, overflow:"hidden" }}>
+                <div style={{ height:"100%", width:`${Math.min(150,w.avail>0?Math.round(w.planned/w.avail*100):100)}%`, background:utilColor(w.avail>0?Math.round(w.planned/w.avail*100):100), borderRadius:3 }} />
+              </div>
+              <span style={{ color:"#374151", width:30, textAlign:"right" }}>{w.planned}h</span>
+            </div>
+          ))}
+        </div>
+        {r.topProjs.length>0 && <div style={{ fontSize:9, color:"#9ca3af", marginTop:5 }}>Top projects: {r.topProjs.join(", ")}</div>}
+      </div>
+    )),
+    rows: overloaded,
+  });
+
+  const openHealthSegment = (h) => {
+    const dels = allDels.filter(d => d.status!=="Done" && delHealth(d)===h);
+    setDrawer({
+      title: healthMeta[h]?.label+" Deliverables", subtitle:`All active deliverables currently classified as ${healthMeta[h]?.label}`, unit:"deliverables",
+      rows: dels.sort((a,b)=>a.proj?.client?.localeCompare(b.proj?.client||"")||0).map(d => ({
+        primary:d.title, badge:h, right:d.end?.slice(5)||"—",
+        secondary:[d.proj?.client||"—", d.proj?.name, d.status],
+      })),
+    });
+  };
+
+  const openForecast = (bucket) => setDrawer({
+    title:`Deliverables: ${bucket.label}`, subtitle:`Upcoming deliverables due before ${bucket.end}`, unit:"deliverables",
+    rows: bucket.dels.sort((a,b)=>a.end?.localeCompare(b.end||"")||0).map(d => ({
+      primary:d.title, badge:delHealth(d), right:d.end?.slice(5),
+      secondary:[d.proj?.client||"—", d.proj?.name, d.status],
+    })),
+  });
+
+  const openAccomplishments = (type) => {
+    const map = {
+      tasks:       { list:doneTasksLast30,  unit:"tasks",        title:"Tasks Completed",         sub:"Completed in the last 30 days" },
+      deliverables:{ list:doneDelsLast30,   unit:"deliverables", title:"Deliverables Completed",  sub:"Completed in the last 30 days" },
+      projects:    { list:doneProjsLast30,  unit:"projects",     title:"Projects Completed",      sub:"All deliverables done in last 30 days" },
+    };
+    const { list, unit, title, sub } = map[type];
+    setDrawer({
+      title, subtitle:sub, unit,
+      rows: list.map(item => ({
+        primary: item.name||item.title, right:item.end?.slice(5)||"—",
+        secondary:[item.proj?.client||item.client||"—", item.proj?.name||"", item.status||"Done"],
+      })),
+    });
+  };
+
+  // ── KPI + sub-components ─────────────────────────────────────────────────
+  const KPI = ({ value, label, sub, color, onClick }) => (
+    <div onClick={onClick} style={{ background:"#fff", border:"1px solid rgba(0,0,0,0.07)", borderRadius:10, padding:"18px 20px", cursor:onClick?"pointer":"default", flex:1, minWidth:120, transition:"box-shadow 0.12s" }}
+      onMouseEnter={e=>onClick&&(e.currentTarget.style.boxShadow="0 2px 12px rgba(0,0,0,0.1)")}
+      onMouseLeave={e=>(e.currentTarget.style.boxShadow="none")}>
+      <div style={{ fontSize:32, fontWeight:900, color:color||"#1f2937", lineHeight:1 }}>{value}</div>
+      <div style={{ fontSize:11, fontWeight:700, color:"#374151", marginTop:6 }}>{label}</div>
+      {sub && <div style={{ fontSize:10, color:"#9ca3af", marginTop:3 }}>{sub}</div>}
+      {onClick && <div style={{ fontSize:9, color:BRAND_TEAL, marginTop:4, fontWeight:600 }}>↗ Click to drill down</div>}
+    </div>
+  );
+  const SectionTitle = ({ children }) => <div style={{ fontSize:13, fontWeight:800, color:"#1f2937", marginBottom:14, letterSpacing:"-0.01em" }}>{children}</div>;
+  const Card = ({ children, style={} }) => <div style={{ background:"#fff", border:"1px solid rgba(0,0,0,0.07)", borderRadius:10, padding:"18px 20px", ...style }}>{children}</div>;
+  const Donut = ({ data }) => {
+    const total = data.reduce((s,d)=>s+d.value,0)||1;
+    let pct=0;
+    const stops = data.filter(d=>d.value>0).flatMap(d => {
+      const s=pct, e=pct+(d.value/total)*100; pct=e;
+      return [`${d.color} ${s.toFixed(1)}%`,`${d.color} ${e.toFixed(1)}%`];
+    });
+    const gradient = stops.length ? `conic-gradient(${stops.join(", ")})` : "conic-gradient(rgba(0,0,0,0.06) 0%,rgba(0,0,0,0.06) 100%)";
+    return (
+      <div style={{ position:"relative", width:110, height:110, flexShrink:0 }}>
+        <div style={{ width:110, height:110, borderRadius:"50%", background:gradient }} />
+        <div style={{ position:"absolute", top:15, left:15, width:80, height:80, borderRadius:"50%", background:"#fff", display:"flex", alignItems:"center", justifyContent:"center" }}>
+          <span style={{ fontSize:18, fontWeight:900, color:"#1f2937" }}>{healthyPct}%</span>
+        </div>
+      </div>
+    );
+  };
+
+  return (
+    <div style={{ display:"flex", flexDirection:"column", gap:20 }}>
+      <Drawer />
+
+      {/* ── Header ── */}
+      <div>
+        <div style={{ fontSize:18, fontWeight:900, color:"#1f2937" }}>Reporting Dashboard</div>
+        <div style={{ fontSize:11, color:"#9ca3af", marginTop:2 }}>Executive overview · {today.toLocaleDateString("en-US",{month:"long",day:"numeric",year:"numeric"})}</div>
+      </div>
+
+      {/* ── KPI Row ── */}
+      <div style={{ display:"flex", gap:10, flexWrap:"wrap" }}>
+        <KPI value={activeClients}       label="Active Clients"             color={BRAND_TEAL} />
+        <KPI value={activeProjects.length} label="Active Projects"          color="#1f2937" />
+        <KPI value={delsDueMonthList.length} label="Deliverables Due This Month" color="#6366f1" onClick={openDelsDueMonth} />
+        <KPI value={`${avgUtil}%`}       label="Team Capacity Utilization"  color={utilColor(avgUtil)} sub="Next 4 weeks avg" onClick={()=>setDrawer({title:"Team Capacity Detail",subtitle:"Utilization breakdown for all team members — next 4 weeks",unit:"people",renderRows:(rows)=>rows.map((r,i)=>(<div key={i} style={{padding:"10px 0",borderBottom:"1px solid rgba(0,0,0,0.05)",display:"flex",alignItems:"center",gap:10}}><div style={{width:26,height:26,borderRadius:"50%",background:r.person.color,display:"flex",alignItems:"center",justifyContent:"center",fontSize:8,fontWeight:800,color:"#fff"}}>{r.person.name.split(" ").map(n=>n[0]).join("").slice(0,2)}</div><div style={{flex:1}}><div style={{fontSize:11,fontWeight:700,color:"#1f2937"}}>{r.person.name}</div><div style={{fontSize:10,color:"#6b7280"}}>{r.planned}h / {r.avail}h</div></div><span style={{fontSize:13,fontWeight:900,color:utilColor(r.utilPct)}}>{r.utilPct}%</span></div>)),rows:personUtilization})} />
+        <KPI value={overloaded.length}   label="Overloaded Team Members"   color={overloaded.length>0?"#ef4444":"#34d399"} sub={overloaded.length>0?"Over 100% capacity":"All within capacity"} onClick={overloaded.length>0?openOverloaded:undefined} />
+        <KPI value={atRiskProjList.length} label="Projects Needing Attention" color={atRiskProjList.length>0?"#f97316":"#34d399"} sub="Watch or Needs Attention" onClick={atRiskProjList.length>0?openAtRisk:undefined} />
+      </div>
+
+      {/* ── Portfolio Health ── */}
+      <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:14 }}>
+        <Card>
+          <SectionTitle>Deliverable Health Overview</SectionTitle>
+          <div style={{ fontSize:10, color:"#9ca3af", marginBottom:10 }}>Health is tracked at the deliverable level. A project isn't Off Track unless multiple deliverables are.</div>
+          <div style={{ display:"flex", gap:16, alignItems:"center" }}>
+            <Donut data={[
+              { label:"On Track", value:delHealthCounts["on-track"], color:"#34d399" },
+              { label:"At Risk",  value:delHealthCounts["at-risk"],  color:"#fbbf24" },
+              { label:"Off Track",value:delHealthCounts["off-track"],color:"#ef4444" },
+            ]} />
+            <div style={{ flex:1 }}>
+              {[["on-track","On Track","#34d399"],["at-risk","At Risk","#fbbf24"],["off-track","Off Track","#ef4444"]].map(([k,l,c])=>(
+                <div key={k} onClick={()=>openHealthSegment(k)} style={{ display:"flex", alignItems:"center", gap:8, marginBottom:8, cursor:"pointer", borderRadius:6, padding:"4px 6px" }}
+                  onMouseEnter={e=>e.currentTarget.style.background="rgba(0,0,0,0.03)"}
+                  onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
+                  <div style={{ width:10, height:10, borderRadius:2, background:c, flexShrink:0 }} />
+                  <span style={{ fontSize:11, color:"#374151", flex:1 }}>{l}</span>
+                  <span style={{ fontSize:14, fontWeight:800, color:c }}>{delHealthCounts[k]}</span>
+                  <span style={{ fontSize:9, color:BRAND_TEAL }}>↗</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        </Card>
+
+        <Card>
+          <SectionTitle>Project Health Rollup</SectionTitle>
+          <div style={{ fontSize:10, color:"#9ca3af", marginBottom:10 }}>Healthy = all deliverables on track · Watch = 1 at risk · Needs Attention = 2+ off track or &gt;25% at risk</div>
+          {[
+            ["healthy","Healthy",projHealthCounts.healthy],
+            ["watch","Watch",projHealthCounts.watch],
+            ["needs-attention","Needs Attention",projHealthCounts["needs-attention"]],
+          ].map(([k,l,v])=>{
+            const m=healthMeta[k];
+            return (
+              <div key={k} style={{ display:"flex", justifyContent:"space-between", alignItems:"center", padding:"8px 0", borderBottom:"1px solid rgba(0,0,0,0.04)" }}>
+                <span style={{ fontSize:11, color:"#6b7280" }}>{l}</span>
+                <span style={{ fontSize:14, fontWeight:800, color:m.color }}>{v}</span>
+              </div>
+            );
+          })}
+          <div style={{ display:"flex", justifyContent:"space-between", padding:"8px 0", borderBottom:"1px solid rgba(0,0,0,0.04)" }}>
+            <span style={{ fontSize:11, color:"#6b7280" }}>Total Active Deliverables</span>
+            <span style={{ fontSize:14, fontWeight:800, color:"#1f2937" }}>{totalActiveDels}</span>
+          </div>
+          <div style={{ display:"flex", justifyContent:"space-between", padding:"8px 0" }}>
+            <span style={{ fontSize:11, color:"#6b7280" }}>% Healthy</span>
+            <span style={{ fontSize:14, fontWeight:800, color:"#34d399" }}>{healthyPct}%</span>
+          </div>
+        </Card>
+      </div>
+
+      {/* ── Team Capacity ── */}
+      <Card>
+        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:14 }}>
+          <SectionTitle>Team Capacity — Next 4 Weeks</SectionTitle>
+          <div style={{ background:overloaded.length>0?"rgba(239,68,68,0.08)":"rgba(52,211,153,0.08)", border:`1px solid ${overloaded.length>0?"rgba(239,68,68,0.2)":"rgba(52,211,153,0.2)"}`, borderRadius:8, padding:"8px 14px", textAlign:"right" }}>
+            <div style={{ fontSize:10, color:"#6b7280", fontWeight:700, marginBottom:2 }}>STAFFING RISK</div>
+            <div style={{ fontSize:11, color:"#374151" }}>{overloaded.length} overloaded · {maxUtil}% peak</div>
+          </div>
+        </div>
+        {personUtilization.map(({person,planned,avail,utilPct}) => (
+          <div key={person.id} onClick={()=>setDrawer({title:`${person.name} — Capacity Detail`,subtitle:"Weekly breakdown · next 4 weeks",unit:"weeks",renderRows:(rows)=>rows.map((r,i)=>(<div key={i} style={{padding:"8px 0",borderBottom:"1px solid rgba(0,0,0,0.04)",display:"flex",alignItems:"center",gap:10}}><span style={{color:"#9ca3af",width:70,fontSize:10}}>W/O {r.ws.slice(5)}</span><div style={{flex:1,height:8,background:"rgba(0,0,0,0.06)",borderRadius:4,overflow:"hidden"}}><div style={{height:"100%",width:`${Math.min(150,r.avail>0?Math.round(r.planned/r.avail*100):100)}%`,background:utilColor(r.avail>0?Math.round(r.planned/r.avail*100):100),borderRadius:4}} /></div><span style={{fontSize:10,fontWeight:700,color:utilColor(r.avail>0?Math.round(r.planned/r.avail*100):100),width:36,textAlign:"right"}}>{r.avail>0?Math.round(r.planned/r.avail*100):0}%</span><span style={{fontSize:9,color:"#9ca3af",width:60,textAlign:"right"}}>{r.planned}h/{r.avail}h</span></div>)),rows:personUtilization.find(p=>p.person.id===person.id)?.weekBreakdown||[]})}
+            style={{ display:"flex", alignItems:"center", gap:12, marginBottom:10, cursor:"pointer", borderRadius:8, padding:"4px 6px" }}
+            onMouseEnter={e=>e.currentTarget.style.background="rgba(0,0,0,0.02)"}
+            onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
+            <div style={{ width:28, height:28, borderRadius:"50%", background:person.color, display:"flex", alignItems:"center", justifyContent:"center", fontSize:9, fontWeight:800, color:"#fff", flexShrink:0 }}>{person.name.split(" ").map(n=>n[0]).join("").slice(0,2)}</div>
+            <div style={{ width:100, flexShrink:0, fontSize:11, fontWeight:600, color:"#374151", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{person.name}</div>
+            <div style={{ flex:1, height:8, background:"rgba(0,0,0,0.06)", borderRadius:4, overflow:"hidden" }}>
+              <div style={{ height:"100%", width:`${Math.min(150,utilPct)}%`, background:utilColor(utilPct), borderRadius:4 }} />
+            </div>
+            <div style={{ width:42, textAlign:"right", fontSize:11, fontWeight:800, color:utilColor(utilPct), flexShrink:0 }}>{utilPct}%</div>
+            <div style={{ width:80, fontSize:9, color:"#9ca3af", flexShrink:0, textAlign:"right" }}>{planned}h / {avail}h</div>
+            <span style={{ fontSize:9, color:BRAND_TEAL }}>↗</span>
+          </div>
+        ))}
+        <div style={{ display:"flex", gap:16, marginTop:12, paddingTop:10, borderTop:"1px solid rgba(0,0,0,0.06)" }}>
+          {[["#34d399","<80%"],["#fbbf24","80–100%"],["#f97316","100–120%"],["#ef4444",">120%"]].map(([c,l])=>(
+            <div key={l} style={{ display:"flex", alignItems:"center", gap:5 }}>
+              <div style={{ width:8, height:8, borderRadius:2, background:c }} />
+              <span style={{ fontSize:9, color:"#6b7280" }}>{l}</span>
+            </div>
+          ))}
+        </div>
+      </Card>
+
+      {/* ── Delivery Forecast ── */}
+      <Card>
+        <SectionTitle>Delivery Forecast</SectionTitle>
+        <div style={{ display:"flex", gap:12, flexWrap:"wrap" }}>
+          {forecastBuckets.map(b => (
+            <div key={b.label} onClick={()=>openForecast(b)} style={{ flex:1, minWidth:140, cursor:"pointer", borderRadius:8, padding:8 }}
+              onMouseEnter={e=>e.currentTarget.style.background="rgba(0,0,0,0.02)"}
+              onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
+              <div style={{ fontSize:11, fontWeight:700, color:"#374151", marginBottom:8 }}>{b.label} <span style={{ fontSize:9, color:BRAND_TEAL }}>↗</span></div>
+              {[{l:"Total",v:b.total,c:BRAND_TEAL},{l:"At Risk",v:b.atRisk,c:"#fbbf24"},{l:"Blocked",v:b.blocked,c:"#ef4444"}].map(r=>(
+                <div key={r.l} style={{ display:"flex", alignItems:"center", gap:6, marginBottom:4 }}>
+                  <div style={{ flex:1, height:10, background:"rgba(0,0,0,0.04)", borderRadius:3, overflow:"hidden" }}>
+                    <div style={{ height:"100%", width:`${Math.round((r.v/Math.max(1,b.total))*100)}%`, background:r.c, borderRadius:3 }} />
+                  </div>
+                  <span style={{ fontSize:10, fontWeight:700, color:r.c, width:24, textAlign:"right" }}>{r.v}</span>
+                  <span style={{ fontSize:9, color:"#9ca3af", width:44 }}>{r.l}</span>
+                </div>
+              ))}
+              <div style={{ fontSize:28, fontWeight:900, color:BRAND_TEAL, marginTop:4 }}>{b.total}</div>
+              <div style={{ fontSize:9, color:"#9ca3af" }}>deliverables</div>
+            </div>
+          ))}
+        </div>
+      </Card>
+
+      {/* ── Client Portfolio ── */}
+      <Card>
+        <div style={{ display:"flex", gap:16, alignItems:"flex-start" }}>
+          <div style={{ flex:1, minWidth:0 }}>
+            <SectionTitle>Client Portfolio</SectionTitle>
+            <div style={{ overflowX:"auto" }}>
+              <table style={{ width:"100%", borderCollapse:"collapse", fontSize:11 }}>
+                <thead>
+                  <tr style={{ borderBottom:"2px solid rgba(0,0,0,0.08)" }}>
+                    {[["client","Client"],["projects","Projects"],["deliverables","Deliverables"],["tasks","Tasks"],["health","Health"],["cap","Est. Hours"]].map(([k,l])=>(
+                      <th key={k} onClick={()=>{setSortClientDir(sortClientCol===k&&sortClientDir==="asc"?"desc":"asc");setSortClientCol(k);}}
+                        style={{ textAlign:"left", padding:"6px 10px", fontSize:9, fontWeight:700, color:"#6b7280", cursor:"pointer", whiteSpace:"nowrap", userSelect:"none" }}>
+                        {l} {sortClientCol===k?(sortClientDir==="asc"?"↑":"↓"):""}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {clientRows.map(row => {
+                    const hm=healthMeta[row.health]||healthMeta["healthy"];
+                    return (
+                      <tr key={row.client} onClick={()=>setDrillClient(drillClient?.client===row.client?null:row)}
+                        style={{ borderBottom:"1px solid rgba(0,0,0,0.04)", cursor:"pointer", background:drillClient?.client===row.client?`${BRAND_TEAL}08`:"transparent" }}
+                        onMouseEnter={e=>e.currentTarget.style.background=`${BRAND_TEAL}08`}
+                        onMouseLeave={e=>e.currentTarget.style.background=drillClient?.client===row.client?`${BRAND_TEAL}08`:"transparent"}>
+                        <td style={{ padding:"8px 10px", fontWeight:700, color:"#1f2937" }}>{row.client}</td>
+                        <td style={{ padding:"8px 10px", color:"#374151" }}>{row.projects.length}</td>
+                        <td style={{ padding:"8px 10px", color:"#374151" }}>{row.delCount}</td>
+                        <td style={{ padding:"8px 10px", color:"#374151" }}>{row.taskCount}</td>
+                        <td style={{ padding:"8px 10px" }}><span style={{ background:hm.bg, color:hm.color, borderRadius:4, padding:"2px 8px", fontSize:10, fontWeight:700 }}>{hm.label}</span></td>
+                        <td style={{ padding:"8px 10px", color:"#374151" }}>{row.capHrs}h</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+          {drillClient && (() => {
+            const upcoming = drillClient.projects.flatMap(p=>p.deliverables.filter(d=>d.end&&d.end>=todayStr&&d.end<=in30&&d.status!=="Done").map(d=>({...d,proj:p}))).sort((a,b)=>a.end?.localeCompare(b.end||"")||0);
+            const assigneeIds = [...new Set(drillClient.projects.flatMap(p=>p.deliverables.flatMap(d=>d.subtasks.flatMap(s=>s.assignees||[]).concat(d.assignees||[]))))];
+            return (
+              <div style={{ width:240, flexShrink:0, background:"rgba(0,0,0,0.02)", border:"1px solid rgba(0,0,0,0.08)", borderRadius:8, padding:14 }}>
+                <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:10 }}>
+                  <div style={{ fontSize:12, fontWeight:800, color:"#1f2937" }}>{drillClient.client}</div>
+                  <button onClick={()=>setDrillClient(null)} style={{ background:"none", border:"none", color:"#9ca3af", cursor:"pointer", fontSize:16 }}>×</button>
+                </div>
+                <div style={{ fontSize:10, fontWeight:700, color:"#9ca3af", marginBottom:6, letterSpacing:"0.07em" }}>PROJECTS</div>
+                {drillClient.projects.map(p=>(
+                  <div key={p.id} style={{ display:"flex", alignItems:"center", gap:6, marginBottom:5 }}>
+                    <div style={{ width:6, height:6, borderRadius:"50%", background:p.color, flexShrink:0 }} />
+                    <span style={{ fontSize:11, color:"#374151", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap", flex:1 }}>{p.name}</span>
+                    <Hbadge h={projectHealth(p)} />
+                  </div>
+                ))}
+                {upcoming.length>0 && <>
+                  <div style={{ fontSize:10, fontWeight:700, color:"#9ca3af", margin:"10px 0 6px", letterSpacing:"0.07em" }}>DUE NEXT 30 DAYS</div>
+                  {upcoming.slice(0,5).map(d=>(
+                    <div key={d.id} style={{ fontSize:10, color:"#374151", padding:"3px 0", borderBottom:"1px solid rgba(0,0,0,0.04)", display:"flex", justifyContent:"space-between" }}>
+                      <span style={{ overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap", flex:1 }}>{d.title}</span>
+                      <span style={{ color:"#9ca3af", marginLeft:6, flexShrink:0 }}>{d.end?.slice(5)}</span>
+                    </div>
+                  ))}
+                </>}
+                {assigneeIds.length>0 && <>
+                  <div style={{ fontSize:10, fontWeight:700, color:"#9ca3af", margin:"10px 0 6px", letterSpacing:"0.07em" }}>TEAM</div>
+                  <div style={{ display:"flex", flexWrap:"wrap", gap:4 }}>
+                    {assigneeIds.slice(0,8).map(id=>{ const p=people.find(x=>x.id===id); if(!p) return null; return <div key={id} title={p.name} style={{ width:24, height:24, borderRadius:"50%", background:p.color, display:"flex", alignItems:"center", justifyContent:"center", fontSize:8, fontWeight:800, color:"#fff" }}>{p.name.split(" ").map(n=>n[0]).join("").slice(0,2)}</div>; })}
+                  </div>
+                </>}
+              </div>
+            );
+          })()}
+        </div>
+      </Card>
+
+      {/* ── Accomplishments ── */}
+      <Card>
+        <SectionTitle>Team Accomplishments — Last 30 Days</SectionTitle>
+        <div style={{ display:"flex", gap:12, flexWrap:"wrap" }}>
+          {[
+            { value:doneTasksLast30.length,  label:"Tasks Completed",         color:BRAND_TEAL,  type:"tasks"        },
+            { value:doneDelsLast30.length,   label:"Deliverables Completed",  color:"#6366f1",   type:"deliverables" },
+            { value:doneProjsLast30.length,  label:"Projects Completed",      color:"#34d399",   type:"projects"     },
+            { value:`${effortDelivered}h`,   label:"Est. Effort Delivered",   color:"#f59e0b",   type:null            },
+          ].map(k=>(
+            <div key={k.label} onClick={k.type?()=>openAccomplishments(k.type):undefined}
+              style={{ flex:1, minWidth:100, background:`${k.color}0d`, border:`1px solid ${k.color}25`, borderRadius:8, padding:"14px 16px", cursor:k.type?"pointer":"default" }}
+              onMouseEnter={e=>k.type&&(e.currentTarget.style.boxShadow="0 2px 8px rgba(0,0,0,0.08)")}
+              onMouseLeave={e=>(e.currentTarget.style.boxShadow="none")}>
+              <div style={{ fontSize:28, fontWeight:900, color:k.color, lineHeight:1 }}>{k.value}</div>
+              <div style={{ fontSize:10, fontWeight:700, color:"#374151", marginTop:5 }}>{k.label}</div>
+              {k.type && <div style={{ fontSize:9, color:k.color, marginTop:4, fontWeight:600 }}>↗ View list</div>}
+            </div>
+          ))}
+        </div>
+      </Card>
+
+    </div>
+  );
+}
+
 
 function StatusView({ projects, people, statusNotes, onUpdateNote, onAddDeliverable, onAddSubtask, onSaveTrackOverride, onEditItem, onOpenProject }) {
   const [editingNote, setEditingNote] = useState(null); // { projId, delId }
@@ -4205,6 +4881,7 @@ function StatusNoteCell({ note, color, onSave }) {
 }
 
 // --- TEAM SETTINGS MODAL ─────────────────────────────────────────────────────
+
 function TeamSettingsModal({ people, onClose, onSave }) {
   const [members, setMembers] = useState(people.map(p => ({ ...p })));
   const updateMember = (id, field, val) =>
@@ -4449,6 +5126,7 @@ function HolidaysModal({ holidays, onClose, onSave }) {
 }
 
 // Helper: advance a date string by n working days (skipping holidays)
+
 function ExcelImportModal({ onClose, onImport, existingColors }) {
   const [step, setStep] = useState("upload"); // upload → map → preview → done
   const [rows, setRows] = useState([]);        // raw rows from sheet
@@ -4785,6 +5463,7 @@ function ExcelImportModal({ onClose, onImport, existingColors }) {
   );
 }
 
+// --- COLOR PALETTE FOR NEW PROJECTS ──────────────────────────────────────────
 // ─── BUILT-IN TEMPLATES ───────────────────────────────────────────────────────
 const BUILT_IN_TEMPLATES = [
   {
@@ -5931,6 +6610,7 @@ export default function App() {
     { id: "status",    label: "Status",    icon: "◉" },
     { id: "workload",  label: "Workload",  icon: "▦" },
     { id: "archived",  label: "Archive",   icon: "⊡" },
+    { id: "reporting", label: "Reporting",  icon: "◈" },
   ];
 
   // Loading / error screens
@@ -5975,6 +6655,8 @@ export default function App() {
         input[type=date]::-webkit-calendar-picker-indicator { filter: invert(0); cursor: pointer; }
         input[type=range] { cursor: pointer; }
         nav::-webkit-scrollbar { display: none; }
+        @media (max-width: 480px) { .nav-controls { display: none !important; } .nav-label { display: none !important; } }
+        @media (max-width: 640px) { .nav-label { display: none !important; } }
         select option { background: #ffffff; color: #1a1d23; }
         [data-timeline-body] { cursor: default; }
         [data-timeline-body]:not(:has(input:focus)):not(:has(textarea:focus)) { cursor: grab; }
@@ -5983,25 +6665,28 @@ export default function App() {
       `}</style>
 
       {/* Nav */}
-      <header style={{ borderBottom: `1px solid rgba(255,255,255,0.08)`, padding: "0 12px 0 16px", display: "flex", alignItems: "center", height: 52, flexShrink: 0, background: BRAND_NAVY, width: "100%", boxSizing: "border-box", overflow: "visible" }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 9, marginRight: 36 }}>
-          <div style={{ width: 28, height: 28, background: BRAND_TEAL, borderRadius: 6, display: "flex", alignItems: "center", justifyContent: "center" }}>
-            <span style={{ fontSize: 14, fontWeight: 900, color: BRAND_NAVY, fontFamily: '"Roboto", Arial, sans-serif' }}>X</span>
+      <header style={{ borderBottom: `1px solid rgba(255,255,255,0.08)`, padding: "0 8px 0 10px", display: "flex", alignItems: "center", height: 52, flexShrink: 0, background: BRAND_NAVY, width: "100%", boxSizing: "border-box", overflow: "visible", gap: 6 }}>
+        {/* Logo — compact, no wide margin */}
+        <div style={{ display: "flex", alignItems: "center", gap: 7, flexShrink: 0 }}>
+          <div style={{ width: 26, height: 26, background: BRAND_TEAL, borderRadius: 5, display: "flex", alignItems: "center", justifyContent: "center" }}>
+            <span style={{ fontSize: 13, fontWeight: 900, color: BRAND_NAVY, fontFamily: '"Roboto", Arial, sans-serif' }}>X</span>
           </div>
-          <span style={{ fontSize: 15, fontWeight: 800, color: "#ffffff", fontFamily: '"Roboto", Arial, sans-serif', letterSpacing: "-0.01em" }}>PulseX</span>
+          <span className="nav-label" style={{ fontSize: 14, fontWeight: 800, color: "#ffffff", fontFamily: '"Roboto", Arial, sans-serif', letterSpacing: "-0.01em" }}>PulseX</span>
         </div>
-        <nav style={{ display: "flex", gap: 3, overflowX: "auto", overflowY: "visible", flex: 1, scrollbarWidth: "none", msOverflowStyle: "none", WebkitOverflowScrolling: "touch" }}>
+        {/* Nav tabs — get all remaining space, scroll horizontally */}
+        <nav style={{ display: "flex", gap: 2, overflowX: "auto", overflowY: "visible", flex: 1, scrollbarWidth: "none", msOverflowStyle: "none", WebkitOverflowScrolling: "touch", minWidth: 0 }}>
           {navItems.map(n => (
             <button key={n.id} onClick={() => setView(n.id)} style={{
               background: view === n.id ? BRAND_TEAL_L : "none",
-              border: `1px solid ${view === n.id ? BRAND_TEAL + "50" : "rgba(255,255,255,0.1)"}` ,
-              color: view === n.id ? BRAND_TEAL : "rgba(255,255,255,0.65)", padding: "5px 14px",
+              border: `1px solid ${view === n.id ? BRAND_TEAL + "50" : "rgba(255,255,255,0.1)"}`,
+              color: view === n.id ? BRAND_TEAL : "rgba(255,255,255,0.65)", padding: "5px 10px",
               borderRadius: 5, cursor: "pointer", fontSize: 11, fontWeight: 700,
-              letterSpacing: "0.07em", fontFamily: "inherit", display: "flex", alignItems: "center", gap: 5, transition: "all 0.12s", flexShrink: 0,
-            }}><span>{n.icon}</span><span className="nav-label">{n.label}</span></button>
+              letterSpacing: "0.05em", fontFamily: "inherit", display: "flex", alignItems: "center", gap: 4, transition: "all 0.12s", flexShrink: 0, whiteSpace: "nowrap",
+            }}>{n.icon} <span className="nav-label">{n.label}</span></button>
           ))}
         </nav>
-        <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 12 }}>
+        {/* Zoom + Settings — hidden on very small screens via CSS */}
+        <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }} className="nav-controls">
           {/* ── ZOOM CONTROL ── */}
           <div style={{ display: "flex", alignItems: "center", gap: 4, background: "rgba(255,255,255,0.08)", borderRadius: 6, padding: "2px 4px" }}>
             {ZOOM_LEVELS.map(z => (
@@ -6173,6 +6858,11 @@ export default function App() {
         {view === "people"  && <PeopleView projects={projects} people={people} onEditItem={handleEditItem} onMarkDone={handleMarkDone} onSaveItem={handleSaveItem} holidays={holidays} pto={pto} />}
         {view === "workload" && (
           <WorkloadView projects={projects} people={people} onEditItem={handleEditItem} pto={pto} holidays={holidays} />
+        )}
+        {view === "reporting" && (
+          <ReportingDashboardView
+            projects={projects} people={people} holidays={holidays} pto={pto}
+          />
         )}
         {view === "archived" && (
           <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
