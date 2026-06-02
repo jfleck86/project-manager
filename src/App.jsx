@@ -784,6 +784,11 @@ function ProjectDetailsModal({ proj, people, onClose, onSave, onArchive, onDelet
 function TaskModal({ item, projectColor, allItems, onClose, onSave, allPeople, onDelete, holidays = [], statusNotes = {}, onUpdateNote, trackStatus }) {
   const [form, setForm] = useState({ ...item });
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
+
+  // Local style constants (also defined in NewProjectModal — kept separate for scope safety)
+  const labelStyle  = { fontSize: 10, fontWeight: 700, color: "#6b7280", letterSpacing: "0.07em", textTransform: "uppercase", marginBottom: 5, display: "block" };
+  const inputStyle  = { width: "100%", fontSize: 12, border: "1px solid rgba(0,0,0,0.12)", borderRadius: 7, padding: "7px 10px", fontFamily: "inherit", background: "#fff", outline: "none", boxSizing: "border-box" };
+  const selectStyle = { width: "100%", background: "#f7f8fa", border: "1px solid rgba(0,0,0,0.08)", borderRadius: 6, color: "#111827", padding: "7px 10px", fontFamily: "inherit", fontSize: 12, boxSizing: "border-box" };
   const togglePerson = (id) => set("assignees", form.assignees.includes(id)
     ? form.assignees.filter(x => x !== id) : [...form.assignees, id]);
   const toggleDep = (id) => set("dependencies", (form.dependencies || []).includes(id)
@@ -6933,8 +6938,7 @@ export default function App() {
     { id: "people",    label: "By Person", icon: "◎" },
     { id: "status",    label: "Status",    icon: "◉" },
     { id: "workload",  label: "Workload",  icon: "▦" },
-    { id: "archived",  label: "Archive",   icon: "⊡" },
-    { id: "reporting", label: "Reporting",  icon: "◈" },
+    { id: "reporting", label: "Reporting", icon: "◈" },
   ];
 
   // Auth gate — must be in App() so setting authSession=null triggers re-render
