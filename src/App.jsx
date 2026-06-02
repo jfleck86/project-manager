@@ -5714,6 +5714,48 @@ function ExcelImportModal({ onClose, onImport, existingColors }) {
 }
 
 // --- COLOR PALETTE FOR NEW PROJECTS ──────────────────────────────────────────
+// ─── BUILT-IN TEMPLATES ──────────────────────────────────────────────────────
+const BUILT_IN_TEMPLATES = [
+  {
+    id: "tpl_brand_launch", name: "Brand Launch", icon: "🚀",
+    deliverables: [
+      { title: "Discovery & Strategy", subtasks: ["Kickoff meeting", "Brand audit", "Competitor research", "Strategy presentation"] },
+      { title: "Brand Identity", subtasks: ["Logo concepts", "Logo refinement", "Color palette & typography", "Brand guidelines"] },
+      { title: "Collateral Design", subtasks: ["Business cards", "Letterhead", "Email signature", "Social media templates"] },
+      { title: "Digital Assets", subtasks: ["Website banners", "Social profile images", "Icon set", "Presentation template"] },
+      { title: "Launch", subtasks: ["Internal rollout", "Asset delivery", "Client training", "Project close"] },
+    ],
+  },
+  {
+    id: "tpl_website_redesign", name: "Website Redesign", icon: "🌐",
+    deliverables: [
+      { title: "Discovery", subtasks: ["Stakeholder interviews", "Content audit", "Analytics review", "Requirements doc"] },
+      { title: "UX & Wireframes", subtasks: ["Sitemap", "User flows", "Wireframes", "Wireframe review"] },
+      { title: "Visual Design", subtasks: ["Moodboard", "Homepage design", "Inner page templates", "Design review & approval"] },
+      { title: "Development", subtasks: ["Dev environment setup", "Frontend build", "CMS integration", "QA testing"] },
+      { title: "Launch", subtasks: ["Content migration", "SEO setup", "Staging review", "Go-live"] },
+    ],
+  },
+  {
+    id: "tpl_campaign", name: "Marketing Campaign", icon: "📣",
+    deliverables: [
+      { title: "Strategy", subtasks: ["Brief", "Audience research", "Channel plan", "KPI definition"] },
+      { title: "Creative", subtasks: ["Concept development", "Copywriting", "Design", "Creative review"] },
+      { title: "Production", subtasks: ["Ad build", "Landing page", "Email template", "Social assets"] },
+      { title: "Launch & Optimise", subtasks: ["Campaign setup", "Launch", "Week 1 review", "Optimisations"] },
+    ],
+  },
+  {
+    id: "tpl_annual_report", name: "Annual Report", icon: "📊",
+    deliverables: [
+      { title: "Content Gathering", subtasks: ["Financial data", "Department summaries", "Photography", "Executive messages"] },
+      { title: "Design", subtasks: ["Cover concepts", "Layout design", "Infographics", "Design approval"] },
+      { title: "Production", subtasks: ["Copyediting", "Proofing round 1", "Proofing round 2", "Final approval"] },
+      { title: "Print & Distribution", subtasks: ["Print-ready files", "Printer liaison", "Digital PDF", "Distribution"] },
+    ],
+  },
+];
+
 function buildProjectFromTemplate(tpl, name, client, color, startDate) {
   const start = new Date(startDate + "T00:00:00");
   let cursor = new Date(start);
@@ -5752,6 +5794,9 @@ function TemplatesModal({ onClose, onAdd, existingColors, savedTemplates, onSave
   const [tplName, setTplName] = useState("");
   const [tplIcon, setTplIcon] = useState("📋");
   const [tplDeliverables, setTplDeliverables] = useState([{ title: "", subtasks: [""] }]);
+
+  const labelStyle  = { fontSize: 10, fontWeight: 700, color: "#6b7280", letterSpacing: "0.07em", textTransform: "uppercase", marginBottom: 5, display: "block" };
+  const selectStyle = { width: "100%", background: "#f7f8fa", border: "1px solid rgba(0,0,0,0.08)", borderRadius: 6, color: "#111827", padding: "7px 10px", fontFamily: "inherit", fontSize: 12, boxSizing: "border-box" };
 
   const allTemplates = [...BUILT_IN_TEMPLATES, ...(savedTemplates || [])];
 
@@ -7075,13 +7120,13 @@ export default function App() {
 
               </div>
             )}
-            <button onClick={handleLogout} title="Sign Out"
+          </div>
+          <button onClick={handleLogout} title="Sign Out"
             style={{ background:"rgba(239,68,68,0.15)", border:"1px solid rgba(239,68,68,0.3)",
               color:"#fca5a5", borderRadius:6, padding:"4px 10px", cursor:"pointer",
               fontSize:12, fontFamily:"inherit", fontWeight:700, flexShrink:0 }}>
             ⎋
           </button>
-        </div>
           {/* ── NEW PROJECT BUTTON ── */}
           <button onClick={() => setShowNewProject(true)} style={{
             display: "flex", alignItems: "center", gap: 6,
