@@ -602,6 +602,7 @@ function ProjectDetailsModal({ proj, people, onClose, onSave, onArchive, onDelet
     notes:          proj.notes || "",
   });
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
+  const [fromTemplate, setFromTemplate] = useState(null); // selected deliverable template
   const toggleMember = (id) => set("teamMemberIds",
     form.teamMemberIds.includes(id)
       ? form.teamMemberIds.filter(x => x !== id)
@@ -6273,203 +6274,346 @@ function buildProjectFromTemplate(tpl, name, client, color, startDate) {
   return { id: "proj_" + Date.now(), name, client, color, deliverables };
 }
 
-function TemplatesModal({ onClose, onAdd, existingColors, savedTemplates, onSaveTemplate }) {
-  const defaultColor = PROJECT_COLORS.find(c => !existingColors.includes(c)) || PROJECT_COLORS[0];
-  const [tab, setTab] = useState("use");
-  const [selected, setSelected] = useState(null);
-  const [name, setName] = useState("");
-  const [client, setClient] = useState("");
-  const [color, setColor] = useState(defaultColor);
-  const [startDate, setStartDate] = useState("2026-05-20");
-  const [error, setError] = useState("");
-  const [tplName, setTplName] = useState("");
-  const [tplIcon, setTplIcon] = useState("📋");
-  const [tplDeliverables, setTplDeliverables] = useState([{ title: "", subtasks: [""] }]);
+// ═══════════════════════════════════════════════════════════════════════════════
+// DELIVERABLE TEMPLATE SYSTEM
+// ═══════════════════════════════════════════════════════════════════════════════
 
-  const labelStyle  = { fontSize: 10, fontWeight: 700, color: "#6b7280", letterSpacing: "0.07em", textTransform: "uppercase", marginBottom: 5, display: "block" };
-  const selectStyle = { width: "100%", background: "#f7f8fa", border: "1px solid rgba(0,0,0,0.08)", borderRadius: 6, color: "#111827", padding: "7px 10px", fontFamily: "inherit", fontSize: 12, boxSizing: "border-box" };
+// ── Apply a deliverable template to a project ─────────────────────────────────
+function applyDeliverableTemplate(tpl, projectId, startDateStr) {
+  const taskIdMap = {}; // templateTaskId → newTaskId
+  const today = startDateStr || new Date().toISOString().slice(0, 10);
 
-  const allTemplates = [...BUILT_IN_TEMPLATES, ...(savedTemplates || [])];
-
-  const handleCreate = () => {
-    if (!selected) { setError("Choose a template."); return; }
-    if (!name.trim()) { setError("Project name required."); return; }
-    const proj = buildProjectFromTemplate(selected, name.trim(), client.trim(), color, startDate);
-    onAdd(proj); onClose();
-  };
-
-  const addDeliverable = () => setTplDeliverables(d => [...d, { title: "", subtasks: [""] }]);
-  const removeDeliverable = (i) => setTplDeliverables(d => d.filter((_, idx) => idx !== i));
-  const updateDelTitle = (i, v) => setTplDeliverables(d => d.map((x, idx) => idx !== i ? x : { ...x, title: v }));
-  const addSubtask = (i) => setTplDeliverables(d => d.map((x, idx) => idx !== i ? x : { ...x, subtasks: [...x.subtasks, ""] }));
-  const removeSubtask = (di, si) => setTplDeliverables(d => d.map((x, idx) => idx !== di ? x : { ...x, subtasks: x.subtasks.filter((_, si2) => si2 !== si) }));
-  const updateSubtask = (di, si, v) => setTplDeliverables(d => d.map((x, idx) => idx !== di ? x : { ...x, subtasks: x.subtasks.map((s, si2) => si2 !== si ? s : v) }));
-
-  const handleSaveTemplate = () => {
-    if (!tplName.trim()) { setError("Template name required."); return; }
-    const tpl = {
-      id: "tpl_custom_" + Date.now(), name: tplName.trim(), icon: tplIcon,
-      deliverables: tplDeliverables.filter(d => d.title.trim()).map(d => ({
-        title: d.title.trim(), subtasks: d.subtasks.filter(s => s.trim()),
-      })),
-    };
-    onSaveTemplate(tpl);
-    setTplName(""); setTplIcon("📋"); setTplDeliverables([{ title: "", subtasks: [""] }]);
-    setError(""); setTab("use");
-  };
-
-  const tabSty = (t) => ({
-    flex: 1, padding: "10px 0", textAlign: "center", fontSize: 11, fontWeight: 700,
-    letterSpacing: "0.06em", cursor: "pointer", userSelect: "none",
-    borderBottom: tab === t ? "2px solid #a78bfa" : "2px solid transparent",
-    color: tab === t ? "#a78bfa" : "#6b7280", transition: "all 0.12s",
+  // Pre-generate all new task IDs so we can remap deps
+  (tpl.tasks || []).forEach(t => {
+    taskIdMap[t.id] = "s_" + Date.now() + "_" + Math.random().toString(36).slice(2, 6) + "_" + t.id.slice(-4);
   });
 
-  return (
-    <Overlay onClose={onClose}>
-      <ModalShell title="Templates" onClose={onClose} accentColor="#a78bfa" width={600}>
-        <div style={{ display: "flex", borderBottom: "1px solid rgba(0,0,0,0.07)" }}>
-          <div style={tabSty("use")} onClick={() => setTab("use")}>USE TEMPLATE</div>
-          <div style={tabSty("create")} onClick={() => setTab("create")}>CREATE TEMPLATE</div>
-        </div>
+  let cursor = today;
+  const tasks = (tpl.tasks || []).map((t, idx) => {
+    const dur = t.duration || 2;
+    const end = addWorkingDays(cursor, dur - 1);
+    const newId = taskIdMap[t.id];
+    const remappedDeps = (t.deps || []).map(d => taskIdMap[d] || d).filter(Boolean);
+    const task = {
+      id: newId,
+      title: t.title || "Task",
+      status: "Not Started",
+      priority: "Medium",
+      effort: t.effort || "M",
+      customHours: t.customHours || null,
+      department: t.department || "",
+      assignees: [],
+      start: cursor,
+      end,
+      notes: t.notes || "",
+      dependencies: remappedDeps,
+      progress: 0,
+    };
+    cursor = addWorkingDays(end, 1);
+    return task;
+  });
 
-        {tab === "use" && (
-          <div style={{ padding: 20, display: "flex", flexDirection: "column", gap: 16 }}>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, maxHeight: 300, overflowY: "auto" }}>
-              {allTemplates.map(tpl => (
-                <div key={tpl.id} onClick={() => { setSelected(tpl); if (!name) setName(tpl.name); }} style={{
-                  padding: "12px 14px", borderRadius: 8, cursor: "pointer",
-                  border: `2px solid ${selected?.id === tpl.id ? "#a78bfa" : "rgba(0,0,0,0.08)"}`,
-                  background: selected?.id === tpl.id ? "rgba(167,139,250,0.08)" : "#f7f8fa", transition: "all 0.12s",
-                }}>
-                  <div style={{ fontSize: 20, marginBottom: 4 }}>{tpl.icon || "📋"}</div>
-                  <div style={{ fontSize: 13, fontWeight: 700, color: "#1f2937" }}>{tpl.name}</div>
-                  <div style={{ fontSize: 10, color: "#6b7280", marginTop: 2 }}>{(tpl.deliverables||[]).length} deliverables</div>
-                  {selected?.id === tpl.id && (
-                    <div style={{ marginTop: 6 }}>
-                      {(tpl.deliverables||[]).map(d => (
-                        <div key={d.title} style={{ fontSize: 10, color: "#374151", marginTop: 2 }}>
-                          <span style={{ color: "#a78bfa" }}>▸</span> {d.title}
-                          <span style={{ color: "#9ca3af" }}> ({(d.subtasks||[]).length} tasks)</span>
-                        </div>
-                      ))}
+  const delDur = tpl.duration || Math.max(tasks.length * 3, 7);
+  const delEnd = addWorkingDays(today, delDur - 1);
+
+  return {
+    id: "d_" + Date.now() + "_" + Math.random().toString(36).slice(2, 8),
+    title: tpl.title || tpl.name || "Deliverable",
+    status: tpl.status || "Not Started",
+    priority: tpl.priority || "Medium",
+    department: tpl.department || "",
+    assignees: [],
+    start: today,
+    end: delEnd,
+    notes: tpl.notes || "",
+    dependencies: [],
+    subtasks: tasks,
+    progress: 0,
+    fromTemplateId: tpl.id,
+  };
+}
+
+// ── Deliverable Template Manager ─────────────────────────────────────────────
+function DeliverableTemplateManager({ onClose, deliverableTemplates, onSave, onDelete, onDuplicate }) {
+  const [view, setView] = useState("list"); // "list" | "edit"
+  const [editing, setEditing] = useState(null); // template object being edited
+
+  const inputStyle  = { width:"100%", fontSize:12, border:"1px solid rgba(0,0,0,0.12)", borderRadius:7, padding:"7px 10px", fontFamily:"inherit", background:"#fff", outline:"none", boxSizing:"border-box" };
+  const labelStyle  = { fontSize:10, fontWeight:700, color:"#6b7280", letterSpacing:"0.07em", textTransform:"uppercase", marginBottom:4, display:"block" };
+  const selectStyle = { width:"100%", background:"#f7f8fa", border:"1px solid rgba(0,0,0,0.08)", borderRadius:6, color:"#111827", padding:"7px 10px", fontFamily:"inherit", fontSize:12, boxSizing:"border-box" };
+
+  const startNew = () => {
+    setEditing({
+      id: "dt_" + Date.now(),
+      name: "",
+      title: "",
+      department: "",
+      notes: "",
+      duration: 5,
+      status: "Not Started",
+      priority: "Medium",
+      tasks: [],
+    });
+    setView("edit");
+  };
+
+  const handleEdit = (tpl) => {
+    setEditing(JSON.parse(JSON.stringify(tpl))); // deep clone
+    setView("edit");
+  };
+
+  const handleSave = () => {
+    if (!editing) return;
+    onSave(editing);
+    setView("list");
+    setEditing(null);
+  };
+
+  const addTask = () => {
+    const newId = "tt_" + Date.now() + "_" + Math.random().toString(36).slice(2, 5);
+    setEditing(e => ({ ...e, tasks: [...(e.tasks || []), {
+      id: newId, title: "", department: "", effort: "M", customHours: null,
+      duration: 1, notes: "", deps: [],
+    }] }));
+  };
+
+  const updateTask = (idx, field, val) => {
+    setEditing(e => ({ ...e, tasks: e.tasks.map((t, i) => i !== idx ? t : { ...t, [field]: val }) }));
+  };
+
+  const removeTask = (idx) => {
+    const removed = editing.tasks[idx].id;
+    setEditing(e => ({
+      ...e,
+      tasks: e.tasks
+        .filter((_, i) => i !== idx)
+        .map(t => ({ ...t, deps: (t.deps || []).filter(d => d !== removed) })),
+    }));
+  };
+
+  const moveTask = (idx, dir) => {
+    setEditing(e => {
+      const arr = [...e.tasks];
+      const target = idx + dir;
+      if (target < 0 || target >= arr.length) return e;
+      [arr[idx], arr[target]] = [arr[target], arr[idx]];
+      return { ...e, tasks: arr };
+    });
+  };
+
+  const toggleDep = (taskIdx, depId) => {
+    setEditing(e => ({
+      ...e,
+      tasks: e.tasks.map((t, i) => {
+        if (i !== taskIdx) return t;
+        const deps = t.deps || [];
+        return { ...t, deps: deps.includes(depId) ? deps.filter(d => d !== depId) : [...deps, depId] };
+      }),
+    }));
+  };
+
+  // ── List view ───────────────────────────────────────────────────────────────
+  if (view === "list") return (
+    <Overlay onClose={onClose}>
+      <ModalShell title="Deliverable Templates" onClose={onClose} accentColor="#6366f1" width={600}>
+        <div style={{ padding:"16px 22px 0" }}>
+          <button onClick={startNew} style={{ width:"100%", padding:"10px 0", borderRadius:8, background:"#6366f1", border:"none", color:"#fff", fontSize:12, fontWeight:700, cursor:"pointer", fontFamily:"inherit", marginBottom:16 }}>
+            + New Template
+          </button>
+          {deliverableTemplates.length === 0 && (
+            <div style={{ textAlign:"center", color:"#9ca3af", fontSize:12, padding:"32px 0" }}>
+              No templates yet. Create one to get started.
+            </div>
+          )}
+          <div style={{ display:"flex", flexDirection:"column", gap:8, maxHeight:420, overflowY:"auto" }}>
+            {deliverableTemplates.map(tpl => (
+              <div key={tpl.id} style={{ display:"flex", alignItems:"center", gap:10, padding:"12px 14px", background:"#f8fafc", borderRadius:8, border:"1px solid rgba(0,0,0,0.07)" }}>
+                <div style={{ flex:1, minWidth:0 }}>
+                  <div style={{ fontSize:13, fontWeight:700, color:"#1f2937" }}>{tpl.name || "Unnamed"}</div>
+                  <div style={{ fontSize:11, color:"#6b7280", marginTop:2 }}>
+                    {tpl.title && <span>{tpl.title} · </span>}
+                    {(tpl.tasks||[]).length} task{(tpl.tasks||[]).length !== 1 ? "s" : ""}
+                    {tpl.department && <span> · {tpl.department}</span>}
+                  </div>
+                </div>
+                <button onClick={() => handleEdit(tpl)} style={{ fontSize:11, fontWeight:600, color:"#6366f1", background:"rgba(99,102,241,0.08)", border:"none", borderRadius:6, padding:"5px 10px", cursor:"pointer", fontFamily:"inherit" }}>Edit</button>
+                <button onClick={() => onDuplicate(tpl)} style={{ fontSize:11, fontWeight:600, color:"#6b7280", background:"rgba(0,0,0,0.05)", border:"none", borderRadius:6, padding:"5px 10px", cursor:"pointer", fontFamily:"inherit" }}>Copy</button>
+                <button onClick={() => { if (window.confirm(`Delete "${tpl.name}"? Existing deliverables are unaffected.`)) onDelete(tpl.id); }}
+                  style={{ fontSize:11, fontWeight:600, color:"#ef4444", background:"rgba(239,68,68,0.08)", border:"none", borderRadius:6, padding:"5px 10px", cursor:"pointer", fontFamily:"inherit" }}>Delete</button>
+              </div>
+            ))}
+          </div>
+        </div>
+        <div style={{ borderTop:"1px solid rgba(0,0,0,0.07)", padding:"14px 20px", display:"flex", justifyContent:"flex-end" }}>
+          <button onClick={onClose} style={cancelBtnStyle}>Close</button>
+        </div>
+      </ModalShell>
+    </Overlay>
+  );
+
+  // ── Edit view ───────────────────────────────────────────────────────────────
+  if (!editing) return null;
+  const setF = (k, v) => setEditing(e => ({ ...e, [k]: v }));
+
+  return (
+    <Overlay onClose={() => { setView("list"); setEditing(null); }}>
+      <ModalShell title={editing.id && deliverableTemplates.find(t=>t.id===editing.id) ? "Edit Template" : "New Template"}
+        onClose={() => { setView("list"); setEditing(null); }} accentColor="#6366f1" width={680}>
+        <div style={{ padding:"18px 22px", display:"flex", flexDirection:"column", gap:14, maxHeight:"72vh", overflowY:"auto" }}>
+
+          {/* Template meta */}
+          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12 }}>
+            <div>
+              <label style={labelStyle}>Template Name *</label>
+              <input value={editing.name} onChange={e => setF("name", e.target.value)}
+                placeholder="e.g. Email Campaign" style={inputStyle} autoFocus />
+            </div>
+            <div>
+              <label style={labelStyle}>Default Deliverable Title</label>
+              <input value={editing.title || ""} onChange={e => setF("title", e.target.value)}
+                placeholder="Leave blank to use template name" style={inputStyle} />
+            </div>
+          </div>
+
+          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr 1fr", gap:12 }}>
+            <div>
+              <label style={labelStyle}>Department</label>
+              <select value={editing.department || ""} onChange={e => setF("department", e.target.value)} style={selectStyle}>
+                <option value="">— None —</option>
+                {DEPARTMENTS.map(d => <option key={d}>{d}</option>)}
+              </select>
+            </div>
+            <div>
+              <label style={labelStyle}>Default Duration (days)</label>
+              <input type="number" min="1" max="365" value={editing.duration || 5}
+                onChange={e => setF("duration", parseInt(e.target.value)||5)} style={inputStyle} />
+            </div>
+            <div>
+              <label style={labelStyle}>Default Status</label>
+              <select value={editing.status || "Not Started"} onChange={e => setF("status", e.target.value)} style={selectStyle}>
+                {STATUSES.map(s => <option key={s}>{s}</option>)}
+              </select>
+            </div>
+            <div>
+              <label style={labelStyle}>Default Priority</label>
+              <select value={editing.priority || "Medium"} onChange={e => setF("priority", e.target.value)} style={selectStyle}>
+                {PRIORITIES.map(p => <option key={p}>{p}</option>)}
+              </select>
+            </div>
+          </div>
+
+          <div>
+            <label style={labelStyle}>Deliverable Notes / Process Guidance</label>
+            <textarea value={editing.notes || ""} onChange={e => setF("notes", e.target.value)}
+              placeholder="e.g. This deliverable requires editorial approval before design starts."
+              style={{ ...inputStyle, minHeight:60, resize:"vertical" }} />
+          </div>
+
+          {/* Tasks */}
+          <div>
+            <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:8 }}>
+              <span style={{ fontSize:11, fontWeight:800, color:"#1f2937", textTransform:"uppercase", letterSpacing:"0.06em" }}>
+                Tasks ({(editing.tasks||[]).length})
+              </span>
+              <button onClick={addTask} style={{ fontSize:11, fontWeight:700, color:"#6366f1", background:"rgba(99,102,241,0.08)", border:"none", borderRadius:6, padding:"5px 12px", cursor:"pointer", fontFamily:"inherit" }}>
+                + Add Task
+              </button>
+            </div>
+
+            {(editing.tasks||[]).length === 0 && (
+              <div style={{ textAlign:"center", color:"#9ca3af", fontSize:11, padding:"16px 0", background:"rgba(0,0,0,0.02)", borderRadius:7 }}>
+                No tasks yet. Add tasks to define the workflow for this deliverable.
+              </div>
+            )}
+
+            <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
+              {(editing.tasks||[]).map((task, idx) => (
+                <div key={task.id} style={{ background:"#f8fafc", border:"1px solid rgba(0,0,0,0.07)", borderRadius:8, padding:"12px 14px" }}>
+                  <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:10 }}>
+                    <div style={{ display:"flex", flexDirection:"column", gap:2, flexShrink:0 }}>
+                      <button onClick={() => moveTask(idx, -1)} disabled={idx===0}
+                        style={{ background:"none", border:"none", color:idx===0?"#d1d5db":"#6b7280", cursor:idx===0?"default":"pointer", fontSize:10, padding:"1px 4px", lineHeight:1 }}>▲</button>
+                      <button onClick={() => moveTask(idx, 1)} disabled={idx===(editing.tasks.length-1)}
+                        style={{ background:"none", border:"none", color:idx===(editing.tasks.length-1)?"#d1d5db":"#6b7280", cursor:idx===(editing.tasks.length-1)?"default":"pointer", fontSize:10, padding:"1px 4px", lineHeight:1 }}>▼</button>
+                    </div>
+                    <span style={{ fontSize:10, fontWeight:700, color:"#9ca3af", minWidth:18 }}>{idx+1}.</span>
+                    <input value={task.title} onChange={e => updateTask(idx, "title", e.target.value)}
+                      placeholder="Task title"
+                      style={{ ...inputStyle, flex:1 }} />
+                    <button onClick={() => removeTask(idx)}
+                      style={{ background:"none", border:"none", color:"#fca5a5", cursor:"pointer", fontSize:16, flexShrink:0 }}>×</button>
+                  </div>
+
+                  <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr 70px", gap:8, marginBottom:8 }}>
+                    <div>
+                      <label style={labelStyle}>Department</label>
+                      <select value={task.department||""} onChange={e => updateTask(idx,"department",e.target.value)} style={selectStyle}>
+                        <option value="">— None —</option>
+                        {DEPARTMENTS.map(d=><option key={d}>{d}</option>)}
+                      </select>
+                    </div>
+                    <div>
+                      <label style={labelStyle}>Effort</label>
+                      <select value={task.effort||"M"} onChange={e => updateTask(idx,"effort",e.target.value)} style={selectStyle}>
+                        {EFFORT_OPTS.map(e=><option key={e} value={e}>{EFFORT_LABEL[e]}</option>)}
+                        <option value="C">Custom</option>
+                      </select>
+                    </div>
+                    {task.effort === "C" ? (
+                      <div>
+                        <label style={labelStyle}>Custom Hours</label>
+                        <input type="number" min="0.5" step="0.5" value={task.customHours||1}
+                          onChange={e=>updateTask(idx,"customHours",parseFloat(e.target.value)||1)} style={inputStyle} />
+                      </div>
+                    ) : <div />}
+                    <div>
+                      <label style={labelStyle}>Days</label>
+                      <input type="number" min="1" max="90" value={task.duration||1}
+                        onChange={e=>updateTask(idx,"duration",parseInt(e.target.value)||1)} style={inputStyle} />
+                    </div>
+                  </div>
+
+                  {/* Notes */}
+                  <div style={{ marginBottom:8 }}>
+                    <label style={labelStyle}>Task Notes</label>
+                    <input value={task.notes||""} onChange={e=>updateTask(idx,"notes",e.target.value)}
+                      placeholder="Instructions or reminders for this task..."
+                      style={inputStyle} />
+                  </div>
+
+                  {/* Dependencies */}
+                  {idx > 0 && (
+                    <div>
+                      <label style={labelStyle}>Depends on</label>
+                      <div style={{ display:"flex", gap:6, flexWrap:"wrap" }}>
+                        {(editing.tasks||[]).slice(0, idx).map((prevTask, prevIdx) => {
+                          const isSet = (task.deps||[]).includes(prevTask.id);
+                          return (
+                            <button key={prevTask.id} onClick={() => toggleDep(idx, prevTask.id)}
+                              style={{ fontSize:10, fontWeight:600, borderRadius:5, padding:"3px 9px", cursor:"pointer", fontFamily:"inherit", border:`1.5px solid ${isSet?"#6366f1":"rgba(0,0,0,0.12)"}`, background:isSet?"rgba(99,102,241,0.1)":"transparent", color:isSet?"#6366f1":"#6b7280" }}>
+                              {prevIdx+1}. {prevTask.title||"Untitled"}
+                            </button>
+                          );
+                        })}
+                      </div>
                     </div>
                   )}
                 </div>
               ))}
             </div>
-            {selected && (
-              <div style={{ display: "flex", flexDirection: "column", gap: 12, borderTop: "1px solid rgba(0,0,0,0.07)", paddingTop: 14 }}>
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-                  <div><div style={labelStyle}>Project Name</div><input value={name} onChange={e => setName(e.target.value)} style={{ ...selectStyle, width: "100%" }} /></div>
-                  <div><div style={labelStyle}>Client</div><input value={client} onChange={e => setClient(e.target.value)} style={{ ...selectStyle, width: "100%", placeholder: "e.g. Acme Corp" }} /></div>
-                </div>
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-                  <div><div style={labelStyle}>Start Date</div><input type="date" value={startDate} onChange={e => setStartDate(e.target.value)} style={{ ...selectStyle, width: "100%" }} /></div>
-                  <div>
-                    <div style={labelStyle}>Color</div>
-                    <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-                      {PROJECT_COLORS.map(c => <div key={c} onClick={() => setColor(c)} style={{ width: 22, height: 22, borderRadius: "50%", background: c, cursor: "pointer", border: color === c ? "3px solid #fff" : "3px solid transparent", boxShadow: color === c ? `0 0 0 2px ${c}` : "none", flexShrink: 0 }} />)}
-                    </div>
-                  </div>
-                </div>
-              </div>
-            )}
-            {error && <div style={{ fontSize: 11, color: "#f87171" }}>{error}</div>}
-            <ModalFooter onClose={onClose} onSave={handleCreate} saveLabel="Create Project" color="#a78bfa" />
           </div>
-        )}
+        </div>
 
-        {tab === "create" && (
-          <div style={{ padding: 20, display: "flex", flexDirection: "column", gap: 14 }}>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 12, alignItems: "end" }}>
-              <div>
-                <div style={labelStyle}>Template Name</div>
-                <input value={tplName} onChange={e => setTplName(e.target.value)} placeholder="e.g. Social Campaign"
-                  style={{ ...selectStyle, width: "100%", fontSize: 14 }} />
-              </div>
-              <div>
-                <div style={labelStyle}>Icon</div>
-                <select value={tplIcon} onChange={e => setTplIcon(e.target.value)} style={{ ...selectStyle, fontSize: 16 }}>
-                  {["📋","✉","▶","◧","🚀","📊","🎨","📝","📱","🌐","📣","🎯"].map(ic => <option key={ic} value={ic}>{ic}</option>)}
-                </select>
-              </div>
-            </div>
-            <div style={{ display: "flex", flexDirection: "column", gap: 10, maxHeight: 340, overflowY: "auto" }}>
-              {tplDeliverables.map((del, di) => (
-                <div key={di} style={{ background: "#f7f8fa", border: "1px solid rgba(0,0,0,0.08)", borderRadius: 8, padding: 12 }}>
-                  <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 8 }}>
-                    <div style={{ width: 6, height: 6, borderRadius: "50%", background: "#a78bfa", flexShrink: 0 }} />
-                    <input value={del.title} onChange={e => updateDelTitle(di, e.target.value)}
-                      placeholder={`Deliverable ${di + 1} (e.g. Email 1)`}
-                      style={{ ...selectStyle, flex: 1, fontWeight: 700 }} />
-                    <button onClick={() => removeDeliverable(di)} style={{ background: "none", border: "none", color: "#f87171", cursor: "pointer", fontSize: 16, lineHeight: 1 }}>×</button>
-                  </div>
-                  <div style={{ display: "flex", flexDirection: "column", gap: 5, paddingLeft: 14 }}>
-                    {del.subtasks.map((sub, si) => (
-                      <div key={si} style={{ display: "flex", gap: 6, alignItems: "center" }}>
-                        <div style={{ width: 4, height: 4, borderRadius: "50%", background: "#9ca3af", flexShrink: 0 }} />
-                        <input value={sub} onChange={e => updateSubtask(di, si, e.target.value)}
-                          placeholder={`Step ${si + 1} (e.g. Copy Development)`}
-                          style={{ ...selectStyle, flex: 1, fontSize: 11 }} />
-                        <button onClick={() => removeSubtask(di, si)} style={{ background: "none", border: "none", color: "#9ca3af", cursor: "pointer", fontSize: 14, lineHeight: 1 }}>×</button>
-                      </div>
-                    ))}
-                    <button onClick={() => addSubtask(di)} style={{
-                      background: "none", border: "1px dashed rgba(0,0,0,0.15)", borderRadius: 4, color: "#6b7280",
-                      padding: "3px 10px", cursor: "pointer", fontSize: 10, fontFamily: "inherit", marginTop: 2, textAlign: "left",
-                    }}>+ Add step</button>
-                  </div>
-                </div>
-              ))}
-            </div>
-            <button onClick={addDeliverable} style={{
-              background: "rgba(167,139,250,0.08)", border: "1px dashed rgba(167,139,250,0.4)",
-              borderRadius: 7, color: "#a78bfa", padding: "8px", cursor: "pointer",
-              fontSize: 11, fontFamily: "inherit", fontWeight: 700,
-            }}>+ Add Deliverable</button>
-            {error && <div style={{ fontSize: 11, color: "#f87171" }}>{error}</div>}
-            <ModalFooter onClose={onClose} onSave={handleSaveTemplate} saveLabel="Save Template" color="#a78bfa" />
-          </div>
-        )}
+        <div style={{ borderTop:"1px solid rgba(0,0,0,0.07)", padding:"14px 20px", display:"flex", gap:8, justifyContent:"flex-end" }}>
+          <button onClick={() => { setView("list"); setEditing(null); }} style={cancelBtnStyle}>Cancel</button>
+          <button onClick={handleSave}
+            style={{ padding:"8px 22px", borderRadius:7, background:"#6366f1", border:"none", color:"#fff", fontSize:12, fontWeight:700, cursor:"pointer", fontFamily:"inherit" }}>
+            Save Template
+          </button>
+        </div>
       </ModalShell>
     </Overlay>
   );
-}
-
-// ─── EXCEL EXPORT ─────────────────────────────────────────────────────────────
-function exportToExcel(projects) {
-  if (!window.XLSX) { alert("Excel library not loaded yet."); return; }
-  const XLSX = window.XLSX;
-  const wb = XLSX.utils.book_new();
-
-  projects.forEach(proj => {
-    const inProgress = proj.deliverables.filter(d => d.status !== "Done");
-    if (!inProgress.length) return;
-
-    const rows = [["#","Task","Status","Department","Start","End","Duration (days)","Assignees","Dependencies","Progress %"]];
-    let rowNum = 1;
-    inProgress.forEach(del => {
-      rows.push([
-        rowNum++, del.title, del.status, del.department || "",
-        del.start, del.end, durDays(del.start, del.end),
-        del.assignees.join(", "), del.depsText || "", del.progress,
-      ]);
-      del.subtasks.filter(s => s.status !== "Done").forEach(sub => {
-        rows.push([
-          rowNum++, "  " + sub.title, sub.status, sub.department || "",
-          sub.start, sub.end, durDays(sub.start, sub.end),
-          sub.assignees.join(", "), sub.depsText || "", sub.progress,
-        ]);
-      });
-    });
-
-    const ws = XLSX.utils.aoa_to_sheet(rows);
-    ws["!cols"] = [4,25,14,14,12,12,10,20,14,10].map(w => ({ wch: w }));
-    XLSX.utils.book_append_sheet(wb, ws, proj.name.slice(0,31));
-  });
-
-  XLSX.writeFile(wb, `project-status-${new Date().toISOString().slice(0,10)}.xlsx`);
 }
 
 
@@ -6540,7 +6684,7 @@ function NewProjectModal({ onClose, onAdd, existingColors }) {
 }
 
 // --- NEW DELIVERABLE MODAL ────────────────────────────────────────────────────
-function NewDeliverableModal({ project, onClose, onAdd, allPeople, savedTemplates = [] }) {
+function NewDeliverableModal({ project, onClose, onAdd, allPeople, savedTemplates = [], deliverableTemplates = [] }) {
   const today = "2026-05-20";
   const weekOut = "2026-05-27";
   const [form, setForm] = useState({
@@ -6552,27 +6696,17 @@ function NewDeliverableModal({ project, onClose, onAdd, allPeople, savedTemplate
   const [error, setError] = useState("");
   const [keepOpen, setKeepOpen] = useState(false);
 
-  const allTemplates = [...(typeof BUILT_IN_TEMPLATES !== "undefined" ? BUILT_IN_TEMPLATES : []), ...(savedTemplates || [])];
-  const subtaskTemplates = allTemplates.flatMap(t =>
-    (t.deliverables || []).flatMap(d => (d.subtasks || []).length > 0 ? [{ label: `${t.name} — ${d.title}`, subtasks: d.subtasks }] : [])
-  );
-
-  const applyTemplate = (tpl) => {
-    setForm(f => ({ ...f, title: tpl.label.split(" — ")[1] || f.title }));
-    setSelectedSubtaskTemplate(tpl);
-  };
-  const [selectedSubtaskTemplate, setSelectedSubtaskTemplate] = useState(null);
-
   const handleAdd = () => {
     if (!form.title.trim()) { setError("Title is required."); return; }
     const id = "d_" + Date.now();
-    const subtasks = selectedSubtaskTemplate
-      ? selectedSubtaskTemplate.subtasks.map((s, i) => ({ ...s, id: "s_" + Date.now() + i }))
-      : [];
-    onAdd(project.id, { ...form, id, title: form.title.trim(), subtasks });
+    const tpl = deliverableTemplates.find(t => t.id === fromTemplate);
+    const today2 = form.start || new Date().toISOString().slice(0, 10);
+    const generated = tpl ? applyDeliverableTemplate(tpl, null, today2) : null;
+    const subtasks = generated ? generated.subtasks : [];
+    onAdd(project.id, { ...form, id, title: form.title.trim(), notes: form.notes || (tpl?.notes || ""), subtasks });
     if (keepOpen) {
       setForm({ title: "", status: "Not Started", priority: "Medium", assignees: [], start: today, end: weekOut, progress: 0, dependencies: [], department: "" });
-      setSelectedSubtaskTemplate(null);
+      setFromTemplate(null);
       setError("");
     } else {
       onClose();
@@ -6585,31 +6719,26 @@ function NewDeliverableModal({ project, onClose, onAdd, allPeople, savedTemplate
     <Overlay onClose={onClose}>
       <ModalShell title={<span>New Deliverable <span style={{ color: project.color, fontWeight: 400 }}>— {project.name}</span></span>} onClose={onClose} accentColor={project.color} width={540}>
         <div style={{ padding: 22, display: "flex", flexDirection: "column", gap: 16 }}>
-          {/* Template picker */}
-          {subtaskTemplates.length > 0 && (
+          {/* Deliverable Template picker */}
+          {deliverableTemplates.length > 0 && (
             <div>
-              <div style={labelStyle}>Start from template (optional)</div>
-              <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-                <div onClick={() => setSelectedSubtaskTemplate(null)} style={{
-                  padding: "4px 10px", borderRadius: 5, cursor: "pointer", fontSize: 11, fontWeight: 600,
-                  border: `1px solid ${!selectedSubtaskTemplate ? project.color : "rgba(0,0,0,0.1)"}`,
-                  background: !selectedSubtaskTemplate ? project.color + "15" : "transparent",
-                  color: !selectedSubtaskTemplate ? project.color : "#6b7280",
-                }}>Blank</div>
-                {subtaskTemplates.slice(0, 6).map((tpl, i) => (
-                  <div key={i} onClick={() => applyTemplate(tpl)} style={{
-                    padding: "4px 10px", borderRadius: 5, cursor: "pointer", fontSize: 11, fontWeight: 600,
-                    border: `1px solid ${selectedSubtaskTemplate === tpl ? project.color : "rgba(0,0,0,0.1)"}`,
-                    background: selectedSubtaskTemplate === tpl ? project.color + "15" : "transparent",
-                    color: selectedSubtaskTemplate === tpl ? project.color : "#6b7280",
-                  }}>{tpl.label.split(" — ")[1] || tpl.label}</div>
+              <div style={{ fontSize:10, fontWeight:700, color:"#6b7280", letterSpacing:"0.07em", textTransform:"uppercase", marginBottom:6 }}>Start from Template (optional)</div>
+              <div style={{ display:"flex", gap:6, flexWrap:"wrap", marginBottom:4 }}>
+                {deliverableTemplates.map(tpl => (
+                  <button key={tpl.id} onClick={() => {
+                    const isSel = fromTemplate === tpl.id;
+                    setFromTemplate(isSel ? null : tpl.id);
+                    if (!isSel) { set("title", tpl.title || tpl.name); if (tpl.department) set("department", tpl.department); }
+                  }}
+                    style={{ fontSize:11, fontWeight:600, borderRadius:6, padding:"5px 10px", cursor:"pointer", fontFamily:"inherit", border:`1.5px solid ${fromTemplate===tpl.id?"#6366f1":"rgba(0,0,0,0.12)"}`, background:fromTemplate===tpl.id?"rgba(99,102,241,0.1)":"transparent", color:fromTemplate===tpl.id?"#6366f1":"#6b7280" }}>
+                    {tpl.name}{tpl.tasks?.length > 0 ? ` (${tpl.tasks.length}t)` : ""}
+                  </button>
                 ))}
               </div>
-              {selectedSubtaskTemplate && (
-                <div style={{ marginTop: 6, fontSize: 10, color: "#6b7280" }}>
-                  Includes {selectedSubtaskTemplate.subtasks.length} subtasks: {selectedSubtaskTemplate.subtasks.map(s => s.title).join(", ")}
-                </div>
-              )}
+              {fromTemplate && (() => {
+                const tpl = deliverableTemplates.find(t => t.id === fromTemplate);
+                return tpl ? <div style={{ fontSize:10, color:"#6366f1", background:"rgba(99,102,241,0.06)", borderRadius:5, padding:"5px 10px" }}>Will create {tpl.tasks?.length||0} task{tpl.tasks?.length!==1?"s":""}{tpl.notes ? " · "+tpl.notes.slice(0,60) : ""}</div> : null;
+              })()}
             </div>
           )}
           <div>
@@ -6989,6 +7118,7 @@ export default function App() {
   const [holidays, setHolidays] = useState([]);
   const [statusNotes, setStatusNotes] = useState({});
   const [savedTemplates, setSavedTemplates] = useState([]);
+  const [deliverableTemplates, setDeliverableTemplates] = useState([]);
   const [loading, setLoading] = useState(true);
   const [dbError, setDbError] = useState(null);
   const seeded = useRef(false);
@@ -7069,6 +7199,33 @@ export default function App() {
     console.log("[PT] load effect — SB_READY:", SB_READY, "authUUID:", authUUID, "access_token:", authSession?.access_token?.slice(0,20));
     console.log("[PT] authSession structure:", authSession ? Object.keys(authSession) : "NULL", "user:", authSession?.user);
     if (!SB_READY || !authUUID) return;
+    // Load deliverable templates
+    sb.select("deliverable_templates", "order=created_at.asc")
+      .then(r => {
+        if (!r?.error && r?.data) {
+          // Load tasks for each template
+          sb.select("deliverable_template_tasks", "order=template_id.asc,sort_order.asc")
+            .then(tr => {
+              const tasksByTemplate = {};
+              (tr?.data || []).forEach(t => {
+                if (!tasksByTemplate[t.template_id]) tasksByTemplate[t.template_id] = [];
+                tasksByTemplate[t.template_id].push({
+                  id: t.id, title: t.title || "", department: t.department || "",
+                  effort: t.effort || "M", customHours: t.custom_effort_hours || null,
+                  duration: t.default_duration || 1, notes: t.notes || "",
+                  deps: t.dependency_template_task_ids || [],
+                });
+              });
+              setDeliverableTemplates(r.data.map(tpl => ({
+                id: tpl.id, name: tpl.name || "", title: tpl.title || "",
+                department: tpl.department || "", notes: tpl.notes || "",
+                duration: tpl.default_duration || 5, status: tpl.default_status || "Not Started",
+                priority: tpl.default_priority || "Medium",
+                tasks: tasksByTemplate[tpl.id] || [],
+              })));
+            }).catch(() => {});
+        }
+      }).catch(() => {});
     sb.select("personal_tasks", `person_id=eq.${authUUID}&order=created_at.asc`)
       .then(result => {
         console.log("[PT] load result:", JSON.stringify(result).slice(0,200));
@@ -7295,6 +7452,55 @@ export default function App() {
     setSavedTemplates(t => [...t, tpl]);
     sb.upsert("templates", { id: tpl.id, name: tpl.name, data: tpl });
     alert(`"${proj.name}" saved as a template!`);
+  };
+
+  const saveDeliverableTemplate = async (tpl) => {
+    // Upsert template record
+    const tplRow = { id: tpl.id, name: tpl.name, title: tpl.title || null,
+      department: tpl.department || null, notes: tpl.notes || null,
+      default_duration: tpl.duration || 5, default_status: tpl.status || "Not Started",
+      default_priority: tpl.priority || "Medium", updated_at: new Date().toISOString() };
+    setDeliverableTemplates(prev => {
+      const idx = prev.findIndex(t => t.id === tpl.id);
+      return idx >= 0 ? prev.map(t => t.id === tpl.id ? tpl : t) : [...prev, tpl];
+    });
+    if (SB_READY) {
+      await sb.upsert("deliverable_templates", tplRow);
+      // Delete all existing tasks for this template then re-insert
+      await sb.deleteWhere("deliverable_template_tasks", "template_id", tpl.id);
+      for (let i = 0; i < (tpl.tasks||[]).length; i++) {
+        const t = tpl.tasks[i];
+        await sb.upsert("deliverable_template_tasks", {
+          id: t.id, template_id: tpl.id, title: t.title, department: t.department || null,
+          effort: t.effort || "M", custom_effort_hours: t.customHours || null,
+          default_duration: t.duration || 1, notes: t.notes || null,
+          sort_order: i, dependency_template_task_ids: t.deps || [],
+          updated_at: new Date().toISOString(),
+        });
+      }
+    }
+  };
+
+  const deleteDeliverableTemplate = async (id) => {
+    setDeliverableTemplates(prev => prev.filter(t => t.id !== id));
+    if (SB_READY) {
+      await sb.deleteWhere("deliverable_template_tasks", "template_id", id);
+      await sb.delete("deliverable_templates", id);
+    }
+  };
+
+  const duplicateDeliverableTemplate = async (tpl) => {
+    const newId = "dt_" + Date.now();
+    const dup = {
+      ...JSON.parse(JSON.stringify(tpl)),
+      id: newId,
+      name: tpl.name + " (copy)",
+      tasks: (tpl.tasks || []).map(t => ({
+        ...t,
+        id: "tt_" + Date.now() + "_" + Math.random().toString(36).slice(2,5),
+      })),
+    };
+    await saveDeliverableTemplate(dup);
   };
 
   const dismissNotification = async (id) => {
@@ -7648,7 +7854,7 @@ export default function App() {
               }}>
                 {[
                   { icon: "◎", label: "Team Members",   color: "#38bdf8", action: () => { setShowTeamSettings(true); setShowSettingsMenu(false); } },
-                  { icon: "◧", label: "Templates",       color: "#a78bfa", action: () => { setShowTemplates(true); setShowSettingsMenu(false); } },
+                  { icon: "◧", label: "Templates",       color: "#a78bfa", action: () => { setShowTemplates(true); setShowSettingsMenu(false); } },  // deliverable templates
                   { icon: "↓", label: "Export to Excel", color: "#34d399", action: () => { exportToExcel(projects); setShowSettingsMenu(false); } },
                   { icon: "🗓", label: "Holidays",        color: "#fb923c", action: () => { setShowHolidays(true); setShowSettingsMenu(false); } },
                   { icon: "↑", label: "Import Excel",    color: "#34d399", action: () => { setShowImport(true); setShowSettingsMenu(false); } },
@@ -7906,12 +8112,12 @@ export default function App() {
           }} />
       )}
       {showTemplates && (
-        <TemplatesModal
-          existingColors={projects.map(p => p.color)}
-          savedTemplates={savedTemplates}
+        <DeliverableTemplateManager
+          deliverableTemplates={deliverableTemplates}
           onClose={() => setShowTemplates(false)}
-          onAdd={handleAddProject}
-          onSaveTemplate={(tpl) => setSavedTemplates(t => [...t, tpl])}
+          onSave={saveDeliverableTemplate}
+          onDelete={deleteDeliverableTemplate}
+          onDuplicate={duplicateDeliverableTemplate}
         />
       )}
       {projectMenu && (
