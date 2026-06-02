@@ -3619,7 +3619,86 @@ function DoneTasksDropdown({ tasks, onReopen, onDelete }) {
 }
 
 
-function MyHubView({ projects, people, holidays, pto = [], currentUserId, onSetCurrentUser, onEditItem, onMarkDone, savePto, deletePto, personalTasks = [], onSavePersonalTask, onDeletePersonalTask, currentRole = "member", authMemberId = "", authUUID = "", notifications = [], onDismissNotification, onOpenNotifTask, setToastNotif }) {
+// ── AssignTaskModal — admin assigns a task to a team member ──────────────────
+function AssignTaskModal({ people, onClose, onSave, editing = null }) {
+  const [form, setForm] = useState(editing || {
+    title: "", assignedTo: people[0]?.id || "", effort: "M", customHours: 1,
+    dueDate: "", notes: "", status: "Not Started",
+  });
+  const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
+  const [error, setError] = useState("");
+
+  const labelStyle  = { fontSize:10, fontWeight:700, color:"#6b7280", letterSpacing:"0.07em", textTransform:"uppercase", marginBottom:4, display:"block" };
+  const inputStyle  = { width:"100%", fontSize:12, border:"1px solid rgba(0,0,0,0.12)", borderRadius:7, padding:"7px 10px", fontFamily:"inherit", background:"#fff", outline:"none", boxSizing:"border-box" };
+  const selectStyle = { width:"100%", background:"#f7f8fa", border:"1px solid rgba(0,0,0,0.08)", borderRadius:6, color:"#111827", padding:"7px 10px", fontFamily:"inherit", fontSize:12, boxSizing:"border-box" };
+
+  return (
+    <Overlay onClose={onClose}>
+      <ModalShell title={editing ? "Edit Assigned Task" : "Assign Task"} onClose={onClose} accentColor={BRAND_TEAL} width={440}>
+        <div style={{ padding:"20px 22px", display:"flex", flexDirection:"column", gap:14 }}>
+          <div>
+            <label style={labelStyle}>Task Title *</label>
+            <input value={form.title} onChange={e => { set("title", e.target.value); setError(""); }}
+              placeholder="e.g. Review Q3 campaign brief" style={inputStyle} autoFocus />
+            {error && <div style={{ fontSize:10, color:"#f87171", marginTop:4 }}>{error}</div>}
+          </div>
+          <div>
+            <label style={labelStyle}>Assign To *</label>
+            <select value={form.assignedTo} onChange={e => set("assignedTo", e.target.value)} style={selectStyle}>
+              {people.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+            </select>
+          </div>
+          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12 }}>
+            <div>
+              <label style={labelStyle}>Effort</label>
+              <select value={form.effort} onChange={e => set("effort", e.target.value)} style={selectStyle}>
+                {["S","M","L"].map(e => <option key={e} value={e}>{EFFORT_LABEL[e]}</option>)}
+                <option value="C">Custom</option>
+              </select>
+              {form.effort === "C" && (
+                <input type="number" min="0.5" step="0.5" value={form.customHours || 1}
+                  onChange={e => set("customHours", parseFloat(e.target.value)||1)}
+                  placeholder="Hours" style={{ ...inputStyle, marginTop:6 }} />
+              )}
+            </div>
+            <div>
+              <label style={labelStyle}>Due Date</label>
+              <input type="date" value={form.dueDate || ""} onChange={e => set("dueDate", e.target.value)} style={inputStyle} />
+            </div>
+          </div>
+          <div>
+            <label style={labelStyle}>Notes / Instructions</label>
+            <textarea value={form.notes || ""} onChange={e => set("notes", e.target.value)}
+              placeholder="Context or instructions for this task..."
+              style={{ ...inputStyle, minHeight:56, resize:"vertical" }} />
+          </div>
+          {editing && (
+            <div>
+              <label style={labelStyle}>Status</label>
+              <select value={form.status} onChange={e => set("status", e.target.value)} style={selectStyle}>
+                {["Not Started","In Progress","Done"].map(s => <option key={s}>{s}</option>)}
+              </select>
+            </div>
+          )}
+        </div>
+        <div style={{ borderTop:"1px solid rgba(0,0,0,0.07)", padding:"14px 20px", display:"flex", gap:8, justifyContent:"flex-end" }}>
+          <button onClick={onClose} style={cancelBtnStyle}>Cancel</button>
+          <button onClick={() => {
+            if (!form.title.trim()) { setError("Title required"); return; }
+            onSave({ ...form, id: editing?.id });
+            onClose();
+          }}
+            style={{ padding:"8px 22px", borderRadius:7, background:BRAND_TEAL, border:"none", color:"#fff", fontSize:12, fontWeight:700, cursor:"pointer", fontFamily:"inherit" }}>
+            {editing ? "Save Changes" : "Assign Task"}
+          </button>
+        </div>
+      </ModalShell>
+    </Overlay>
+  );
+}
+
+
+function MyHubView({ projects, people, holidays, pto = [], currentUserId, onSetCurrentUser, onEditItem, onMarkDone, savePto, deletePto, personalTasks = [], onSavePersonalTask, onDeletePersonalTask, currentRole = "member", authMemberId = "", authUUID = "", adminTasks = [], onSaveAdminTask, onUpdateAdminTaskStatus, onDeleteAdminTask, notifications = [], onDismissNotification, onOpenNotifTask, setToastNotif }) {
   const TODAY = new Date(); TODAY.setHours(0,0,0,0);
 
   // Week bounds (Mon–Sun)
@@ -3634,6 +3713,8 @@ function MyHubView({ projects, people, holidays, pto = [], currentUserId, onSetC
   const efv = (e) => EFFORT_VAL[e] || 2;
 
   const [showPtoForm, setShowPtoForm] = useState(false);
+  const [showAssignModal, setShowAssignModal] = useState(false);
+  const [editingAdminTask, setEditingAdminTask] = useState(null);
   const [ptoForm, setPtoForm] = useState({ start: todayStr, end: todayStr, note: "" });
   const [showTaskForm, setShowTaskForm] = useState(false);
   const [editingTask, setEditingTask] = useState(null);
@@ -3834,6 +3915,12 @@ function MyHubView({ projects, people, holidays, pto = [], currentUserId, onSetC
         <div>
           <div style={{ fontSize: 16, fontWeight: 800, color: "#1f2937" }}>{me.name}'s Hub</div>
           <div style={{ fontSize: 11, color: "#9ca3af" }}>Your personal work command center</div>
+          {currentRole === "admin" && (
+            <button onClick={() => { setEditingAdminTask(null); setShowAssignModal(true); }}
+              style={{ fontSize:10, fontWeight:700, color:"#fff", background:BRAND_TEAL, border:"none", borderRadius:6, padding:"4px 12px", cursor:"pointer", fontFamily:"inherit", flexShrink:0 }}>
+              + Assign Task
+            </button>
+          )}
         </div>
         <div style={{ marginLeft: "auto", display: "flex", gap: 8, alignItems: "center" }}>
           {currentRole === "admin" ? (
@@ -3997,6 +4084,72 @@ function MyHubView({ projects, people, holidays, pto = [], currentUserId, onSetC
                           ✓ Reviewed
                         </button>
                       </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          );
+        })()}
+
+        {/* ── Assigned Tasks (admin-assigned) ── */}
+        {(() => {
+          const myAssigned = meId === authMemberId
+            ? adminTasks.filter(t => t.assignedTo === meId)
+            : currentRole === "admin"
+              ? adminTasks.filter(t => t.assignedTo === meId)
+              : [];
+          if (!myAssigned.length && currentRole !== "admin") return null;
+          const activeAssigned = myAssigned.filter(t => t.status !== "Done");
+          if (!activeAssigned.length && !myAssigned.length) return null;
+          return (
+            <div style={{ background:"#fff", border:"1px solid rgba(80,192,192,0.25)", borderRadius:10, overflow:"hidden" }}>
+              <div style={{ padding:"12px 16px", borderBottom:"1px solid rgba(0,0,0,0.07)", display:"flex", alignItems:"center", justifyContent:"space-between" }}>
+                <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+                  <span style={{ fontSize:13, color:BRAND_TEAL }}>◎</span>
+                  <span style={{ fontSize:12, fontWeight:800, color:"#1f2937" }}>Assigned Tasks</span>
+                  <span style={{ fontSize:10, color:BRAND_TEAL, background:"rgba(80,192,192,0.1)", borderRadius:10, padding:"1px 7px", fontWeight:700 }}>{activeAssigned.length} active</span>
+                </div>
+                {currentRole === "admin" && (
+                  <button onClick={() => { setEditingAdminTask(null); setShowAssignModal(true); }}
+                    style={{ fontSize:10, fontWeight:700, color:BRAND_TEAL, background:"rgba(80,192,192,0.08)", border:"none", borderRadius:6, padding:"4px 10px", cursor:"pointer", fontFamily:"inherit" }}>
+                    + Assign
+                  </button>
+                )}
+              </div>
+              <div>
+                {activeAssigned.length === 0 && (
+                  <div style={{ fontSize:12, color:"#9ca3af", textAlign:"center", padding:"14px 0" }}>No active assigned tasks.</div>
+                )}
+                {activeAssigned.map(task => {
+                  const isOverdueT = task.dueDate && task.dueDate < todayStr;
+                  const isDueTodayT = task.dueDate === todayStr;
+                  const hrs = effortHrs(task.effort, task.customHours);
+                  const assignedByPerson = people.find(p => p.id === task.assignedBy);
+                  return (
+                    <div key={task.id} style={{ display:"flex", alignItems:"flex-start", gap:10, padding:"10px 16px", borderBottom:"1px solid rgba(0,0,0,0.04)" }}>
+                      <label style={{ display:"flex", alignItems:"center", cursor:"pointer", flexShrink:0, marginTop:1 }}>
+                        <input type="checkbox" checked={task.status === "Done"}
+                          onChange={() => onUpdateAdminTaskStatus(task.id, task.status === "Done" ? "Not Started" : "Done")}
+                          style={{ width:15, height:15, accentColor:BRAND_TEAL, cursor:"pointer" }} />
+                      </label>
+                      <div style={{ flex:1, minWidth:0 }}>
+                        <div style={{ fontSize:12, fontWeight:600, color:"#1f2937" }}>{task.title}</div>
+                        <div style={{ fontSize:10, color:"#9ca3af", marginTop:2, display:"flex", gap:8, flexWrap:"wrap" }}>
+                          {assignedByPerson && <span>Assigned by {assignedByPerson.name}</span>}
+                          <span>{EFFORT_LABEL[task.effort] || task.effort} · {hrs}h</span>
+                          {task.dueDate && <span style={{ color:isOverdueT?"#ef4444":isDueTodayT?"#f97316":"#9ca3af", fontWeight:(isOverdueT||isDueTodayT)?700:400 }}>{isOverdueT?"⚠ Overdue · ":isDueTodayT?"⏰ Due today · ":""}{task.dueDate}</span>}
+                        </div>
+                        {task.notes && <div style={{ fontSize:10, color:"#6b7280", marginTop:2 }}>{task.notes}</div>}
+                      </div>
+                      {currentRole === "admin" && (
+                        <div style={{ display:"flex", gap:4, flexShrink:0 }}>
+                          <button onClick={() => { setEditingAdminTask(task); setShowAssignModal(true); }}
+                            style={{ background:"none", border:"none", color:"#9ca3af", cursor:"pointer", fontSize:12 }}>✎</button>
+                          <button onClick={() => onDeleteAdminTask(task.id)}
+                            style={{ background:"none", border:"none", color:"#fca5a5", cursor:"pointer", fontSize:14 }}>×</button>
+                        </div>
+                      )}
                     </div>
                   );
                 })}
@@ -4212,6 +4365,15 @@ function MyHubView({ projects, people, holidays, pto = [], currentUserId, onSetC
           </div>
         )}
       </div>
+
+      {showAssignModal && (
+        <AssignTaskModal
+          people={people}
+          editing={editingAdminTask}
+          onClose={() => { setShowAssignModal(false); setEditingAdminTask(null); }}
+          onSave={(task) => onSaveAdminTask({ ...task, assignedBy: authMemberId })}
+        />
+      )}
     </div>
   );
 }
@@ -4396,7 +4558,7 @@ function AtRiskProjRow({ p, activeDels, offTrackDels, atRiskDels, projHealth }) 
 }
 
 // ─── REPORTING DASHBOARD v2 ───────────────────────────────────────────────────
-function ReportingDashboardView({ projects, people, holidays = [], pto = [] }) {
+function ReportingDashboardView({ projects, people, holidays = [], pto = [], adminTasks = [] }) {
   const [drawer, setDrawer] = useState(null); // { title, subtitle, rows, cols, groupBy }
   const [drillClient, setDrillClient] = useState(null);
   const [sortClientCol, setSortClientCol] = useState("client");
@@ -4915,17 +5077,27 @@ function ReportingDashboardView({ projects, people, holidays = [], pto = [] }) {
         const dayOfYear    = Math.ceil((today - yearStart) / 86400000) + 1;
         const pctYearElapsed = dayOfYear / daysInYear;
 
-        // All project tasks (no personal tasks)
-        const clientTasks = projects.flatMap(p =>
+        // Client tasks = project tasks + admin-assigned tasks
+        const projectClientTasks = projects.flatMap(p =>
           p.deliverables.flatMap(d => {
             const tasks = d.subtasks.length > 0 ? d.subtasks : [d];
             return tasks.map(t => ({
               ...t,
               proj: p,
               hrs: effortHrs(t.effort, t.customHours),
+              assignees: t.assignees || [],
             }));
           })
         );
+        // Admin-assigned tasks count as a single-person assignment
+        const adminClientTasks = adminTasks.map(t => ({
+          ...t,
+          assignees: [t.assignedTo],
+          hrs: effortHrs(t.effort, t.customHours),
+          end: t.dueDate || todayStr,
+          isAdminTask: true,
+        }));
+        const clientTasks = [...projectClientTasks, ...adminClientTasks];
 
         const forecasts = people.map(person => {
           const myTasks = clientTasks.filter(t =>
@@ -7050,15 +7222,20 @@ export default function App() {
   useEffect(() => {
     const session = getStoredSession();
     if (!session) { setAuthLoading(false); return; }
-    fetchAppUser(session.user?.id, session.access_token).then(appUser => {
-      if (appUser) {
-        setCurrentRole(appUser.role);
-        setCurrentUser(appUser.teamMemberId);
-        setOwnMemberId(appUser.teamMemberId);
-        try { localStorage.setItem("planr_own_member_id", appUser.teamMemberId); } catch {}
-      }
-      setAuthSession(session); setAuthUser(session.user); setAuthLoading(false);
-    });
+    fetchAppUser(session.user?.id, session.access_token)
+      .then(appUser => {
+        if (appUser) {
+          setCurrentRole(appUser.role);
+          setCurrentUser(appUser.teamMemberId);
+          setOwnMemberId(appUser.teamMemberId);
+          try { localStorage.setItem("planr_own_member_id", appUser.teamMemberId); } catch {}
+        }
+        setAuthSession(session); setAuthUser(session.user); setAuthLoading(false);
+      })
+      .catch(() => {
+        // fetchAppUser failed — still restore session so user isn't locked out
+        setAuthSession(session); setAuthUser(session.user); setAuthLoading(false);
+      });
   }, []); // eslint-disable-line
 
   const [view, setViewRaw] = useState(() => {
@@ -7085,6 +7262,7 @@ export default function App() {
   // ── PTO & current user ──────────────────────────────────────────────────
   const [pto, setPto] = useState([]);
   const [notifications, setNotifications] = useState([]);
+  const [adminTasks, setAdminTasks] = useState([]); // tasks assigned by admin to team members
   const [toastNotif, setToastNotif] = useState(null); // { id, message, taskInfo }
   const [personalTasks, setPersonalTasks] = useState([]);
   const [currentUserId, setCurrentUserId] = useState(() => {
@@ -7226,6 +7404,18 @@ export default function App() {
                 tasks: tasksByTemplate[tpl.id] || [],
               })));
             }).catch(() => {});
+        }
+      }).catch(() => {});
+    // Load admin-assigned tasks (all — admin sees all, members filter client-side)
+    sb.select("admin_tasks", "order=created_at.desc")
+      .then(r => {
+        if (!r?.error && r?.data) {
+          setAdminTasks(r.data.map(t => ({
+            id: t.id, title: t.title || "", assignedTo: t.assigned_to,
+            assignedBy: t.assigned_by || "", effort: t.effort || "M",
+            customHours: t.custom_hours || null, status: t.status || "Not Started",
+            dueDate: t.due_date || null, notes: t.notes || "", createdAt: t.created_at,
+          })));
         }
       }).catch(() => {});
     sb.select("personal_tasks", `person_id=eq.${authUUID}&order=created_at.asc`)
@@ -7503,6 +7693,68 @@ export default function App() {
       })),
     };
     await saveDeliverableTemplate(dup);
+  };
+
+  const saveAdminTask = async (task) => {
+    const id = task.id || ("at_" + Date.now());
+    const entry = { ...task, id };
+    setAdminTasks(prev => {
+      const idx = prev.findIndex(t => t.id === id);
+      return idx >= 0 ? prev.map(t => t.id === id ? entry : t) : [entry, ...prev];
+    });
+    if (SB_READY) {
+      await sb.upsert("admin_tasks", {
+        id, title: entry.title, assigned_to: entry.assignedTo,
+        assigned_by: entry.assignedBy || currentUserId,
+        effort: entry.effort || "M", custom_hours: entry.customHours || null,
+        status: entry.status || "Not Started", due_date: entry.dueDate || null,
+        notes: entry.notes || "", updated_at: new Date().toISOString(),
+      });
+    }
+    // Notify the assignee — toast shows for admin immediately; assignee sees on their hub
+    const assignee = people.find(p => p.id === entry.assignedTo);
+    if (assignee) {
+      const notifId = "notif_" + Date.now();
+      const assigner = people.find(p => p.id === currentUserId)?.name || "Admin";
+      const msg = `"${entry.title}" assigned to ${assignee.name} by ${assigner}`;
+      const notif = { id:notifId, type:"task_assigned", message:msg, assignedToPersonId:entry.assignedTo,
+        isRead:false, reviewedAt:null, createdAt:new Date().toISOString() };
+      setNotifications(prev => [notif, ...prev]);
+      // Show toast confirmation to the admin who assigned it
+      setToastNotif({ id:notifId, message:msg, type:"task_assigned" });
+      if (SB_READY) await sb.upsert("task_notifications", {
+        id:notifId, task_id:id, notification_type:"task_assigned", message:msg,
+        assigned_to_person_id:entry.assignedTo, is_read:false, created_at:notif.createdAt,
+      });
+    }
+  };
+
+  const updateAdminTaskStatus = async (id, status) => {
+    const task = adminTasks.find(t => t.id === id);
+    setAdminTasks(prev => prev.map(t => t.id === id ? { ...t, status } : t));
+    if (SB_READY) await sb.update("admin_tasks", id, { status, updated_at: new Date().toISOString() });
+    // When marked Done, notify the assigner
+    if (status === "Done" && task && task.status !== "Done") {
+      const assignee = people.find(p => p.id === task.assignedTo);
+      const assigner = people.find(p => p.id === task.assignedBy);
+      if (assignee) {
+        const notifId = "notif_done_" + Date.now();
+        const msg = `${assignee.name} completed "${task.title}"`;
+        const notif = { id:notifId, type:"task_completed", message:msg,
+          completedByPersonId:task.assignedTo, isRead:false, createdAt:new Date().toISOString() };
+        setNotifications(prev => [notif, ...prev]);
+        setToastNotif({ id:notifId, message:msg, type:"task_completed" });
+        if (SB_READY) await sb.upsert("task_notifications", {
+          id:notifId, task_id:id, notification_type:"task_completed", message:msg,
+          completed_by_person_id:task.assignedTo, is_read:false, created_at:notif.createdAt,
+        });
+      }
+    }
+  };
+
+  const deleteAdminTask = async (id) => {
+    setAdminTasks(prev => prev.filter(t => t.id !== id));
+    if (SB_READY) await sb.delete("admin_tasks", id);
   };
 
   const dismissNotification = async (id) => {
@@ -7993,6 +8245,10 @@ export default function App() {
             currentRole={currentRole}
             authMemberId={ownMemberId}
             authUUID={authUUID}
+            adminTasks={currentRole === "admin" ? adminTasks : adminTasks.filter(t => t.assignedTo === ownMemberId)}
+            onSaveAdminTask={saveAdminTask}
+            onUpdateAdminTaskStatus={updateAdminTaskStatus}
+            onDeleteAdminTask={deleteAdminTask}
             notifications={notifications}
             onDismissNotification={dismissNotification}
             setToastNotif={setToastNotif}
@@ -8030,6 +8286,7 @@ export default function App() {
         {view === "reporting" && (
           <ReportingDashboardView
             projects={projects} people={people} holidays={holidays} pto={pto}
+            adminTasks={adminTasks}
           />
         )}
         {view === "archived" && (
@@ -8217,6 +8474,9 @@ export default function App() {
             style={{ background:"none", border:"none", color:"rgba(248,250,252,0.5)", cursor:"pointer", fontSize:18, lineHeight:1, flexShrink:0, padding:"0 2px" }}>×</button>
         </div>
       )}
+
+
+
 
     </div>
   );
