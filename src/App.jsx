@@ -3734,41 +3734,53 @@ function MyHubView({ projects, people, holidays, pto = [], currentUserId, onSetC
 
   // ── Render helpers ────────────────────────────────────────────────────────
   const TaskCard = ({ task, badge, badgeColor }) => {
-    const d = daysDiff(task.end);
+    const d       = daysDiff(task.end);
     const overdue = isOverdue(task);
     const cleared = isDependencyClear(task);
-    const blocked = blockedBy(task);
+    const blkd    = blockedBy(task);
+    const dateTxt = !task.end ? null
+      : overdue      ? `${Math.abs(d)}d overdue`
+      : d === 0      ? "Due today"
+      : d === 1      ? "Due tomorrow"
+      :                `Due in ${d}d`;
+    const dateColor = overdue ? "#f87171" : d <= 1 ? "#f97316" : d <= 3 ? "#fbbf24" : "#9ca3af";
+    const statusDot = { "Done":"#34d399","In Progress":"#38bdf8","Blocked":"#f87171","Not Started":"#d1d5db" };
     return (
-      <div onClick={() => onEditItem({ ...task, projectId: task.projId, projectName: task.projName, projectColor: task.projColor, deliverableId: task.isSubtask ? (task.deliverableId || task.delId) : null, delTitle: task.isSubtask ? task.delTitle : null })}
-        style={{ background: "#fff", border: `1px solid ${overdue ? "rgba(248,113,113,0.3)" : "rgba(0,0,0,0.07)"}`, borderLeft: `3px solid ${task.projColor}`, borderRadius: 8, padding: "11px 14px", cursor: "pointer", transition: "box-shadow 0.12s" }}
-        onMouseEnter={e => e.currentTarget.style.boxShadow = "0 2px 12px rgba(0,0,0,0.08)"}
+      <div onClick={() => onEditItem({ ...task, projectId:task.projId, projectName:task.projName, projectColor:task.projColor, deliverableId:task.isSubtask?(task.deliverableId||task.delId):null, delTitle:task.isSubtask?task.delTitle:null })}
+        style={{ display:"flex", alignItems:"center", gap:8, padding:"9px 12px", background:"#fff",
+          border:`1px solid ${overdue?"rgba(248,113,113,0.25)":"rgba(0,0,0,0.07)"}`,
+          borderLeft:`3px solid ${task.projColor}`, borderRadius:8, cursor:"pointer", transition:"box-shadow 0.12s", minWidth:0 }}
+        onMouseEnter={e => e.currentTarget.style.boxShadow = "0 2px 10px rgba(0,0,0,0.08)"}
         onMouseLeave={e => e.currentTarget.style.boxShadow = "none"}
       >
-        <div style={{ display: "flex", alignItems: "flex-start", gap: 8 }}>
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ fontSize: 12, fontWeight: 700, color: "#1f2937", marginBottom: 3, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{task.title}</div>
-            <div style={{ fontSize: 10, color: task.projColor, fontWeight: 600, marginBottom: 5 }}>{task.projName}{task.isSubtask ? ` · ${task.delTitle}` : ""}</div>
-            <div style={{ display: "flex", gap: 5, flexWrap: "wrap", alignItems: "center" }}>
-              {badge && <span style={{ fontSize: 9, fontWeight: 700, background: badgeColor + "18", color: badgeColor, borderRadius: 4, padding: "2px 6px" }}>{badge}</span>}
-              <StatusBadge status={task.status} small />
-              {task.effort !== "M" && <span style={{ fontSize: 9, color: "#6b7280", background: "rgba(0,0,0,0.05)", borderRadius: 3, padding: "1px 5px" }}>{EFFORT_LABEL[task.effort]}</span>}
-              {!cleared && blocked.length > 0 && (
-                <span style={{ fontSize: 9, color: "#f87171", background: "rgba(248,113,113,0.1)", borderRadius: 4, padding: "2px 6px" }}>
-                  Blocked by {blocked.map(b => b.title).join(", ").slice(0,40)}
-                </span>
-              )}
-              {task.end && (
-                <span style={{ fontSize: 9, color: overdue ? "#f87171" : d <= 2 ? "#fb923c" : "#9ca3af", marginLeft: "auto", fontWeight: overdue ? 700 : 400 }}>
-                  {overdue ? `${Math.abs(d)}d overdue` : d === 0 ? "Due today" : d === 1 ? "Due tomorrow" : `Due in ${d}d`}
-                </span>
-              )}
-            </div>
+        {/* Title + context */}
+        <div style={{ flex:1, minWidth:0 }}>
+          <div style={{ fontSize:12, fontWeight:700, color:"#1f2937", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{task.title}</div>
+          <div style={{ fontSize:10, color:task.projColor, fontWeight:600, marginTop:1, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>
+            {task.projName}{task.isSubtask && task.delTitle ? ` · ${task.delTitle}` : ""}
           </div>
-          <button onClick={e => { e.stopPropagation(); onMarkDone(task.projId, task.isSubtask ? task.delId : task.id, task.isSubtask ? task.id : null); }}
-            style={{ flexShrink: 0, width: 20, height: 20, borderRadius: "50%", border: "2px solid rgba(0,0,0,0.15)", background: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 10 }}
-            title="Mark done"
-          >✓</button>
         </div>
+        {/* Badges */}
+        <div style={{ display:"flex", alignItems:"center", gap:5, flexShrink:0, flexWrap:"nowrap" }}>
+          {badge && <span style={{ fontSize:9, fontWeight:700, background:badgeColor+"18", color:badgeColor, borderRadius:4, padding:"2px 6px", whiteSpace:"nowrap" }}>{badge}</span>}
+          {!cleared && blkd.length > 0 && <span style={{ fontSize:9, color:"#f87171", background:"rgba(248,113,113,0.1)", borderRadius:4, padding:"2px 6px", whiteSpace:"nowrap" }}>Blocked</span>}
+          <div style={{ display:"flex", alignItems:"center", gap:4 }}>
+            <div style={{ width:6, height:6, borderRadius:"50%", background:statusDot[task.status]||"#d1d5db", flexShrink:0 }} />
+            <span style={{ fontSize:10, color:"#6b7280", whiteSpace:"nowrap" }}>{task.status}</span>
+          </div>
+          {dateTxt && (
+            <span style={{ fontSize:10, fontWeight:overdue?700:600, color:dateColor, background:`${dateColor}18`, borderRadius:5, padding:"2px 7px", whiteSpace:"nowrap" }}>
+              {dateTxt}
+            </span>
+          )}
+        </div>
+        {/* Mark done */}
+        <button onClick={e => { e.stopPropagation(); onMarkDone(task.projId, task.isSubtask?task.delId:task.id, task.isSubtask?task.id:null); }}
+          style={{ flexShrink:0, width:20, height:20, borderRadius:"50%", border:"2px solid rgba(0,0,0,0.13)", background:"none", cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", fontSize:10, color:"#9ca3af", transition:"all 0.12s" }}
+          title="Mark done"
+          onMouseEnter={e=>{e.currentTarget.style.borderColor="#34d399";e.currentTarget.style.color="#34d399";}}
+          onMouseLeave={e=>{e.currentTarget.style.borderColor="rgba(0,0,0,0.13)";e.currentTarget.style.color="#9ca3af";}}
+        >✓</button>
       </div>
     );
   };
@@ -4001,45 +4013,100 @@ function MyHubView({ projects, people, holidays, pto = [], currentUserId, onSetC
         </div>
 
         <Section title="Overdue" icon="⚠" count={overdueTasks.length} color="#f87171">
-          {overdueTasks.map(t => <TaskCard key={t.id} task={t} badge="Overdue" badgeColor="#f87171" />)}
+          <div style={{ display:"grid", gridTemplateColumns:"repeat(2, 1fr)", gap:8, padding:"8px 12px 12px" }}>{overdueTasks.map(t => <TaskCard key={t.id} task={t} badge="Overdue" badgeColor="#f87171" />)}</div>
         </Section>
 
         <Section title="Due Soon" icon="◷" count={dueSoonTasks.length} color="#fb923c">
-          {dueSoonTasks.map(t => <TaskCard key={t.id} task={t} />)}
+          <div style={{ display:"grid", gridTemplateColumns:"repeat(2, 1fr)", gap:8, padding:"8px 12px 12px" }}>
+            {dueSoonTasks.map(t => {
+              const d        = daysDiff(t.end);
+              const dueTodayT = d === 0;
+              const dueTomorrow = d === 1;
+              const accentColor = dueTodayT ? "#f97316" : d <= 2 ? "#fbbf24" : "#9ca3af";
+              const dueTxt    = dueTodayT ? "Due today" : dueTomorrow ? "Due tomorrow" : `Due in ${d}d`;
+              const statusColors = { "Done":"#34d399","In Progress":"#38bdf8","Blocked":"#f87171","Not Started":"#d1d5db" };
+              const sc = statusColors[t.status] || "#d1d5db";
+              return (
+                <div key={t.id}
+                  onClick={() => onEditItem({ ...t, projectId:t.projId, projectName:t.projName, projectColor:t.projColor, deliverableId:t.isSubtask?(t.deliverableId||t.delId):null, delTitle:t.isSubtask?t.delTitle:null })}
+                  style={{ display:"flex", alignItems:"center", gap:10, padding:"10px 12px", cursor:"pointer", background:"#fff", border:`1px solid rgba(0,0,0,0.07)`, borderLeft:`3px solid ${t.projColor}`, borderRadius:8, transition:"box-shadow 0.12s" }}
+                  onMouseEnter={e => e.currentTarget.style.boxShadow = "0 2px 10px rgba(0,0,0,0.08)"}
+                  onMouseLeave={e => e.currentTarget.style.boxShadow = "none"}
+                >
+                  {/* Title + context */}
+                  <div style={{ flex:1, minWidth:0 }}>
+                    <div style={{ fontSize:12, fontWeight:700, color:"#1f2937", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{t.title}</div>
+                    <div style={{ fontSize:10, color:t.projColor, fontWeight:600, marginTop:1, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>
+                      {t.projName}{t.isSubtask && t.delTitle ? ` · ${t.delTitle}` : ""}
+                    </div>
+                  </div>
+
+                  {/* Status dot */}
+                  <div style={{ display:"flex", alignItems:"center", gap:5, flexShrink:0 }}>
+                    <div style={{ width:7, height:7, borderRadius:"50%", background:sc }} />
+                    <span style={{ fontSize:10, color:"#6b7280", whiteSpace:"nowrap" }}>{t.status}</span>
+                  </div>
+
+                  {/* Effort */}
+                  {t.effort && t.effort !== "M" && (
+                    <span style={{ fontSize:9, color:"#9ca3af", background:"rgba(0,0,0,0.05)", borderRadius:3, padding:"2px 6px", flexShrink:0 }}>
+                      {EFFORT_LABEL[t.effort] || t.effort}
+                    </span>
+                  )}
+
+                  {/* Due badge */}
+                  <div style={{ flexShrink:0, textAlign:"right", minWidth:78 }}>
+                    <span style={{ fontSize:10, fontWeight:700, color:accentColor, background:`${accentColor}18`, borderRadius:5, padding:"3px 8px", whiteSpace:"nowrap" }}>
+                      {dueTxt}
+                    </span>
+                    {t.end && <div style={{ fontSize:9, color:"#9ca3af", marginTop:2 }}>{t.end}</div>}
+                  </div>
+
+                  {/* Mark done */}
+                  <button onClick={e => { e.stopPropagation(); onMarkDone(t.projId, t.isSubtask?t.delId:t.id, t.isSubtask?t.id:null); }}
+                    style={{ flexShrink:0, width:22, height:22, borderRadius:"50%", border:"2px solid rgba(0,0,0,0.15)", background:"none", cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", fontSize:10, color:"#9ca3af", transition:"all 0.12s" }}
+                    title="Mark done"
+                    onMouseEnter={e => { e.currentTarget.style.borderColor="#34d399"; e.currentTarget.style.color="#34d399"; }}
+                    onMouseLeave={e => { e.currentTarget.style.borderColor="rgba(0,0,0,0.15)"; e.currentTarget.style.color="#9ca3af"; }}
+                  >✓</button>
+                </div>
+              );
+            })}
+          </div>
         </Section>
 
         <Section title="Blocked" icon="⊘" count={blockedTasks.length} color="#f87171" collapsed={true}>
-          {blockedTasks.map(t => {
+          <div style={{ display:"grid", gridTemplateColumns:"repeat(2, 1fr)", gap:8, padding:"8px 12px 12px" }}>{blockedTasks.map(t => {
             const blockers = blockedBy(t);
             return <TaskCard key={t.id} task={t} badge={blockers.length ? `Blocked · ${blockers.length}` : "Blocked"} badgeColor="#f87171" />;
-          })}
+          })}</div>
         </Section>
 
         <Section title="Currently Blocking Downstream Work" icon="🔴" count={tasksBlockedByMe.length} color="#ef4444" collapsed={true}>
-          {tasksBlockedByMe.map(t => {
+          <div style={{ display:"grid", gridTemplateColumns:"repeat(2, 1fr)", gap:8, padding:"8px 12px 12px" }}>{tasksBlockedByMe.map(t => {
             const blockingCount = allTasksFlat.filter(dt =>
               dt.status !== "Done" && (dt.dependencies || []).some(depId => taskById[depId]?.id === t.id)
             ).length;
             return <TaskCard key={t.id} task={t} badge={`Needs attention · blocking ${blockingCount}`} badgeColor="#ef4444" />;
-          })}
+          })}</div>
         </Section>
 
         {upcomingDepRisk.length > 0 && (
           <Section title="Upcoming Dependency Risk" icon="⏰" count={upcomingDepRisk.length} color="#fb923c" collapsed={true}>
-            {upcomingDepRisk.map(t => <TaskCard key={t.id} task={t} badge="Future dep risk" badgeColor="#fb923c" />)}
+            <div style={{ display:"grid", gridTemplateColumns:"repeat(2, 1fr)", gap:8, padding:"8px 12px 12px" }}>{upcomingDepRisk.map(t => <TaskCard key={t.id} task={t} badge="Future dep risk" badgeColor="#fb923c" />)}</div>
           </Section>
         )}
 
         <Section title="Waiting on Others" icon="⏳" count={waitingTasks.length} color="#9ca3af" collapsed={true}>
-          {waitingTasks.map(t => <TaskCard key={t.id} task={t} badge="Waiting" badgeColor="#9ca3af" />)}
+          <div style={{ display:"grid", gridTemplateColumns:"repeat(2, 1fr)", gap:8, padding:"8px 12px 12px" }}>{waitingTasks.map(t => <TaskCard key={t.id} task={t} badge="Waiting" badgeColor="#9ca3af" />)}</div>
         </Section>
 
         <Section title="Ready to Start" icon="→" count={readyTasks.filter(t => t.status === "Not Started").length} color="#34d399" collapsed={true}>
-          {readyTasks.filter(t => t.status === "Not Started").map(t => <TaskCard key={t.id} task={t} />)}
+          <div style={{ display:"grid", gridTemplateColumns:"repeat(2, 1fr)", gap:8, padding:"8px 12px 12px" }}>{readyTasks.filter(t => t.status === "Not Started").map(t => <TaskCard key={t.id} task={t} />)}</div>
         </Section>
 
         <Section title="High Effort This Week" icon="◈" count={highEffort.length} color="#a78bfa" collapsed={true}>
-          {highEffort.map(t => <TaskCard key={t.id} task={t} badge="Large" badgeColor="#a78bfa" />)}
+          <div style={{ display:"grid", gridTemplateColumns:"repeat(2, 1fr)", gap:8, padding:"8px 12px 12px" }}>{highEffort.map(t => <TaskCard key={t.id} task={t} badge="Large" badgeColor="#a78bfa" />)}</div>
         </Section>
 
 
