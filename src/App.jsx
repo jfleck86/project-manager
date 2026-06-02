@@ -3588,7 +3588,7 @@ function Section({ title, icon, count, color = "#6b7280", children, empty, colla
   );
   }
 
-function MyHubView({ projects, people, holidays, pto = [], currentUserId, onSetCurrentUser, onEditItem, onMarkDone, savePto, deletePto, personalTasks = [], onSavePersonalTask, onDeletePersonalTask }) {
+function MyHubView({ projects, people, holidays, pto = [], currentUserId, onSetCurrentUser, onEditItem, onMarkDone, savePto, deletePto, personalTasks = [], onSavePersonalTask, onDeletePersonalTask, currentRole = "member", authMemberId = "" }) {
   const TODAY = new Date(); TODAY.setHours(0,0,0,0);
 
   // Week bounds (Mon–Sun)
@@ -3610,7 +3610,11 @@ function MyHubView({ projects, people, holidays, pto = [], currentUserId, onSetC
   const hubHolidaySet = new Set((holidays||[]).map(h => h.date));
 
   // ── Resolve current user ──────────────────────────────────────────────────
-  const me = people.find(p => p.id === currentUserId) || people[0];
+  // Members always locked to their own hub — never allow state-manipulation bypass
+  const effectiveUserId = currentRole === "admin"
+    ? (currentUserId || authMemberId || people[0]?.id || "")
+    : (authMemberId || currentUserId || people[0]?.id || "");
+  const me   = people.find(p => p.id === effectiveUserId) || people[0];
   const meId = me?.id || "";
 
   // ── Flatten executable tasks assigned to me ──────────────────────────────
@@ -3789,10 +3793,14 @@ function MyHubView({ projects, people, holidays, pto = [], currentUserId, onSetC
           <div style={{ fontSize: 11, color: "#9ca3af" }}>Your personal work command center</div>
         </div>
         <div style={{ marginLeft: "auto", display: "flex", gap: 8, alignItems: "center" }}>
-          <select value={meId} onChange={e => onSetCurrentUser(e.target.value)}
-            style={{ fontSize: 11, border: "1px solid rgba(0,0,0,0.1)", borderRadius: 6, padding: "5px 10px", background: "#fff", fontFamily: "inherit" }}>
-            {people.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
-          </select>
+          {currentRole === "admin" ? (
+            <select value={meId} onChange={e => onSetCurrentUser(e.target.value)}
+              style={{ fontSize: 11, border: "1px solid rgba(0,0,0,0.1)", borderRadius: 6, padding: "5px 10px", background: "#fff", fontFamily: "inherit" }}>
+              {people.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+            </select>
+          ) : (
+            <span style={{ fontSize: 11, color: "#6b7280", fontWeight: 600 }}>{me?.name}</span>
+          )}
         </div>
       </div>
 
@@ -5132,92 +5140,282 @@ function StatusNoteCell({ note, color, onSave }) {
 
 // --- TEAM SETTINGS MODAL ─────────────────────────────────────────────────────
 
-function TeamSettingsModal({ people, onClose, onSave }) {
+function TeamSettingsModal({ people, onClose, onSave, sbUrl = "", sbKey = "" }) {
+  const [tab, setTab] = useState("team");
   const [members, setMembers] = useState(people.map(p => ({ ...p })));
   const updateMember = (id, field, val) =>
     setMembers(ms => ms.map(m => m.id !== id ? m : { ...m, [field]: val }));
-
   const addMember = () => {
     const usedColors = members.map(m => m.color);
     const color = MEMBER_COLORS.find(c => !usedColors.includes(c)) || MEMBER_COLORS[0];
     setMembers(ms => [...ms, { id: "p_" + Date.now(), name: "", color }]);
   };
-
   const removeMember = (id) => setMembers(ms => ms.filter(m => m.id !== id));
+  const handleSave = () => { onSave(members.filter(m => m.name.trim())); onClose(); };
 
-  const handleSave = () => {
-    onSave(members.filter(m => m.name.trim()));
-    onClose();
+  // ── Invite state ────────────────────────────────────────────────────────────
+  const [invEmail, setInvEmail]     = useState("");
+  const [invName,  setInvName]      = useState("");
+  const [invRole,  setInvRole]      = useState("member");
+  const [invMember,setInvMember]    = useState(people[0]?.id || "");
+  const [invStatus,setInvStatus]    = useState(null); // null | "sending" | "done" | "sql" | "error"
+  const [invResult,setInvResult]    = useState(null); // { sql, message } or error string
+  const serviceKey = (typeof window !== "undefined" && window.__SB_SERVICE_KEY__) || "";
+
+  const handleInvite = async () => {
+    if (!invEmail.trim()) return;
+    setInvStatus("sending");
+    const linkedPerson = people.find(p => p.id === invMember);
+
+    // Try Supabase Admin invite if service key is available
+    if (serviceKey && sbUrl) {
+      try {
+        const res = await fetch(`${sbUrl}/auth/v1/admin/invite`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "apikey": serviceKey,
+            "Authorization": `Bearer ${serviceKey}`,
+          },
+          body: JSON.stringify({ email: invEmail.trim() }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.message || data.error || "Invite failed");
+
+        // Insert app_users row
+        const authUid = data.id;
+        if (authUid && sbUrl && sbKey) {
+          await fetch(`${sbUrl}/rest/v1/app_users`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "apikey": serviceKey,
+              "Authorization": `Bearer ${serviceKey}`,
+              "Prefer": "return=minimal",
+            },
+            body: JSON.stringify({
+              id: authUid,
+              email: invEmail.trim(),
+              display_name: invName.trim() || linkedPerson?.name || invEmail.split("@")[0],
+              role: invRole,
+              team_member_id: invMember || null,
+            }),
+          });
+        }
+        setInvStatus("done");
+        setInvResult({ message: `Invite sent to ${invEmail}. They'll receive an email to set their password.` });
+        setInvEmail(""); setInvName(""); setInvRole("member"); setInvMember(people[0]?.id || "");
+        return;
+      } catch (err) {
+        // Fall through to SQL mode
+        console.warn("[PulseX] Admin invite failed, showing SQL:", err.message);
+      }
+    }
+
+    // No service key or invite failed — show copy-paste SQL
+    const placeholder = "PASTE-AUTH-UUID-HERE";
+    const displayName = invName.trim() || linkedPerson?.name || invEmail.split("@")[0];
+    const sql = `-- Step 1: In Supabase → Authentication → Users → Invite User
+-- Enter email: ${invEmail.trim()}
+-- After they accept and their UUID appears, run Step 2:
+
+-- Step 2: Link them to PulseX (replace the UUID below)
+insert into app_users (id, email, display_name, role, team_member_id)
+values (
+  '${placeholder}',
+  '${invEmail.trim()}',
+  '${displayName}',
+  '${invRole}',
+  '${invMember || "null"}'
+)
+on conflict (id) do update set
+  email        = excluded.email,
+  display_name = excluded.display_name,
+  role         = excluded.role,
+  team_member_id = excluded.team_member_id;`;
+
+    setInvStatus("sql");
+    setInvResult({ sql, displayName, email: invEmail.trim() });
   };
+
+  const tabStyle = (t) => ({
+    flex: 1, padding: "10px 0", textAlign: "center", fontSize: 11, fontWeight: 700,
+    letterSpacing: "0.06em", cursor: "pointer", userSelect: "none",
+    borderBottom: tab === t ? "2px solid #38bdf8" : "2px solid transparent",
+    color: tab === t ? "#0284c7" : "#6b7280", transition: "all 0.12s",
+  });
 
   return (
     <Overlay onClose={onClose}>
-      <ModalShell title="Team Members" onClose={onClose} accentColor="#38bdf8" width={480}>
-        <div style={{ padding: 22, display: "flex", flexDirection: "column", gap: 10 }}>
-          <div style={{ fontSize: fs(11), color: "#6b7280", marginBottom: 4 }}>
-            Edit names or colors. Changes apply across all projects.
-          </div>
-          {members.map((m, i) => (
-            <div key={m.id} style={{ display: "flex", alignItems: "center", gap: 10 }}>
-              {/* Color picker trigger */}
-              <div style={{ position: "relative", flexShrink: 0 }}>
-                <Avatar person={{ ...m, name: m.name || "?" }} size={34} />
-                <select
-                  value={m.color}
-                  onChange={e => updateMember(m.id, "color", e.target.value)}
-                  style={{
-                    position: "absolute", inset: 0, opacity: 0, cursor: "pointer", width: "100%",
-                  }}
-                  title="Change color"
-                >
-                  {MEMBER_COLORS.map(c => <option key={c} value={c}>{c}</option>)}
-                </select>
-              </div>
-              {/* Name input */}
-              <input
-                value={m.name}
-                onChange={e => updateMember(m.id, "name", e.target.value)}
-                placeholder="Full name"
-                style={{ ...selectStyle, flex: 1, fontSize: 13 }}
-              />
-              {/* Color swatches inline */}
-              <div style={{ display: "flex", gap: 4, flexShrink: 0 }}>
-                {MEMBER_COLORS.slice(0, 6).map(c => (
-                  <div key={c} onClick={() => updateMember(m.id, "color", c)} style={{
-                    width: 16, height: 16, borderRadius: "50%", background: c, cursor: "pointer",
-                    border: m.color === c ? "2px solid #fff" : "2px solid transparent",
-                    flexShrink: 0, transition: "border 0.1s",
-                  }} />
-                ))}
-                {MEMBER_COLORS.slice(6).map(c => (
-                  <div key={c} onClick={() => updateMember(m.id, "color", c)} style={{
-                    width: 16, height: 16, borderRadius: "50%", background: c, cursor: "pointer",
-                    border: m.color === c ? "2px solid #fff" : "2px solid transparent",
-                    flexShrink: 0, transition: "border 0.1s",
-                  }} />
-                ))}
-              </div>
-              {/* Remove */}
-              <button onClick={() => removeMember(m.id)} style={{
-                background: "none", border: "none", color: "#9ca3af", cursor: "pointer",
-                fontSize: 16, lineHeight: 1, padding: "0 2px", flexShrink: 0,
-                transition: "color 0.12s",
-              }}
-                onMouseEnter={e => e.currentTarget.style.color = "#f87171"}
-                onMouseLeave={e => e.currentTarget.style.color = "#334155"}
-              >×</button>
-            </div>
-          ))}
-          <button onClick={addMember} style={{
-            marginTop: 4, background: "none", border: "1px dashed rgba(0,0,0,0.09)",
-            borderRadius: 6, color: "#9ca3af", padding: "7px", cursor: "pointer",
-            fontSize: 11, fontFamily: "inherit", transition: "all 0.12s",
-          }}
-            onMouseEnter={e => { e.currentTarget.style.borderColor = "rgba(56,189,248,0.6)"; e.currentTarget.style.color = "#0284c7"; }}
-            onMouseLeave={e => { e.currentTarget.style.borderColor = "rgba(0,0,0,0.09)"; e.currentTarget.style.color = "#334155"; }}
-          >+ Add team member</button>
+      <ModalShell title="Team Settings" onClose={onClose} accentColor="#38bdf8" width={520}>
+        {/* Tabs */}
+        <div style={{ display: "flex", borderBottom: "1px solid rgba(0,0,0,0.07)" }}>
+          <div style={tabStyle("team")} onClick={() => setTab("team")}>TEAM MEMBERS</div>
+          <div style={tabStyle("access")} onClick={() => setTab("access")}>ACCESS & INVITES</div>
         </div>
-        <ModalFooter onClose={onClose} onSave={handleSave} saveLabel="Save Team" color="#38bdf8" />
+
+        {/* ── Team Members tab ── */}
+        {tab === "team" && (
+          <div style={{ padding: 22, display: "flex", flexDirection: "column", gap: 10 }}>
+            <div style={{ fontSize: fs(11), color: "#6b7280", marginBottom: 4 }}>
+              Edit names or colors. Changes apply across all projects.
+            </div>
+            {members.map((m) => (
+              <div key={m.id} style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                <div style={{ position: "relative", flexShrink: 0 }}>
+                  <Avatar person={{ ...m, name: m.name || "?" }} size={34} />
+                  <select value={m.color} onChange={e => updateMember(m.id, "color", e.target.value)}
+                    style={{ position: "absolute", inset: 0, opacity: 0, cursor: "pointer", width: "100%" }}
+                    title="Change color">
+                    {MEMBER_COLORS.map(c => <option key={c} value={c}>{c}</option>)}
+                  </select>
+                </div>
+                <input value={m.name} onChange={e => updateMember(m.id, "name", e.target.value)}
+                  placeholder="Full name" style={{ ...selectStyle, flex: 1, fontSize: 13 }} />
+                <div style={{ display: "flex", gap: 4, flexShrink: 0 }}>
+                  {MEMBER_COLORS.map(c => (
+                    <div key={c} onClick={() => updateMember(m.id, "color", c)} style={{
+                      width: 16, height: 16, borderRadius: "50%", background: c, cursor: "pointer",
+                      border: m.color === c ? "2px solid #111" : "2px solid transparent", flexShrink: 0,
+                    }} />
+                  ))}
+                </div>
+                <button onClick={() => removeMember(m.id)} style={{ background: "none", border: "none", color: "#9ca3af", cursor: "pointer", fontSize: 16, lineHeight: 1, padding: "0 2px", flexShrink: 0 }}
+                  onMouseEnter={e => e.currentTarget.style.color = "#f87171"}
+                  onMouseLeave={e => e.currentTarget.style.color = "#9ca3af"}>×</button>
+              </div>
+            ))}
+            <button onClick={addMember} style={{ marginTop: 4, background: "none", border: "1px dashed rgba(0,0,0,0.09)", borderRadius: 6, color: "#9ca3af", padding: "7px", cursor: "pointer", fontSize: 11, fontFamily: "inherit" }}
+              onMouseEnter={e => { e.currentTarget.style.borderColor = "rgba(56,189,248,0.6)"; e.currentTarget.style.color = "#0284c7"; }}
+              onMouseLeave={e => { e.currentTarget.style.borderColor = "rgba(0,0,0,0.09)"; e.currentTarget.style.color = "#9ca3af"; }}>
+              + Add team member
+            </button>
+          </div>
+        )}
+
+        {/* ── Access & Invites tab ── */}
+        {tab === "access" && (
+          <div style={{ padding: 22, display: "flex", flexDirection: "column", gap: 16 }}>
+
+            {/* Existing access rows */}
+            <div>
+              <div style={{ fontSize: 10, fontWeight: 700, color: "#6b7280", letterSpacing: "0.07em", textTransform: "uppercase", marginBottom: 10 }}>
+                Current Team Access
+              </div>
+              {people.length === 0 && <div style={{ fontSize: 12, color: "#9ca3af" }}>No team members yet.</div>}
+              {people.map(p => (
+                <div key={p.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "7px 0", borderBottom: "1px solid rgba(0,0,0,0.04)" }}>
+                  <Avatar person={p} size={28} />
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontSize: 12, fontWeight: 600, color: "#1f2937" }}>{p.name}</div>
+                    <div style={{ fontSize: 10, color: "#9ca3af" }}>ID: {p.id}</div>
+                  </div>
+                  <span style={{ fontSize: 10, fontWeight: 700, color: "#6b7280", background: "rgba(0,0,0,0.05)", borderRadius: 4, padding: "2px 8px" }}>
+                    team member
+                  </span>
+                </div>
+              ))}
+            </div>
+
+            {/* Divider */}
+            <div style={{ borderTop: "1px solid rgba(0,0,0,0.07)", paddingTop: 16 }}>
+              <div style={{ fontSize: 10, fontWeight: 700, color: "#6b7280", letterSpacing: "0.07em", textTransform: "uppercase", marginBottom: 12 }}>
+                Invite New User
+              </div>
+
+              {invStatus === "done" && (
+                <div style={{ background: "rgba(52,211,153,0.1)", border: "1px solid rgba(52,211,153,0.3)", borderRadius: 8, padding: "12px 14px", marginBottom: 12 }}>
+                  <div style={{ fontSize: 12, fontWeight: 700, color: "#059669" }}>✓ Invite sent</div>
+                  <div style={{ fontSize: 11, color: "#6b7280", marginTop: 4 }}>{invResult?.message}</div>
+                </div>
+              )}
+
+              {invStatus === "sql" && invResult && (
+                <div style={{ marginBottom: 12 }}>
+                  <div style={{ background: "rgba(251,191,36,0.1)", border: "1px solid rgba(251,191,36,0.3)", borderRadius: 8, padding: "12px 14px", marginBottom: 10 }}>
+                    <div style={{ fontSize: 12, fontWeight: 700, color: "#92400e" }}>Two-step manual setup required</div>
+                    <div style={{ fontSize: 11, color: "#78350f", marginTop: 4, lineHeight: 1.5 }}>
+                      To send automatic invites, add <code style={{ background: "rgba(0,0,0,0.07)", borderRadius: 3, padding: "1px 4px" }}>window.__SB_SERVICE_KEY__</code> to your <code style={{ background: "rgba(0,0,0,0.07)", borderRadius: 3, padding: "1px 4px" }}>main.jsx</code> (Supabase service role key). Until then, follow the steps below.
+                    </div>
+                  </div>
+                  <div style={{ fontSize: 11, fontWeight: 700, color: "#374151", marginBottom: 6 }}>
+                    Copy this SQL and run it in Supabase → SQL Editor after inviting the user:
+                  </div>
+                  <div style={{ position: "relative" }}>
+                    <pre style={{ background: "#1e293b", color: "#e2e8f0", borderRadius: 8, padding: "12px 14px", fontSize: 10, lineHeight: 1.6, overflowX: "auto", margin: 0, fontFamily: "monospace" }}>
+                      {invResult.sql}
+                    </pre>
+                    <button
+                      onClick={() => { navigator.clipboard?.writeText(invResult.sql); }}
+                      style={{ position: "absolute", top: 8, right: 8, background: "rgba(255,255,255,0.1)", border: "1px solid rgba(255,255,255,0.2)", borderRadius: 4, color: "#e2e8f0", fontSize: 10, cursor: "pointer", padding: "3px 8px", fontFamily: "inherit" }}>
+                      Copy
+                    </button>
+                  </div>
+                  <div style={{ marginTop: 10, fontSize: 11, color: "#6b7280", lineHeight: 1.6 }}>
+                    <b>Step 1:</b> Go to <b>Supabase → Authentication → Users → Invite User</b>, enter <b>{invResult.email}</b>.<br />
+                    <b>Step 2:</b> After they accept, copy their UUID from the Users table and paste it into the SQL above, then run it.
+                  </div>
+                  <button onClick={() => { setInvStatus(null); setInvResult(null); }} style={{ marginTop: 10, background: "none", border: "1px solid rgba(0,0,0,0.1)", borderRadius: 6, color: "#6b7280", padding: "6px 14px", cursor: "pointer", fontSize: 11, fontFamily: "inherit" }}>
+                    Invite another
+                  </button>
+                </div>
+              )}
+
+              {(invStatus === null || invStatus === "sending") && (
+                <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                  <div style={{ display: "flex", gap: 10 }}>
+                    <div style={{ flex: 1 }}>
+                      <div style={{ fontSize: 10, fontWeight: 700, color: "#6b7280", marginBottom: 4, textTransform: "uppercase", letterSpacing: "0.07em" }}>Email *</div>
+                      <input type="email" value={invEmail} onChange={e => setInvEmail(e.target.value)}
+                        placeholder="name@company.com"
+                        style={{ ...selectStyle, width: "100%" }} />
+                    </div>
+                    <div style={{ flex: 1 }}>
+                      <div style={{ fontSize: 10, fontWeight: 700, color: "#6b7280", marginBottom: 4, textTransform: "uppercase", letterSpacing: "0.07em" }}>Display Name</div>
+                      <input value={invName} onChange={e => setInvName(e.target.value)}
+                        placeholder="Optional"
+                        style={{ ...selectStyle, width: "100%" }} />
+                    </div>
+                  </div>
+                  <div style={{ display: "flex", gap: 10 }}>
+                    <div style={{ flex: 1 }}>
+                      <div style={{ fontSize: 10, fontWeight: 700, color: "#6b7280", marginBottom: 4, textTransform: "uppercase", letterSpacing: "0.07em" }}>Role</div>
+                      <select value={invRole} onChange={e => setInvRole(e.target.value)} style={{ ...selectStyle, width: "100%" }}>
+                        <option value="member">Member</option>
+                        <option value="admin">Admin</option>
+                      </select>
+                    </div>
+                    <div style={{ flex: 1 }}>
+                      <div style={{ fontSize: 10, fontWeight: 700, color: "#6b7280", marginBottom: 4, textTransform: "uppercase", letterSpacing: "0.07em" }}>Link to Team Member</div>
+                      <select value={invMember} onChange={e => setInvMember(e.target.value)} style={{ ...selectStyle, width: "100%" }}>
+                        <option value="">— not linked —</option>
+                        {people.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+                      </select>
+                    </div>
+                  </div>
+                  {!serviceKey && (
+                    <div style={{ fontSize: 10, color: "#9ca3af", background: "rgba(0,0,0,0.03)", borderRadius: 6, padding: "8px 10px", lineHeight: 1.5 }}>
+                      💡 For one-click invites, add <code style={{ background: "rgba(0,0,0,0.06)", borderRadius: 3, padding: "1px 4px" }}>window.__SB_SERVICE_KEY__ = "your-service-role-key"</code> to <code style={{ background: "rgba(0,0,0,0.06)", borderRadius: 3, padding: "1px 4px" }}>main.jsx</code>. Without it, you'll get SQL to run manually.
+                    </div>
+                  )}
+                  <button
+                    onClick={handleInvite}
+                    disabled={!invEmail.trim() || invStatus === "sending"}
+                    style={{ padding: "10px 0", borderRadius: 7, background: invEmail.trim() ? "#38bdf8" : "rgba(0,0,0,0.07)", border: "none", color: invEmail.trim() ? "#fff" : "#9ca3af", fontSize: 12, fontWeight: 700, cursor: invEmail.trim() ? "pointer" : "default", fontFamily: "inherit", transition: "all 0.12s" }}>
+                    {invStatus === "sending" ? "Sending…" : serviceKey ? "Send Invite Email" : "Generate Setup SQL"}
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {tab === "team" && <ModalFooter onClose={onClose} onSave={handleSave} saveLabel="Save Team" color="#38bdf8" />}
+        {tab === "access" && (
+          <div style={{ borderTop: "1px solid rgba(0,0,0,0.07)", padding: "14px 20px", display: "flex", justifyContent: "flex-end" }}>
+            <button onClick={onClose} style={cancelBtnStyle}>Close</button>
+          </div>
+        )}
       </ModalShell>
     </Overlay>
   );
@@ -7221,12 +7419,18 @@ export default function App() {
         {view === "myhub" && (
           <MyHubView
             projects={projects} people={people} holidays={holidays} pto={pto}
-            currentUserId={currentUserId} onSetCurrentUser={setCurrentUser}
+            currentUserId={currentUserId}
+            onSetCurrentUser={(id) => {
+              if (currentRole !== "admin") return;
+              setCurrentUser(id);
+            }}
             onEditItem={handleEditItem} onMarkDone={handleMarkDone}
             savePto={savePto} deletePto={deletePto}
             personalTasks={personalTasks}
             onSavePersonalTask={savePersonalTask}
             onDeletePersonalTask={deletePersonalTask}
+            currentRole={currentRole}
+            authMemberId={currentUserId}
           />
         )}
         {view === "dashboard" && <DashboardView projects={projects} people={people} holidays={holidays} pto={pto} savePto={savePto} onEditItem={handleEditItem} onAddDeliverable={(proj) => setNewDeliverable(proj)} onAddSubtask={(proj, del) => setNewSubtask({ project: proj, deliverable: del })} onNewProject={() => setShowNewProject(true)} onOpenProject={id => setProjectDetailsId(id)} />}
@@ -7331,7 +7535,7 @@ export default function App() {
         }} />
       )}
       {showTeamSettings && (
-        <TeamSettingsModal people={people} onClose={() => setShowTeamSettings(false)} onSave={async (newPeople) => {
+        <TeamSettingsModal people={people} sbUrl={SB_URL} sbKey={SB_KEY} onClose={() => setShowTeamSettings(false)} onSave={async (newPeople) => {
             setPeople(newPeople);
             // Upsert all members
             for (let i = 0; i < newPeople.length; i++) {
