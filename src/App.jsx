@@ -4774,6 +4774,162 @@ function ReportingDashboardView({ projects, people, holidays = [], pto = [] }) {
         </div>
       </Card>
 
+
+      {/* ── Client Hour Forecasting ── */}
+      {(() => {
+        const yearStart = new Date(today.getFullYear(), 0, 1);
+        const yearEnd   = new Date(today.getFullYear(), 11, 31);
+        const yearStartStr = yearStart.toISOString().slice(0,10);
+        const yearEndStr   = yearEnd.toISOString().slice(0,10);
+        const daysInYear   = Math.ceil((yearEnd - yearStart) / 86400000) + 1;
+        const dayOfYear    = Math.ceil((today - yearStart) / 86400000) + 1;
+        const pctYearElapsed = dayOfYear / daysInYear;
+
+        // All project tasks (no personal tasks)
+        const clientTasks = projects.flatMap(p =>
+          p.deliverables.flatMap(d => {
+            const tasks = d.subtasks.length > 0 ? d.subtasks : [d];
+            return tasks.map(t => ({
+              ...t,
+              proj: p,
+              hrs: effortHrs(t.effort, t.customHours),
+            }));
+          })
+        );
+
+        const forecasts = people.map(person => {
+          const myTasks = clientTasks.filter(t =>
+            (t.assignees || []).includes(person.id)
+          );
+          const target = person.annualTarget || 1850;
+
+          // YTD completed: tasks marked Done with end date this year
+          const ytdDone = myTasks
+            .filter(t => t.status === "Done" && t.end >= yearStartStr && t.end <= todayStr)
+            .reduce((s, t) => s + t.hrs, 0);
+
+          // Planned future: not Done, end date from today through year end
+          const plannedFuture = myTasks
+            .filter(t => t.status !== "Done" && t.end > todayStr && t.end <= yearEndStr)
+            .reduce((s, t) => s + t.hrs, 0);
+
+          // In-progress partial: count at 50%
+          const inProgressPartial = myTasks
+            .filter(t => t.status === "In Progress" && t.end <= todayStr)
+            .reduce((s, t) => s + t.hrs * 0.5, 0);
+
+          const completedHrs = Math.round(ytdDone + inProgressPartial);
+          const forecastedHrs = Math.round(completedHrs + plannedFuture);
+          const pctOfTarget = target > 0 ? Math.round((forecastedHrs / target) * 100) : 0;
+
+          // Neutral pace label — not surveillance language
+          let paceLabel, paceColor;
+          if (forecastedHrs === 0 && completedHrs === 0) {
+            paceLabel = "Needs Planning"; paceColor = "#9ca3af";
+          } else if (pctOfTarget >= 95 && pctOfTarget <= 110) {
+            paceLabel = "On Pace";         paceColor = "#34d399";
+          } else if (pctOfTarget > 110) {
+            paceLabel = "Above Forecast";  paceColor = "#6366f1";
+          } else if (pctOfTarget >= 75) {
+            paceLabel = "Below Forecast";  paceColor = "#fbbf24";
+          } else {
+            paceLabel = "Needs Planning Review"; paceColor = "#f97316";
+          }
+
+          return { person, target, completedHrs, plannedFuture: Math.round(plannedFuture), forecastedHrs, pctOfTarget, paceLabel, paceColor, myTasks: myTasks.length };
+        });
+
+        const totalForecasted = forecasts.reduce((s, f) => s + f.forecastedHrs, 0);
+        const totalTarget     = forecasts.reduce((s, f) => s + f.target, 0);
+        const portfolioPct    = totalTarget > 0 ? Math.round((totalForecasted / totalTarget) * 100) : 0;
+
+        return (
+          <Card style={{ gridColumn: "1 / -1" }}>
+            <div style={{ display:"flex", alignItems:"flex-start", justifyContent:"space-between", marginBottom:14, flexWrap:"wrap", gap:10 }}>
+              <div>
+                <SectionTitle>Client Hour Forecasting</SectionTitle>
+                <div style={{ fontSize:10, color:"#9ca3af", marginTop:2 }}>
+                  Based on planned task estimates, not actual time entry. · {today.getFullYear()} · {Math.round(pctYearElapsed*100)}% of year elapsed
+                </div>
+              </div>
+              <div style={{ display:"flex", alignItems:"center", gap:10 }}>
+                <div style={{ textAlign:"right" }}>
+                  <div style={{ fontSize:11, color:"#6b7280", fontWeight:600 }}>Portfolio Forecast</div>
+                  <div style={{ fontSize:20, fontWeight:900, color: portfolioPct >= 90 ? "#34d399" : portfolioPct >= 70 ? "#fbbf24" : "#f97316" }}>
+                    {totalForecasted.toLocaleString()}h
+                  </div>
+                  <div style={{ fontSize:10, color:"#9ca3af" }}>vs {totalTarget.toLocaleString()}h target · {portfolioPct}%</div>
+                </div>
+              </div>
+            </div>
+
+            {/* Progress bar for portfolio */}
+            <div style={{ height:6, background:"rgba(0,0,0,0.06)", borderRadius:3, overflow:"hidden", marginBottom:18 }}>
+              <div style={{ height:"100%", width:`${Math.min(100,portfolioPct)}%`, background: portfolioPct>=90?"#34d399":portfolioPct>=70?"#fbbf24":"#f97316", borderRadius:3, transition:"width 0.4s" }} />
+            </div>
+
+            {/* Per-person rows */}
+            <div style={{ display:"flex", flexDirection:"column", gap:0 }}>
+              {/* Header */}
+              <div style={{ display:"grid", gridTemplateColumns:"160px 1fr 70px 70px 80px 80px 110px", gap:0, padding:"0 0 8px 0", borderBottom:"1px solid rgba(0,0,0,0.07)", marginBottom:4 }}>
+                {["Person","Forecast Progress","Done","Planned","Forecast","Target","Status"].map((h,i) => (
+                  <div key={i} style={{ fontSize:9, fontWeight:700, color:"#9ca3af", letterSpacing:"0.07em", textTransform:"uppercase", padding:"0 8px" }}>{h}</div>
+                ))}
+              </div>
+
+              {forecasts.map(({ person, target, completedHrs, plannedFuture, forecastedHrs, pctOfTarget, paceLabel, paceColor }) => {
+                const barCompleted = target > 0 ? Math.min(100, Math.round((completedHrs / target) * 100)) : 0;
+                const barPlanned   = target > 0 ? Math.min(100 - barCompleted, Math.round((plannedFuture / target) * 100)) : 0;
+                return (
+                  <div key={person.id} style={{ display:"grid", gridTemplateColumns:"160px 1fr 70px 70px 80px 80px 110px", gap:0, padding:"10px 0", borderBottom:"1px solid rgba(0,0,0,0.04)", alignItems:"center" }}>
+                    {/* Person */}
+                    <div style={{ display:"flex", alignItems:"center", gap:8, padding:"0 8px" }}>
+                      <div style={{ width:24, height:24, borderRadius:"50%", background:person.color, display:"flex", alignItems:"center", justifyContent:"center", fontSize:8, fontWeight:800, color:"#fff", flexShrink:0 }}>
+                        {person.name.split(" ").map(n=>n[0]).join("").slice(0,2)}
+                      </div>
+                      <span style={{ fontSize:11, fontWeight:600, color:"#1f2937", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{person.name}</span>
+                    </div>
+
+                    {/* Stacked progress bar */}
+                    <div style={{ padding:"0 8px" }}>
+                      <div style={{ height:8, background:"rgba(0,0,0,0.06)", borderRadius:4, overflow:"hidden", display:"flex" }}>
+                        <div style={{ height:"100%", width:`${barCompleted}%`, background:"#34d399", borderRadius:"4px 0 0 4px", flexShrink:0 }} />
+                        <div style={{ height:"100%", width:`${barPlanned}%`, background:"rgba(99,102,241,0.35)", flexShrink:0 }} />
+                      </div>
+                      <div style={{ fontSize:9, color:"#9ca3af", marginTop:3 }}>
+                        <span style={{ color:"#059669" }}>■</span> Done &nbsp;
+                        <span style={{ color:"#6366f1" }}>■</span> Planned
+                      </div>
+                    </div>
+
+                    {/* Numbers */}
+                    <div style={{ padding:"0 8px", fontSize:11, fontWeight:700, color:"#059669", textAlign:"right" }}>{completedHrs}h</div>
+                    <div style={{ padding:"0 8px", fontSize:11, fontWeight:600, color:"#6366f1", textAlign:"right" }}>{plannedFuture}h</div>
+                    <div style={{ padding:"0 8px", fontSize:12, fontWeight:800, color:"#1f2937", textAlign:"right" }}>{forecastedHrs}h</div>
+                    <div style={{ padding:"0 8px", fontSize:11, color:"#9ca3af", textAlign:"right" }}>{target.toLocaleString()}h</div>
+
+                    {/* Status badge */}
+                    <div style={{ padding:"0 8px" }}>
+                      <span style={{ fontSize:9, fontWeight:700, color:paceColor, background:`${paceColor}18`, borderRadius:4, padding:"3px 7px", whiteSpace:"nowrap" }}>
+                        {paceLabel}
+                      </span>
+                      <div style={{ fontSize:9, color:"#9ca3af", marginTop:2 }}>{pctOfTarget}% of target</div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Disclaimer */}
+            <div style={{ marginTop:16, padding:"10px 14px", background:"rgba(0,0,0,0.02)", borderRadius:6, borderLeft:"3px solid rgba(0,0,0,0.08)" }}>
+              <div style={{ fontSize:10, color:"#9ca3af", lineHeight:1.6 }}>
+                <b style={{ color:"#6b7280" }}>About this view:</b> Hours are estimated from task size (S=1h, M=4h, L=8h, Custom=entered value). Completed hours reflect tasks marked Done or In Progress this year. Forecasted hours add planned future tasks through year-end. This is a planning tool — adjust annual targets per person in ⚙ Team Settings.
+              </div>
+            </div>
+          </Card>
+        );
+      })()}
+
     </div>
   );
 }
@@ -5258,7 +5414,7 @@ on conflict (id) do update set
         {tab === "team" && (
           <div style={{ padding: 22, display: "flex", flexDirection: "column", gap: 10 }}>
             <div style={{ fontSize: fs(11), color: "#6b7280", marginBottom: 4 }}>
-              Edit names or colors. Changes apply across all projects.
+              Edit names, colors, and annual client-hour targets. Default target: 1,850 hrs/year.
             </div>
             {members.map((m) => (
               <div key={m.id} style={{ display: "flex", alignItems: "center", gap: 10 }}>
@@ -5272,6 +5428,14 @@ on conflict (id) do update set
                 </div>
                 <input value={m.name} onChange={e => updateMember(m.id, "name", e.target.value)}
                   placeholder="Full name" style={{ ...selectStyle, flex: 1, fontSize: 13 }} />
+              <div style={{ display:"flex", alignItems:"center", gap:4, flexShrink:0 }}>
+                <input type="number" min="0" max="5000" step="50"
+                  value={m.annualTarget ?? 1850}
+                  onChange={e => updateMember(m.id, "annualTarget", parseInt(e.target.value) || 1850)}
+                  title="Annual client-hour target"
+                  style={{ ...selectStyle, width:68, fontSize:11, textAlign:"center" }} />
+                <span style={{ fontSize:9, color:"#9ca3af", whiteSpace:"nowrap" }}>hrs/yr</span>
+              </div>
                 <div style={{ display: "flex", gap: 4, flexShrink: 0 }}>
                   {MEMBER_COLORS.map(c => (
                     <div key={c} onClick={() => updateMember(m.id, "color", c)} style={{
@@ -6729,7 +6893,7 @@ export default function App() {
       });
       setProjects(active.map(p => rowToProject(p, dR.data, cleanSubtasks)));
       setArchivedProjects(archived.map(p => rowToProject(p, dR.data, cleanSubtasks)));
-      setPeople((mR.data || []).map(p => ({ id: p.id, name: p.name, color: p.color })));
+      setPeople((mR.data || []).map(p => ({ id: p.id, name: p.name, color: p.color, annualTarget: p.annual_target || 1850 })));
       setHolidays((hR.data || []).map(h => ({ id: h.id, date: h.date, name: h.name })));
       const notes = {};
       (nR.data || []).forEach(n => { notes[`${n.project_id}::${n.deliverable_id}`] = n.note; });
@@ -6773,7 +6937,7 @@ export default function App() {
 
   async function seedDefaults() {
     for (let i = 0; i < initialPeople.length; i++) {
-      await sb.upsert("team_members", { id: initialPeople[i].id, name: initialPeople[i].name, color: initialPeople[i].color, position: i });
+      await sb.upsert("team_members", { id: initialPeople[i].id, name: initialPeople[i].name, color: initialPeople[i].color, position: i, annual_target: initialPeople[i].annualTarget || 1850 });
     }
     for (let pi = 0; pi < initialProjects.length; pi++) {
       const proj = initialProjects[pi];
@@ -7539,7 +7703,7 @@ export default function App() {
             setPeople(newPeople);
             // Upsert all members
             for (let i = 0; i < newPeople.length; i++) {
-              await sb.upsert("team_members", { id: newPeople[i].id, name: newPeople[i].name, color: newPeople[i].color, position: i });
+              await sb.upsert("team_members", { id: newPeople[i].id, name: newPeople[i].name, color: newPeople[i].color, position: i, annual_target: newPeople[i].annualTarget || 1850 });
             }
           }} />
       )}
