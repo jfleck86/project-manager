@@ -5108,7 +5108,7 @@ function StatusView({ projects, people, statusNotes, onUpdateNote, onAddDelivera
       const key = `${proj.id}::${del.id}`;
       const activeSub = del.subtasks.find(s => s.status === "In Progress") || del.subtasks.find(s => s.status !== "Done");
       const taskEnd = activeSub?.end || del.end || "";
-      return { proj, del, track, displayStatus, assigneeNames, note: statusNotes[key] || "", key, taskEnd };
+      return { proj, del, track, displayStatus, assigneeNames, note: statusNotes[key] || "", key, taskEnd, activeSub };
     })
   );
 
@@ -5189,7 +5189,7 @@ function StatusView({ projects, people, statusNotes, onUpdateNote, onAddDelivera
         {filtered.length === 0 && (
           <div style={{ padding: 32, textAlign: "center", color: "#9ca3af", fontSize: 12 }}>No deliverables match the current filter.</div>
         )}
-        {filtered.map(({ proj, del, track, assigneeNames, note, key, taskEnd }, i) => {
+        {filtered.map(({ proj, del, track, assigneeNames, note, key, taskEnd, activeSub }, i) => {
           const m = trackMeta[track] || trackMeta["on-track"];
           const currentTask = getCurrentTask(del);
           const isDone = track === "done";
@@ -5285,12 +5285,14 @@ function StatusView({ projects, people, statusNotes, onUpdateNote, onAddDelivera
                 </div>
               </Cell>
 
-              {/* Department */}
+              {/* Department — shows active task's dept, falls back to deliverable */}
               <Cell border>
-                {del.department
-                  ? <DeptBadge dept={del.department} />
-                  : <span style={{ fontSize: 10, color: "#9ca3af" }}>—</span>
-                }
+                {(() => {
+                  const dept = activeSub?.department || del.department;
+                  return dept
+                    ? <DeptBadge dept={dept} />
+                    : <span style={{ fontSize: 10, color: "#9ca3af" }}>—</span>;
+                })()}
               </Cell>
 
               {/* Due Date */}
