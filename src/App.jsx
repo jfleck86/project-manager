@@ -1,37 +1,19 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from "react";
-
-// ── Constants ─────────────────────────────────────────────────────────────────
 import { BRAND_TEAL, BRAND_NAVY, BRAND_TEAL_D, BRAND_TEAL_L } from "./constants/brand.js";
 import { STATUSES, statusMeta } from "./constants/statuses.js";
 import { PRIORITIES, priorityMeta, DEPARTMENTS, deptMeta } from "./constants/priorities.js";
-import {
-  EFFORT_OPTS, EFFORT_LABEL, EFFORT_HOURS, EFFORT_VAL,
-  WEEKLY_HOURS, HOURS_LIGHT, HOURS_MEDIUM,
-} from "./constants/effort.js";
+import { EFFORT_OPTS, EFFORT_LABEL, EFFORT_HOURS, EFFORT_VAL, WEEKLY_HOURS, HOURS_LIGHT, HOURS_MEDIUM } from "./constants/effort.js";
 import { TIMELINE_START, TIMELINE_END } from "./constants/timeline.js";
 import { MIN_DAY_W, MAX_DAY_W, D_ROW, S_ROW, COL_DEFAULTS } from "./constants/columns.js";
 import { PROJECT_COLORS } from "./constants/colors.js";
-
-// ── Utils ─────────────────────────────────────────────────────────────────────
-import {
-  parseDate, fmt, fmtFull, fmtMonth, durDays,
-  dayOffset, busyDays, addWorkingDays,
-} from "./utils/dates.js";
+import { parseDate, fmt, fmtFull, fmtMonth, durDays, dayOffset, busyDays, addWorkingDays } from "./utils/dates.js";
 import { effortHours, classifyLoad, ptoDaysInWeek, availableHours } from "./utils/workload.js";
 import { getInitials } from "./utils/formatting.js";
+import { rowToSubtask, rowToDeliverable, rowToProject, delToRow, subToRow, ptoToRow, rowToPto, isOnPto, ptoOverlap } from "./lib/dataConverters.js";
+import { signOut, getStoredSession, fetchAppUser } from "./lib/supabaseAuth.js";
+import LoginScreen from "./components/LoginScreen.jsx";
 
-// ── Data converters ───────────────────────────────────────────────────────────
-import {
-  rowToSubtask, rowToDeliverable, rowToProject,
-  delToRow, subToRow, ptoToRow, rowToPto,
-  isOnPto, ptoOverlap,
-} from "./lib/dataConverters.js";
-
-// ── UI-only (not extracted to modules) ───────────────────────────────────────
-const MEMBER_COLORS = [
-  "#f59e0b","#38bdf8","#a78bfa","#34d399","#f87171",
-  "#fb923c","#e879f9","#4ade80","#60a5fa","#facc15","#64748b",
-];
+const MEMBER_COLORS = ["#f59e0b","#38bdf8","#a78bfa","#34d399","#f87171","#fb923c","#e879f9","#4ade80","#60a5fa","#facc15","#64748b"];
 const ZOOM_LEVELS = [
   { id: "compact",  label: "Compact",    base: 11, scale: 0.85 },
   { id: "standard", label: "Standard",   base: 13, scale: 1.00 },
@@ -41,19 +23,57 @@ const ZOOM_LEVELS = [
 let _zoomRatio = 1.0;
 const fs = (px) => Math.round(px * _zoomRatio);
 const totalDays = Math.ceil((TIMELINE_END - TIMELINE_START) / 86400000);
-const TODAY     = (() => { const d = new Date(); d.setHours(0,0,0,0); return d; })();
+const TODAY = (() => { const d = new Date(); d.setHours(0,0,0,0); return d; })();
+function cloneSubtask(sub) { return { ...sub, id: "s_" + Date.now() + "_" + Math.random().toString(36).slice(2,6) }; }
+// Custom effort wrapper — handles "C" (custom hours) in addition to S/M/L
+const effortHrs = (effort, customHours) => {
+  try {
+    if (!effort || effort === "C") return Math.max(0.5, parseFloat(customHours) || 1);
+    return effortHours(effort) || 1;
+  } catch { return 1; }
+};
 
-// ── Copy/paste helpers ────────────────────────────────────────────────────────
-function cloneSubtask(sub) {
-  return { ...sub, id: "s_" + Date.now() + "_" + Math.random().toString(36).slice(2, 6) };
+// Effort-weighted deliverable progress (0-100).
+// Done = 100% of effort, In Progress = 50%, anything else = 0%.
+// Falls back to del.progress if no subtasks exist.
+function delProgress(del) {
+  const subs = del.subtasks || [];
+  if (subs.length === 0) {
+    return del.status === "Done" ? 100 : (del.progress || 0);
+  }
+  let total = 0, completed = 0;
+  subs.forEach(s => {
+    const hrs = effortHrs(s.effort, s.customHours);
+    total += hrs;
+    if (s.status === "Done")        completed += hrs;
+    else if (s.status === "In Progress") completed += hrs * 0.5;
+  });
+  if (total === 0) return del.status === "Done" ? 100 : 0;
+  return Math.round((completed / total) * 100);
 }
 function cloneDeliverable(del) {
-  const newId = "d_" + Date.now() + "_" + Math.random().toString(36).slice(2, 6);
-  return {
-    ...del, id: newId, title: del.title + " (copy)", dependencies: [],
-    subtasks: del.subtasks.map(s => cloneSubtask({ ...s, dependencies: [] })),
-  };
+  const newId = "d_" + Date.now() + "_" + Math.random().toString(36).slice(2,6);
+  return { ...del, id: newId, title: del.title + " (copy)", dependencies: [], subtasks: del.subtasks.map(s => cloneSubtask({ ...s, dependencies: [] })) };
 }
+
+const initialPeople = [
+  { id: "p1", name: "Maya Chen",     color: "#f59e0b" },
+  { id: "p2", name: "Jordan Rivers", color: "#38bdf8" },
+  { id: "p3", name: "Sam Torres",    color: "#a78bfa" },
+  { id: "p4", name: "Riley Park",    color: "#34d399" },
+  { id: "p5", name: "Alex Kim",      color: "#f87171" },
+];
+
+// Font-size scaler — multiply any px size by the zoom ratio
+// zoomRatio is set inside App() based on selected zoom level
+
+
+
+// Workload classification (hours-based, hidden from users)
+
+// Count PTO business days in a week (Mon–Fri)
+
+// Available hours for a person in a week (accounts for PTO + holidays)
 
 // --- DATA - deliverables = specific outputs; subtasks = production workflow steps
 const initialProjects = [
@@ -494,6 +514,9 @@ const initialProjects = [
 
 // --- HELPERS ──────────────────────────────────────────────────────────────────
 
+// Business days between two date strings (inclusive), skipping weekends + provided holidays
+
+
 function Avatar({ person, size = 26 }) {
   const initials = getInitials(person.name);
   return (
@@ -527,6 +550,7 @@ function PriorityDot({ priority }) {
   const m = priorityMeta[priority] || priorityMeta["Low"];
   return <span style={{ color: m.color, fontWeight: 700, fontSize: 10, letterSpacing: "0.03em" }}>● {priority}</span>;
 }
+
 
 function DeptBadge({ dept }) {
   if (!dept) return null;
@@ -869,19 +893,30 @@ function TaskModal({ item, projectColor, allItems, onClose, onSave, allPeople, o
             </div>
             <div>
               <div style={labelStyle}>Effort</div>
-              <div style={{ display: "flex", gap: 6 }}>
-                {EFFORT_OPTS.map(e => (
-                  <button key={e} onClick={() => set("effort", e)} style={{
-                    flex: 1, padding: "6px 0", borderRadius: 6, cursor: "pointer",
+              <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                {[...EFFORT_OPTS, "C"].map(e => (
+                  <button key={e} onClick={() => { set("effort", e); if (e !== "C") set("customHours", null); }} style={{
+                    flex: 1, minWidth: 44, padding: "6px 0", borderRadius: 6, cursor: "pointer",
                     fontFamily: "inherit", fontSize: 11, fontWeight: 700,
                     border: `1.5px solid ${form.effort === e ? projectColor : "rgba(0,0,0,0.12)"}`,
                     background: form.effort === e ? projectColor + "15" : "transparent",
                     color: form.effort === e ? projectColor : "#6b7280",
                   }}>
-                    {EFFORT_LABEL[e]}
+                    {e === "C" ? "Custom" : EFFORT_LABEL[e]}
                   </button>
                 ))}
               </div>
+              {form.effort === "C" && (
+                <div style={{ marginTop: 8, display: "flex", alignItems: "center", gap: 8 }}>
+                  <input
+                    type="number" min="0.5" max="200" step="0.5"
+                    value={form.customHours ?? 1}
+                    onChange={e => set("customHours", parseFloat(e.target.value) || 1)}
+                    style={{ ...inputStyle, width: 80 }}
+                  />
+                  <span style={{ fontSize: 11, color: "#6b7280" }}>hours</span>
+                </div>
+              )}
             </div>
           </div>
           {/* Dates + Duration — all linked */}
@@ -1461,8 +1496,8 @@ function DashboardView({ projects, people, onEditItem, onAddDeliverable, onAddSu
                     <td style={{ padding: "10px 14px", fontSize: fs(11), color: "#6b7280" }} title="Business days">{busyDays(d.start, d.end, new Set(holidays.map(h=>h.date)))}d</td>
                     <td style={{ padding: "10px 14px", width: 110 }}>
                       <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                        <ProgressBar value={d.progress} color={d.projectColor} />
-                        <span style={{ fontSize: 10, color: "#6b7280", minWidth: 26 }}>{d.progress}%</span>
+                        <ProgressBar value={delProgress(d)} color={d.projectColor} />
+                        <span style={{ fontSize: 10, color: "#6b7280", minWidth: 26 }}>{delProgress(d)}%</span>
                       </div>
                     </td>
                     <td style={{ padding: "10px 14px", whiteSpace: "nowrap" }}>
@@ -1533,6 +1568,9 @@ function SectionHeader({ children, noMargin }) {
 }
 
 // --- TIMELINE ────────────────────────────────────────────────────────────────
+
+// Column widths for the left table
+// LEFT_W is now computed dynamically from colWidths state
 
 // Build a flat numbered index of all items across all projects
 function buildRowIndex(projects) {
@@ -1673,6 +1711,7 @@ function cascadeDates(projects, changedId, newEnd, holidays = []) {
 }
 
 
+
 function TimelineView({ projects, people, onEditItem, onAddDeliverable, onAddSubtask, onMarkDone, onSaveItem, holidays = [], onInsertSubtask, onReorderSubtasks, onDeleteSubtask, statusNotes = {}, onUpdateNote, onSaveProject, onOpenProject, clipboard, onCopySubtask, onCopyDeliverable, onPasteSubtask, onPasteDeliverable }) {
   const [collapsed, setCollapsed] = useState(() => {
     try { return JSON.parse(localStorage.getItem('planr_collapsed') || '{}'); } catch { return {}; }
@@ -1761,9 +1800,9 @@ function TimelineView({ projects, people, onEditItem, onAddDeliverable, onAddSub
   }));
   const todayOff = Math.ceil((TODAY - TIMELINE_START) / 86400000);
 
-  // Scroll to today on mount
+  // Scroll to left edge on mount (show project columns first)
   useEffect(() => {
-    if (containerRef.current) containerRef.current.scrollLeft = Math.max(0, todayOff * DAY_W - 200);
+    if (containerRef.current) containerRef.current.scrollLeft = 0;
   }, []);
 
   // ── Pan-drag: attach to the actual scroll container (containerRef) ────────
@@ -1974,6 +2013,9 @@ function EdgeFade({ bodyRef, leftWidth }) {
     transition: "opacity 0.15s",
   });
 
+
+
+
   return (
     <>
       {showLeft  && <div style={{ ...fade("left"),  marginLeft:  leftWidth, position: "absolute", left: leftWidth, top: 0, bottom: 0 }}><span style={{ fontSize: 10, color: "#6b7280", opacity: 0.7 }}>◀</span></div>}
@@ -2048,7 +2090,7 @@ function ProjectSection({ proj, people, collapsed, toggle, weeks, todayOff, allI
   const projBarW = projStartOff !== null ? Math.max((projEndOff - projStartOff) * DAY_W, 8) : 0;
 
   const avgProgress = proj.deliverables.length
-    ? Math.round(proj.deliverables.reduce((s, d) => s + d.progress, 0) / proj.deliverables.length)
+    ? Math.round(proj.deliverables.reduce((s, d) => s + delProgress(d), 0) / proj.deliverables.length)
     : 0;
 
   return (
@@ -2289,7 +2331,11 @@ function DeliverableRow({ del, proj, people, collapsed, toggle, weeks, todayOff,
         <LeftCell width={colWidths.title}>
           <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
             <CheckButton isDone={del.status === "Done"} onClick={() => onMarkDone(proj.id, del.id, null)} />
-            {del.status === "Not Started" && (
+            {/* Auto-derive display status from subtasks if not overridden */}
+            {del.status === "Not Started" && del.subtasks?.some(s => s.status === "Done" || s.status === "In Progress") && (
+              <span style={{ fontSize: fs(9), color: "#0ea5e9", fontWeight: 700, background: "rgba(14,165,233,0.1)", borderRadius: 4, padding: "1px 5px", whiteSpace: "nowrap" }}>In Progress</span>
+            )}
+            {del.status === "Not Started" && !del.subtasks?.some(s => s.status === "Done" || s.status === "In Progress") && (
               <button onClick={e => { e.stopPropagation(); save({ status: "In Progress" }); }} title="Start task"
                 style={{ background: "none", border: "none", cursor: "pointer", color: "#34d399", fontSize: 11, padding: 0, lineHeight: 1, flexShrink: 0 }}>▶</button>
             )}
@@ -2363,7 +2409,7 @@ function DeliverableRow({ del, proj, people, collapsed, toggle, weeks, todayOff,
               background: `linear-gradient(90deg, ${proj.color}cc, ${proj.color}aa)`,
               border: `1.5px solid ${proj.color}`, boxShadow: `0 1px 4px ${proj.color}40`,
             }}>
-            <div style={{ position: "absolute", left: 0, top: 0, height: "100%", width: `${del.progress}%`, background: "rgba(0,0,0,0.2)", borderRadius: 5 }} />
+            <div style={{ position: "absolute", left: 0, top: 0, height: "100%", width: `${delProgress(del)}%`, background: "rgba(0,0,0,0.2)", borderRadius: 5 }} />
             <div style={{ position: "relative", padding: "0 7px", fontSize: 10, fontWeight: 700, color: "#fff", lineHeight: "24px", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
               {del.title}
             </div>
@@ -2748,6 +2794,230 @@ function InlineAssignees({ assignees, onChange, people }) {
 }
 
 // --- PEOPLE VIEW ──────────────────────────────────────────────────────────────
+
+function PersonPanel({ person, compact = false, allActive, projects, collapsed, loadBadge, GDAY_W, G_ROW, pto, holidays, holidaySet, onEditItem, onSaveItem, toggleCollapse, onTimelineReview }) {
+  const [sortMode, setSortMode] = useState("default"); // "default" | "duedate"
+  const myItemsRaw = allActive.filter(t => (t.assignees||[]).includes(person.id)).map(t => {
+    if (t.deliverableId) {
+      const proj = projects.find(p => p.id === t.projectId);
+      const del  = proj?.deliverables.find(d => d.id === t.deliverableId);
+      return { ...t, delTitle: del?.title || "" };
+    }
+    return t;
+  });
+  const myItems = sortMode === "duedate"
+    ? [...myItemsRaw].sort((a,b) => {
+        if (!a.end) return 1; if (!b.end) return -1;
+        return a.end.localeCompare(b.end);
+      })
+    : myItemsRaw;
+  const byStatus  = STATUSES.reduce((a,s) => ({ ...a, [s]: myItems.filter(t=>t.status===s) }), {});
+  const isCollapsed = collapsed[person.id];
+  const load = loadBadge(myItems);
+
+  // Gantt date range
+  const myDates  = myItems.flatMap(t => [t.start, t.end]).filter(Boolean).sort();
+  const gStart   = myDates.length ? new Date(myDates[0]+"T00:00:00") : TIMELINE_START;
+  const gEnd     = myDates.length ? new Date(myDates[myDates.length-1]+"T00:00:00") : TIMELINE_END;
+  const ganttDays = Math.max(14, Math.ceil((gEnd - gStart)/86400000) + 14);
+  const gOff = (ds) => Math.ceil((parseDate(ds) - gStart) / 86400000);
+
+  // Drag-to-reschedule
+  const startDrag = (item, e) => {
+    e.preventDefault();
+    const startX = e.clientX;
+    const dur = Math.ceil((parseDate(item.end) - parseDate(item.start)) / 86400000);
+    const onMove = (mv) => {
+      const d = Math.round((mv.clientX - startX) / GDAY_W);
+      if (!d) return;
+      const ns = new Date(parseDate(item.start).getTime() + d*86400000).toISOString().slice(0,10);
+      const ne = new Date(parseDate(item.start).getTime() + (d+dur)*86400000).toISOString().slice(0,10);
+      // Check if new end exceeds deliverable end date
+      const parentDel = projects?.flatMap(p => p.deliverables).find(dd => dd.id === item.deliverableId);
+      const delEnd = parentDel?.end;
+      if (delEnd && ne > delEnd && onTimelineReview) {
+        const daysPast = Math.ceil((new Date(ne+"T00:00:00") - new Date(delEnd+"T00:00:00")) / 86400000);
+        onTimelineReview({ item, newEnd: ne, delEnd, daysPast, pendingSave: () => onSaveItem({ ...item, start: ns, end: ne }) });
+      } else {
+        onSaveItem({ ...item, start: ns, end: ne });
+      }
+    };
+    const onUp = () => { document.removeEventListener("mousemove",onMove); document.removeEventListener("mouseup",onUp); };
+    document.addEventListener("mousemove", onMove);
+    document.addEventListener("mouseup", onUp);
+  };
+
+  return (
+    <div style={{ background: "#fff", border: "1px solid rgba(0,0,0,0.07)", borderRadius: 10, overflow: "hidden" }}>
+      {/* ── Person header — always visible, sticky in compare mode ── */}
+      <div
+        onClick={() => compact && toggleCollapse(person.id)}
+        style={{ display: "flex", alignItems: "center", gap: 12, padding: "13px 16px",
+          background: isCollapsed ? "rgba(0,0,0,0.02)" : person.color + "0d",
+          borderBottom: isCollapsed ? "none" : "1px solid rgba(0,0,0,0.06)",
+          cursor: compact ? "pointer" : "default",
+          position: compact ? "sticky" : "static", top: 0, zIndex: 5,
+        }}
+      >
+        <Avatar person={person} size={36} />
+        <div style={{ flex: 1 }}>
+          <div style={{ fontSize: 13, fontWeight: 800, color: "#1f2937" }}>{person.name}</div>
+          <div style={{ display: "flex", gap: 10, marginTop: 3, flexWrap: "wrap" }}>
+            {STATUSES.map(s => { const n = (byStatus[s]||[]).length; if (!n) return null;
+              return <span key={s} style={{ fontSize: 10, color: (statusMeta[s]||statusMeta["Not Started"]).color, fontWeight: 700 }}>{n} {s}</span>; })}
+            {myItems.length === 0 && <span style={{ fontSize: 10, color: "#9ca3af" }}>No active tasks</span>}
+          </div>
+        </div>
+        {/* Workload badge */}
+        <div style={{ textAlign: "right", flexShrink: 0 }}>
+          <span style={{ fontSize: 10, fontWeight: 700, background: load.color+"18", color: load.color,
+            border: `1px solid ${load.color}40`, borderRadius: 6, padding: "3px 9px" }}>{load.label}</span>
+          <div style={{ fontSize: 10, color: "#9ca3af", marginTop: 3 }}>{myItems.length} tasks</div>
+        </div>
+        {compact && (
+          <span style={{ fontSize: 11, color: "#9ca3af", marginLeft: 4 }}>{isCollapsed ? "▶" : "▼"}</span>
+        )}
+      </div>
+
+      {!isCollapsed && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 0 }}>
+          {/* ── Schedule Overview Gantt ── */}
+          {myItems.length > 0 && (
+            <div style={{ borderBottom: "1px solid rgba(0,0,0,0.06)" }}>
+              <div style={{ padding: "8px 14px 6px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                <span style={{ fontSize: 10, fontWeight: 700, color: "#9ca3af", letterSpacing: "0.07em" }}>
+                  SCHEDULE OVERVIEW <span style={{ fontWeight: 400, color: "#c4c9d4" }}>· drag bars to reschedule</span>
+                </span>
+                <div style={{ display: "flex", gap: 4 }}>
+                  {[["default","Default"],["duedate","By Due Date"]].map(([m,l]) => (
+                    <button key={m} onClick={() => setSortMode(m)} style={{
+                      fontSize: 9, fontWeight: sortMode===m ? 700 : 500, padding: "2px 8px",
+                      borderRadius: 4, border: `1px solid ${sortMode===m ? BRAND_TEAL+"80" : "rgba(0,0,0,0.1)"}`,
+                      background: sortMode===m ? BRAND_TEAL_L : "transparent",
+                      color: sortMode===m ? BRAND_TEAL_D : "#9ca3af", cursor: "pointer", fontFamily: "inherit",
+                    }}>{l}</button>
+                  ))}
+                </div>
+              </div>
+              <div style={{ overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
+                <div style={{ minWidth: (ganttDays + 2) * GDAY_W + 420, position: "relative" }}>
+                  {/* Header */}
+                  <div style={{ display: "flex", background: "#f7f8fa", borderBottom: "1px solid rgba(0,0,0,0.05)" }}>
+                    <div style={{ width: 80, flexShrink: 0, borderRight: "1px solid rgba(0,0,0,0.05)", padding: "5px 10px", fontSize: 9, fontWeight: 700, color: "#9ca3af", letterSpacing: "0.07em" }}>CLIENT</div>
+                    <div style={{ width: 180, flexShrink: 0, borderRight: "1px solid rgba(0,0,0,0.05)", padding: "5px 10px", fontSize: 9, fontWeight: 700, color: "#9ca3af", letterSpacing: "0.07em" }}>DELIVERABLE</div>
+                    <div style={{ width: 160, flexShrink: 0, borderRight: "1px solid rgba(0,0,0,0.05)", padding: "5px 10px", fontSize: 9, fontWeight: 700, color: "#9ca3af", letterSpacing: "0.07em" }}>TASK</div>
+                    <div style={{ flex: 1, position: "relative", height: 24 }}>
+                      {/* PTO header bands */}
+                      {pto.filter(p => p.personId === person.id).map(p => {
+                        const ps = gOff(p.start), pe = gOff(p.end);
+                        if (pe < 0 || ps > ganttDays+2) return null;
+                        const l = Math.max(0,ps)*GDAY_W, r = Math.min(ganttDays+2,pe+1)*GDAY_W;
+                        return <div key={p.id} title={`PTO${p.note?" · "+p.note:""}`} style={{ position:"absolute", left:l, top:0, bottom:0, width:r-l, background:"rgba(0,0,0,0.07)", display:"flex", alignItems:"center", justifyContent:"center", pointerEvents:"none" }}><span style={{ fontSize:7, fontWeight:700, color:"rgba(0,0,0,0.35)" }}>🌴</span></div>;
+                      })}
+                      {/* Week markers */}
+                      {Array.from({ length: Math.ceil(ganttDays/7) }, (_,wi) => {
+                        const d = new Date(gStart.getTime() + wi*7*86400000);
+                        return <div key={wi} style={{ position:"absolute", left:wi*7*GDAY_W, height:"100%", display:"flex", alignItems:"center", paddingLeft:4, fontSize:8, color:"#9ca3af", fontWeight:600, borderLeft:"1px solid rgba(0,0,0,0.06)", whiteSpace:"nowrap" }}>{d.toLocaleDateString("en-US",{month:"short",day:"numeric"})}</div>;
+                      })}
+                    </div>
+                  </div>
+                  {/* Rows */}
+                  {myItems.map(item => {
+                    const sOff = gOff(item.start), eOff = gOff(item.end);
+                    const bw = Math.max((eOff-sOff)*GDAY_W+GDAY_W, 8);
+                    const proj = projects.find(p => p.id === item.projectId);
+                    const del  = proj?.deliverables.find(d => d.id === item.deliverableId);
+                    return (
+                      <div key={item.id} style={{ display:"flex", height:G_ROW, borderBottom:"1px solid rgba(0,0,0,0.04)", alignItems:"center" }}
+                        onMouseEnter={e=>e.currentTarget.style.background="rgba(0,0,0,0.02)"}
+                        onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
+                        <div style={{ width:80, flexShrink:0, padding:"0 8px", borderRight:"1px solid rgba(0,0,0,0.04)", overflow:"hidden", display:"flex", alignItems:"center" }}>
+                          <span style={{ fontSize:10, fontWeight:700, color:"#374151", whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>{proj?.client||"—"}</span>
+                        </div>
+                        <div style={{ width:180, flexShrink:0, padding:"0 8px", borderRight:"1px solid rgba(0,0,0,0.04)", overflow:"hidden", display:"flex", alignItems:"center" }}>
+                          <span style={{ fontSize:10, fontWeight:600, color:proj?.color||"#374151", whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }} title={del?.title||item.title}>{del?.title||item.title}</span>
+                        </div>
+                        <div onClick={() => onEditItem(item)} style={{ width:160, flexShrink:0, padding:"0 8px", borderRight:"1px solid rgba(0,0,0,0.04)", overflow:"hidden", display:"flex", alignItems:"center", cursor:"pointer" }}>
+                          <span style={{ fontSize:10, fontWeight:600, color:del?"#374151":"#9ca3af", whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }} title={del ? item.title : ""}>{del ? item.title : "—"}</span>
+                        </div>
+                        <div style={{ flex:1, height:"100%", position:"relative", overflow:"visible" }}>
+                          {/* Holiday shading */}
+                          {holidays.map(h => { const ho=gOff(h.date); if(ho<0||ho>ganttDays+2) return null; return <div key={h.date} style={{ position:"absolute", left:ho*GDAY_W, top:0, bottom:0, width:GDAY_W, background:"rgba(251,146,60,0.1)", pointerEvents:"none" }} />; })}
+                          {/* PTO shading */}
+                          {pto.filter(p=>p.personId===person.id).map(p => {
+                            const ps=gOff(p.start), pe=gOff(p.end); if(pe<0||ps>ganttDays+2) return null;
+                            const l=Math.max(0,ps)*GDAY_W, r=Math.min(ganttDays+2,pe+1)*GDAY_W;
+                            return <div key={p.id} style={{ position:"absolute", left:l, top:0, bottom:0, width:r-l, background:"repeating-linear-gradient(45deg,rgba(0,0,0,0.04) 0px,rgba(0,0,0,0.04) 4px,rgba(0,0,0,0.08) 4px,rgba(0,0,0,0.08) 8px)", borderLeft:"1px solid rgba(0,0,0,0.1)", borderRight:"1px solid rgba(0,0,0,0.1)", pointerEvents:"none", zIndex:1 }} />;
+                          })}
+                          {/* Week grid */}
+                          {Array.from({length:Math.ceil(ganttDays/7)},(_,wi)=>(<div key={wi} style={{ position:"absolute", left:wi*7*GDAY_W, top:0, bottom:0, width:1, background:"rgba(0,0,0,0.04)" }} />))}
+                          {/* Bar */}
+                          <div onMouseDown={e=>startDrag(item,e)} onClick={() => onEditItem(item)}
+                            style={{ position:"absolute", left:sOff*GDAY_W, top:"50%", transform:"translateY(-50%)", width:bw, height:16, borderRadius:4, cursor:"pointer", background:(proj?.color||"#6b7280")+"cc", border:`1.5px solid ${proj?.color||"#6b7280"}`, overflow:"hidden", userSelect:"none" }}>
+                            <div style={{ position:"absolute", inset:0, width:`${item.progress||0}%`, background:"rgba(0,0,0,0.15)" }} />
+                            <div style={{ position:"relative", padding:"0 4px", fontSize:8, fontWeight:600, color:"#fff", lineHeight:"16px", whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>{item.title}</div>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* ── Task cards: In Progress + Not Started ── */}
+          {!compact && (
+            <div style={{ display:"flex", gap:12, padding:14, alignItems:"flex-start" }}>
+              {["In Progress","Not Started"].map(s => {
+                const items = (byStatus[s]||[]);
+                const m = statusMeta[s]||statusMeta["Not Started"];
+                return (
+                  <div key={s} style={{ flex:1, minWidth:0, background:"rgba(0,0,0,0.015)", border:"1px solid rgba(0,0,0,0.06)", borderRadius:8, overflow:"hidden" }}>
+                    <div style={{ padding:"8px 12px", borderBottom:"1px solid rgba(0,0,0,0.05)", display:"flex", alignItems:"center", gap:6 }}>
+                      <div style={{ width:7, height:7, borderRadius:"50%", background:m.color }} />
+                      <span style={{ fontSize:10, fontWeight:700, color:m.color }}>{s}</span>
+                      <span style={{ marginLeft:"auto", fontSize:10, fontWeight:700, color:m.color, background:m.bg, borderRadius:8, padding:"1px 7px" }}>{items.length}</span>
+                    </div>
+                    <div style={{ padding:"8px 10px", display:"flex", flexWrap:"wrap", gap:6 }}>
+                      {items.map(item => (
+                        <div key={item.id} onClick={() => onEditItem(item)} style={{ flex:"0 0 calc(50% - 3px)", minWidth:120, boxSizing:"border-box", background:"#fff", border:"1px solid rgba(0,0,0,0.07)", borderLeft:`3px solid ${item.projectColor}`, borderRadius:6, padding:"7px 9px", cursor:"pointer" }}
+                          onMouseEnter={e=>e.currentTarget.style.boxShadow="0 1px 6px rgba(0,0,0,0.08)"}
+                          onMouseLeave={e=>e.currentTarget.style.boxShadow="none"}>
+                          <div style={{ fontSize:11, fontWeight:700, color:"#1f2937", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{item.title}</div>
+                          <div style={{ fontSize:9, color:item.projectColor, fontWeight:600, marginTop:1, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{item.projectName}</div>
+                          <div style={{ display:"flex", alignItems:"center", gap:4, marginTop:4, flexWrap:"wrap" }}>
+                            <StatusBadge status={item.status} small />
+                            {item.effort && item.effort!=="M" && <span style={{ fontSize:9, color:"#6b7280", background:"rgba(0,0,0,0.05)", borderRadius:3, padding:"1px 4px" }}>{EFFORT_LABEL[item.effort]}</span>}
+                            {item.end && <span style={{ fontSize:9, color:"#9ca3af", marginLeft:"auto" }}>Due {fmt(parseDate(item.end))}</span>}
+                          </div>
+                        </div>
+                      ))}
+                      {items.length===0 && <div style={{ width:"100%", padding:"10px 0", textAlign:"center", fontSize:10, color:"#9ca3af" }}>None</div>}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          {/* Blocked — shown in both modes if any */}
+          {(byStatus["Blocked"]||[]).length > 0 && (
+            <div style={{ margin:"0 14px 14px", background:"rgba(248,113,113,0.04)", border:"1px solid rgba(248,113,113,0.2)", borderRadius:8, padding:"8px 12px" }}>
+              <div style={{ fontSize:10, fontWeight:700, color:"#f87171", marginBottom:6 }}>⊘ Blocked · {(byStatus["Blocked"]||[]).length}</div>
+              <div style={{ display:"flex", flexWrap:"wrap", gap:6 }}>
+                {(byStatus["Blocked"]||[]).map(item => (
+                  <div key={item.id} onClick={() => onEditItem(item)} style={{ fontSize:10, fontWeight:600, color:"#374151", background:"#fff", border:"1px solid rgba(248,113,113,0.2)", borderLeft:`3px solid ${item.projectColor}`, borderRadius:6, padding:"5px 9px", cursor:"pointer", whiteSpace:"nowrap" }}>{item.title}</div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+  }
+
 function PeopleView({ projects, people, onEditItem, onMarkDone, onSaveItem, holidays = [], pto = [] }) {
   const allSubtasks = projects.flatMap(p => p.deliverables.flatMap(d =>
     d.subtasks.map(s => ({ ...s, projectId: p.id, projectName: p.name, projectColor: p.color, deliverableId: d.id }))
@@ -2777,6 +3047,10 @@ function PeopleView({ projects, people, onEditItem, onMarkDone, onSaveItem, holi
   const G_ROW  = 28;
   const holidaySet = new Set(holidays.map(h => h.date));
 
+  // Timeline review alert state
+  const [timelineAlert, setTimelineAlert] = useState(null); // { item, newEnd, delEnd, projEnd, pendingSave }
+  const onTimelineReview = (alert) => setTimelineAlert(alert);
+
   // ── Workload badge ────────────────────────────────────────────────────────
   const loadBadge = (items) => {
     const hrs = items.reduce((s,t) => s + effortHours(t.effort), 0);
@@ -2784,220 +3058,6 @@ function PeopleView({ projects, people, onEditItem, onMarkDone, onSaveItem, holi
   };
 
   // ── PersonPanel ────────────────────────────────────────────────────────────
-  const PersonPanel = ({ person, compact = false }) => {
-    const [sortMode, setSortMode] = useState("default"); // "default" | "duedate"
-    const myItemsRaw = allActive.filter(t => (t.assignees||[]).includes(person.id)).map(t => {
-      if (t.deliverableId) {
-        const proj = projects.find(p => p.id === t.projectId);
-        const del  = proj?.deliverables.find(d => d.id === t.deliverableId);
-        return { ...t, delTitle: del?.title || "" };
-      }
-      return t;
-    });
-    const myItems = sortMode === "duedate"
-      ? [...myItemsRaw].sort((a,b) => {
-          if (!a.end) return 1; if (!b.end) return -1;
-          return a.end.localeCompare(b.end);
-        })
-      : myItemsRaw;
-    const byStatus  = STATUSES.reduce((a,s) => ({ ...a, [s]: myItems.filter(t=>t.status===s) }), {});
-    const isCollapsed = collapsed[person.id];
-    const load = loadBadge(myItems);
-
-    // Gantt date range
-    const myDates  = myItems.flatMap(t => [t.start, t.end]).filter(Boolean).sort();
-    const gStart   = myDates.length ? new Date(myDates[0]+"T00:00:00") : TIMELINE_START;
-    const gEnd     = myDates.length ? new Date(myDates[myDates.length-1]+"T00:00:00") : TIMELINE_END;
-    const ganttDays = Math.max(14, Math.ceil((gEnd - gStart)/86400000) + 14);
-    const gOff = (ds) => Math.ceil((parseDate(ds) - gStart) / 86400000);
-
-    // Drag-to-reschedule
-    const startDrag = (item, e) => {
-      e.preventDefault();
-      const startX = e.clientX;
-      const dur = Math.ceil((parseDate(item.end) - parseDate(item.start)) / 86400000);
-      const onMove = (mv) => {
-        const d = Math.round((mv.clientX - startX) / GDAY_W);
-        if (!d) return;
-        const ns = new Date(parseDate(item.start).getTime() + d*86400000).toISOString().slice(0,10);
-        const ne = new Date(parseDate(item.start).getTime() + (d+dur)*86400000).toISOString().slice(0,10);
-        onSaveItem({ ...item, start: ns, end: ne });
-      };
-      const onUp = () => { document.removeEventListener("mousemove",onMove); document.removeEventListener("mouseup",onUp); };
-      document.addEventListener("mousemove", onMove);
-      document.addEventListener("mouseup", onUp);
-    };
-
-    return (
-      <div style={{ background: "#fff", border: "1px solid rgba(0,0,0,0.07)", borderRadius: 10, overflow: "hidden" }}>
-        {/* ── Person header — always visible, sticky in compare mode ── */}
-        <div
-          onClick={() => compact && toggleCollapse(person.id)}
-          style={{ display: "flex", alignItems: "center", gap: 12, padding: "13px 16px",
-            background: isCollapsed ? "rgba(0,0,0,0.02)" : person.color + "0d",
-            borderBottom: isCollapsed ? "none" : "1px solid rgba(0,0,0,0.06)",
-            cursor: compact ? "pointer" : "default",
-            position: compact ? "sticky" : "static", top: 0, zIndex: 5,
-          }}
-        >
-          <Avatar person={person} size={36} />
-          <div style={{ flex: 1 }}>
-            <div style={{ fontSize: 13, fontWeight: 800, color: "#1f2937" }}>{person.name}</div>
-            <div style={{ display: "flex", gap: 10, marginTop: 3, flexWrap: "wrap" }}>
-              {STATUSES.map(s => { const n = (byStatus[s]||[]).length; if (!n) return null;
-                return <span key={s} style={{ fontSize: 10, color: (statusMeta[s]||statusMeta["Not Started"]).color, fontWeight: 700 }}>{n} {s}</span>; })}
-              {myItems.length === 0 && <span style={{ fontSize: 10, color: "#9ca3af" }}>No active tasks</span>}
-            </div>
-          </div>
-          {/* Workload badge */}
-          <div style={{ textAlign: "right", flexShrink: 0 }}>
-            <span style={{ fontSize: 10, fontWeight: 700, background: load.color+"18", color: load.color,
-              border: `1px solid ${load.color}40`, borderRadius: 6, padding: "3px 9px" }}>{load.label}</span>
-            <div style={{ fontSize: 10, color: "#9ca3af", marginTop: 3 }}>{myItems.length} tasks</div>
-          </div>
-          {compact && (
-            <span style={{ fontSize: 11, color: "#9ca3af", marginLeft: 4 }}>{isCollapsed ? "▶" : "▼"}</span>
-          )}
-        </div>
-
-        {!isCollapsed && (
-          <div style={{ display: "flex", flexDirection: "column", gap: 0 }}>
-            {/* ── Schedule Overview Gantt ── */}
-            {myItems.length > 0 && (
-              <div style={{ borderBottom: "1px solid rgba(0,0,0,0.06)" }}>
-                <div style={{ padding: "8px 14px 6px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                  <span style={{ fontSize: 10, fontWeight: 700, color: "#9ca3af", letterSpacing: "0.07em" }}>
-                    SCHEDULE OVERVIEW <span style={{ fontWeight: 400, color: "#c4c9d4" }}>· drag bars to reschedule</span>
-                  </span>
-                  <div style={{ display: "flex", gap: 4 }}>
-                    {[["default","Default"],["duedate","By Due Date"]].map(([m,l]) => (
-                      <button key={m} onClick={() => setSortMode(m)} style={{
-                        fontSize: 9, fontWeight: sortMode===m ? 700 : 500, padding: "2px 8px",
-                        borderRadius: 4, border: `1px solid ${sortMode===m ? BRAND_TEAL+"80" : "rgba(0,0,0,0.1)"}`,
-                        background: sortMode===m ? BRAND_TEAL_L : "transparent",
-                        color: sortMode===m ? BRAND_TEAL_D : "#9ca3af", cursor: "pointer", fontFamily: "inherit",
-                      }}>{l}</button>
-                    ))}
-                  </div>
-                </div>
-                <div style={{ overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
-                  <div style={{ minWidth: (ganttDays + 2) * GDAY_W + 420, position: "relative" }}>
-                    {/* Header */}
-                    <div style={{ display: "flex", background: "#f7f8fa", borderBottom: "1px solid rgba(0,0,0,0.05)" }}>
-                      <div style={{ width: 80, flexShrink: 0, borderRight: "1px solid rgba(0,0,0,0.05)", padding: "5px 10px", fontSize: 9, fontWeight: 700, color: "#9ca3af", letterSpacing: "0.07em" }}>CLIENT</div>
-                      <div style={{ width: 180, flexShrink: 0, borderRight: "1px solid rgba(0,0,0,0.05)", padding: "5px 10px", fontSize: 9, fontWeight: 700, color: "#9ca3af", letterSpacing: "0.07em" }}>DELIVERABLE</div>
-                      <div style={{ width: 160, flexShrink: 0, borderRight: "1px solid rgba(0,0,0,0.05)", padding: "5px 10px", fontSize: 9, fontWeight: 700, color: "#9ca3af", letterSpacing: "0.07em" }}>TASK</div>
-                      <div style={{ flex: 1, position: "relative", height: 24 }}>
-                        {/* PTO header bands */}
-                        {pto.filter(p => p.personId === person.id).map(p => {
-                          const ps = gOff(p.start), pe = gOff(p.end);
-                          if (pe < 0 || ps > ganttDays+2) return null;
-                          const l = Math.max(0,ps)*GDAY_W, r = Math.min(ganttDays+2,pe+1)*GDAY_W;
-                          return <div key={p.id} title={`PTO${p.note?" · "+p.note:""}`} style={{ position:"absolute", left:l, top:0, bottom:0, width:r-l, background:"rgba(0,0,0,0.07)", display:"flex", alignItems:"center", justifyContent:"center", pointerEvents:"none" }}><span style={{ fontSize:7, fontWeight:700, color:"rgba(0,0,0,0.35)" }}>🌴</span></div>;
-                        })}
-                        {/* Week markers */}
-                        {Array.from({ length: Math.ceil(ganttDays/7) }, (_,wi) => {
-                          const d = new Date(gStart.getTime() + wi*7*86400000);
-                          return <div key={wi} style={{ position:"absolute", left:wi*7*GDAY_W, height:"100%", display:"flex", alignItems:"center", paddingLeft:4, fontSize:8, color:"#9ca3af", fontWeight:600, borderLeft:"1px solid rgba(0,0,0,0.06)", whiteSpace:"nowrap" }}>{d.toLocaleDateString("en-US",{month:"short",day:"numeric"})}</div>;
-                        })}
-                      </div>
-                    </div>
-                    {/* Rows */}
-                    {myItems.map(item => {
-                      const sOff = gOff(item.start), eOff = gOff(item.end);
-                      const bw = Math.max((eOff-sOff)*GDAY_W+GDAY_W, 8);
-                      const proj = projects.find(p => p.id === item.projectId);
-                      const del  = proj?.deliverables.find(d => d.id === item.deliverableId);
-                      return (
-                        <div key={item.id} style={{ display:"flex", height:G_ROW, borderBottom:"1px solid rgba(0,0,0,0.04)", alignItems:"center" }}
-                          onMouseEnter={e=>e.currentTarget.style.background="rgba(0,0,0,0.02)"}
-                          onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
-                          <div style={{ width:80, flexShrink:0, padding:"0 8px", borderRight:"1px solid rgba(0,0,0,0.04)", overflow:"hidden", display:"flex", alignItems:"center" }}>
-                            <span style={{ fontSize:10, fontWeight:700, color:"#374151", whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>{proj?.client||"—"}</span>
-                          </div>
-                          <div style={{ width:180, flexShrink:0, padding:"0 8px", borderRight:"1px solid rgba(0,0,0,0.04)", overflow:"hidden", display:"flex", alignItems:"center" }}>
-                            <span style={{ fontSize:10, fontWeight:600, color:proj?.color||"#374151", whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }} title={del?.title||item.title}>{del?.title||item.title}</span>
-                          </div>
-                          <div onClick={() => onEditItem(item)} style={{ width:160, flexShrink:0, padding:"0 8px", borderRight:"1px solid rgba(0,0,0,0.04)", overflow:"hidden", display:"flex", alignItems:"center", cursor:"pointer" }}>
-                            <span style={{ fontSize:10, fontWeight:600, color:del?"#374151":"#9ca3af", whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }} title={del ? item.title : ""}>{del ? item.title : "—"}</span>
-                          </div>
-                          <div style={{ flex:1, height:"100%", position:"relative", overflow:"visible" }}>
-                            {/* Holiday shading */}
-                            {holidays.map(h => { const ho=gOff(h.date); if(ho<0||ho>ganttDays+2) return null; return <div key={h.date} style={{ position:"absolute", left:ho*GDAY_W, top:0, bottom:0, width:GDAY_W, background:"rgba(251,146,60,0.1)", pointerEvents:"none" }} />; })}
-                            {/* PTO shading */}
-                            {pto.filter(p=>p.personId===person.id).map(p => {
-                              const ps=gOff(p.start), pe=gOff(p.end); if(pe<0||ps>ganttDays+2) return null;
-                              const l=Math.max(0,ps)*GDAY_W, r=Math.min(ganttDays+2,pe+1)*GDAY_W;
-                              return <div key={p.id} style={{ position:"absolute", left:l, top:0, bottom:0, width:r-l, background:"repeating-linear-gradient(45deg,rgba(0,0,0,0.04) 0px,rgba(0,0,0,0.04) 4px,rgba(0,0,0,0.08) 4px,rgba(0,0,0,0.08) 8px)", borderLeft:"1px solid rgba(0,0,0,0.1)", borderRight:"1px solid rgba(0,0,0,0.1)", pointerEvents:"none", zIndex:1 }} />;
-                            })}
-                            {/* Week grid */}
-                            {Array.from({length:Math.ceil(ganttDays/7)},(_,wi)=>(<div key={wi} style={{ position:"absolute", left:wi*7*GDAY_W, top:0, bottom:0, width:1, background:"rgba(0,0,0,0.04)" }} />))}
-                            {/* Bar */}
-                            <div onMouseDown={e=>startDrag(item,e)} onClick={() => onEditItem(item)}
-                              style={{ position:"absolute", left:sOff*GDAY_W, top:"50%", transform:"translateY(-50%)", width:bw, height:16, borderRadius:4, cursor:"pointer", background:(proj?.color||"#6b7280")+"cc", border:`1.5px solid ${proj?.color||"#6b7280"}`, overflow:"hidden", userSelect:"none" }}>
-                              <div style={{ position:"absolute", inset:0, width:`${item.progress||0}%`, background:"rgba(0,0,0,0.15)" }} />
-                              <div style={{ position:"relative", padding:"0 4px", fontSize:8, fontWeight:600, color:"#fff", lineHeight:"16px", whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>{item.title}</div>
-                            </div>
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {/* ── Task cards: In Progress + Not Started ── */}
-            {!compact && (
-              <div style={{ display:"flex", gap:12, padding:14, alignItems:"flex-start" }}>
-                {["In Progress","Not Started"].map(s => {
-                  const items = (byStatus[s]||[]);
-                  const m = statusMeta[s]||statusMeta["Not Started"];
-                  return (
-                    <div key={s} style={{ flex:1, minWidth:0, background:"rgba(0,0,0,0.015)", border:"1px solid rgba(0,0,0,0.06)", borderRadius:8, overflow:"hidden" }}>
-                      <div style={{ padding:"8px 12px", borderBottom:"1px solid rgba(0,0,0,0.05)", display:"flex", alignItems:"center", gap:6 }}>
-                        <div style={{ width:7, height:7, borderRadius:"50%", background:m.color }} />
-                        <span style={{ fontSize:10, fontWeight:700, color:m.color }}>{s}</span>
-                        <span style={{ marginLeft:"auto", fontSize:10, fontWeight:700, color:m.color, background:m.bg, borderRadius:8, padding:"1px 7px" }}>{items.length}</span>
-                      </div>
-                      <div style={{ padding:"8px 10px", display:"flex", flexWrap:"wrap", gap:6 }}>
-                        {items.map(item => (
-                          <div key={item.id} onClick={() => onEditItem(item)} style={{ flex:"0 0 calc(50% - 3px)", minWidth:120, boxSizing:"border-box", background:"#fff", border:"1px solid rgba(0,0,0,0.07)", borderLeft:`3px solid ${item.projectColor}`, borderRadius:6, padding:"7px 9px", cursor:"pointer" }}
-                            onMouseEnter={e=>e.currentTarget.style.boxShadow="0 1px 6px rgba(0,0,0,0.08)"}
-                            onMouseLeave={e=>e.currentTarget.style.boxShadow="none"}>
-                            <div style={{ fontSize:11, fontWeight:700, color:"#1f2937", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{item.title}</div>
-                            <div style={{ fontSize:9, color:item.projectColor, fontWeight:600, marginTop:1, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{item.projectName}</div>
-                            <div style={{ display:"flex", alignItems:"center", gap:4, marginTop:4, flexWrap:"wrap" }}>
-                              <StatusBadge status={item.status} small />
-                              {item.effort && item.effort!=="M" && <span style={{ fontSize:9, color:"#6b7280", background:"rgba(0,0,0,0.05)", borderRadius:3, padding:"1px 4px" }}>{EFFORT_LABEL[item.effort]}</span>}
-                              {item.end && <span style={{ fontSize:9, color:"#9ca3af", marginLeft:"auto" }}>Due {fmt(parseDate(item.end))}</span>}
-                            </div>
-                          </div>
-                        ))}
-                        {items.length===0 && <div style={{ width:"100%", padding:"10px 0", textAlign:"center", fontSize:10, color:"#9ca3af" }}>None</div>}
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-
-            {/* Blocked — shown in both modes if any */}
-            {(byStatus["Blocked"]||[]).length > 0 && (
-              <div style={{ margin:"0 14px 14px", background:"rgba(248,113,113,0.04)", border:"1px solid rgba(248,113,113,0.2)", borderRadius:8, padding:"8px 12px" }}>
-                <div style={{ fontSize:10, fontWeight:700, color:"#f87171", marginBottom:6 }}>⊘ Blocked · {(byStatus["Blocked"]||[]).length}</div>
-                <div style={{ display:"flex", flexWrap:"wrap", gap:6 }}>
-                  {(byStatus["Blocked"]||[]).map(item => (
-                    <div key={item.id} onClick={() => onEditItem(item)} style={{ fontSize:10, fontWeight:600, color:"#374151", background:"#fff", border:"1px solid rgba(248,113,113,0.2)", borderLeft:`3px solid ${item.projectColor}`, borderRadius:6, padding:"5px 9px", cursor:"pointer", whiteSpace:"nowrap" }}>{item.title}</div>
-                  ))}
-                </div>
-              </div>
-            )}
-          </div>
-        )}
-      </div>
-    );
-  };
 
   // ── View mode toggle + person selector ────────────────────────────────────
   const visiblePeople = viewMode === "compare"
@@ -3059,6 +3119,37 @@ function PeopleView({ projects, people, onEditItem, onMarkDone, onSaveItem, holi
         })}
       </div>
 
+      {/* ── Timeline Review Alert Modal ── */}
+      {timelineAlert && (
+        <div style={{ position:"fixed", inset:0, zIndex:3000, display:"flex", alignItems:"center", justifyContent:"center", background:"rgba(0,0,0,0.35)" }}>
+          <div style={{ background:"#fff", borderRadius:12, padding:"28px 32px", maxWidth:420, width:"90vw", boxShadow:"0 8px 32px rgba(0,0,0,0.18)" }}>
+            <div style={{ fontSize:16, fontWeight:800, color:"#1f2937", marginBottom:8 }}>Timeline Review Recommended</div>
+            <div style={{ fontSize:13, color:"#6b7280", marginBottom:16 }}>
+              This change pushes work beyond the planned completion date. Please review the timeline.
+            </div>
+            <div style={{ background:"rgba(0,0,0,0.03)", borderRadius:8, padding:"12px 14px", marginBottom:18, fontSize:12 }}>
+              <div style={{ fontWeight:700, color:"#1f2937", marginBottom:6 }}>{timelineAlert.item?.title}</div>
+              <div style={{ display:"flex", flexDirection:"column", gap:4, color:"#6b7280" }}>
+                <span>Original end: <b>{timelineAlert.item?.end}</b></span>
+                <span>New end: <b style={{ color:"#f97316" }}>{timelineAlert.newEnd}</b></span>
+                {timelineAlert.delEnd && <span>Deliverable due: <b>{timelineAlert.delEnd}</b></span>}
+                {timelineAlert.daysPast > 0 && <span style={{ color:"#ef4444" }}>⚠ {timelineAlert.daysPast} day{timelineAlert.daysPast!==1?"s":""} past planned completion</span>}
+              </div>
+            </div>
+            <div style={{ display:"flex", gap:8 }}>
+              <button onClick={() => { timelineAlert.pendingSave(); setTimelineAlert(null); }}
+                style={{ flex:1, padding:"9px 0", borderRadius:7, background:"#f97316", border:"none", color:"#fff", fontSize:12, fontWeight:700, cursor:"pointer", fontFamily:"inherit" }}>
+                Continue Anyway
+              </button>
+              <button onClick={() => setTimelineAlert(null)}
+                style={{ flex:1, padding:"9px 0", borderRadius:7, background:"rgba(0,0,0,0.06)", border:"none", color:"#374151", fontSize:12, fontWeight:600, cursor:"pointer", fontFamily:"inherit" }}>
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* ── Main panels ── */}
       <div style={{ flex:1, display:"flex", flexDirection:"column", gap:14, minWidth:0 }}>
         {viewMode==="compare" && compared.length===0 && (
@@ -3067,7 +3158,12 @@ function PeopleView({ projects, people, onEditItem, onMarkDone, onSaveItem, holi
           </div>
         )}
         {visiblePeople.map(person => (
-          <PersonPanel key={person.id} person={person} compact={viewMode==="compare"} />
+          <PersonPanel key={person.id} person={person} compact={viewMode==="compare"}
+            allActive={allActive} projects={projects} collapsed={collapsed} loadBadge={loadBadge}
+            GDAY_W={GDAY_W} G_ROW={G_ROW} pto={pto} holidays={holidays} holidaySet={holidaySet}
+            onEditItem={onEditItem} onSaveItem={onSaveItem} toggleCollapse={toggleCollapse}
+            onTimelineReview={onTimelineReview}
+          />
         ))}
       </div>
     </div>
@@ -3471,7 +3567,25 @@ function WorkloadView({ projects, people, onEditItem, pto = [], holidays = [] })
 // ─── MY HUB VIEW ─────────────────────────────────────────────────────────────
 // Personal operational command center. Insert before StatusView in App.jsx.
 
-function MyHubView({ projects, people, holidays, pto = [], currentUserId, onSetCurrentUser, onEditItem, onMarkDone, savePto, deletePto }) {
+
+function Section({ title, icon, count, color = "#6b7280", children, empty, collapsed: initCollapsed = false }) {
+  const [open, setOpen] = useState(!initCollapsed);
+  if (!count) return null;
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 0 }}>
+      <button onClick={() => setOpen(o => !o)} style={{ display: "flex", alignItems: "center", gap: 7, background: "none", border: "none", cursor: "pointer", padding: "6px 0", textAlign: "left", fontFamily: "inherit" }}>
+        <span style={{ fontSize: 11, color: open ? "#1f2937" : "#6b7280", fontWeight: 700 }}>{icon} {title}</span>
+        <span style={{ fontSize: 10, background: color + "18", color, borderRadius: 10, padding: "1px 7px", fontWeight: 700 }}>{count}</span>
+        <span style={{ fontSize: 10, color: "#9ca3af", marginLeft: "auto" }}>{open ? "▲" : "▼"}</span>
+      </button>
+      {open && <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>{children}</div>}
+    </div>
+  );
+  }
+
+function MyHubView({ projects, people, holidays, pto = [], currentUserId, onSetCurrentUser, onEditItem, onMarkDone, savePto, deletePto, personalTasks = [], onSavePersonalTask, onDeletePersonalTask }) {
+  const TODAY = new Date(); TODAY.setHours(0,0,0,0);
+
   // Week bounds (Mon–Sun)
   const weekStart = new Date(TODAY);
   const day = weekStart.getDay(); weekStart.setDate(weekStart.getDate() - (day === 0 ? 6 : day - 1));
@@ -3485,6 +3599,9 @@ function MyHubView({ projects, people, holidays, pto = [], currentUserId, onSetC
 
   const [showPtoForm, setShowPtoForm] = useState(false);
   const [ptoForm, setPtoForm] = useState({ start: todayStr, end: todayStr, note: "" });
+  const [showTaskForm, setShowTaskForm] = useState(false);
+  const [editingTask, setEditingTask] = useState(null);
+  const [taskForm, setTaskForm] = useState({ title: "", status: "Not Started", priority: "Medium", dueDate: "", notes: "" });
   const hubHolidaySet = new Set((holidays||[]).map(h => h.date));
 
   // ── Resolve current user ──────────────────────────────────────────────────
@@ -3647,20 +3764,6 @@ function MyHubView({ projects, people, holidays, pto = [], currentUserId, onSetC
     );
   };
 
-  const Section = ({ title, icon, count, color = "#6b7280", children, empty, collapsed: initCollapsed = false }) => {
-    const [open, setOpen] = useState(!initCollapsed);
-    if (!count) return null;
-    return (
-      <div style={{ display: "flex", flexDirection: "column", gap: 0 }}>
-        <button onClick={() => setOpen(o => !o)} style={{ display: "flex", alignItems: "center", gap: 7, background: "none", border: "none", cursor: "pointer", padding: "6px 0", textAlign: "left", fontFamily: "inherit" }}>
-          <span style={{ fontSize: 11, color: open ? "#1f2937" : "#6b7280", fontWeight: 700 }}>{icon} {title}</span>
-          <span style={{ fontSize: 10, background: color + "18", color, borderRadius: 10, padding: "1px 7px", fontWeight: 700 }}>{count}</span>
-          <span style={{ fontSize: 10, color: "#9ca3af", marginLeft: "auto" }}>{open ? "▲" : "▼"}</span>
-        </button>
-        {open && <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>{children}</div>}
-      </div>
-    );
-  };
 
   if (!me) return (
     <div style={{ background: "#fff", border: "1px solid rgba(0,0,0,0.07)", borderRadius: 10, padding: 40, textAlign: "center" }}>
@@ -3798,9 +3901,91 @@ function MyHubView({ projects, people, holidays, pto = [], currentUserId, onSetC
       {/* ── Sections ── */}
       <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
 
-        <Section title="Recommended Next" icon="⚡" count={recommended.length} color={BRAND_TEAL}>
-          {recommended.map(t => <TaskCard key={t.id} task={t} />)}
-        </Section>
+        {/* ── My Tasks — top of page, always visible ── */}
+        <div style={{ background:"#fff", border:"1px solid rgba(0,0,0,0.07)", borderRadius:10, overflow:"hidden" }}>
+          {/* Header */}
+          <div style={{ padding:"12px 16px", borderBottom:"1px solid rgba(0,0,0,0.07)", display:"flex", alignItems:"center", justifyContent:"space-between" }}>
+            <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+              <span style={{ fontSize:13, color:"#6366f1" }}>☑</span>
+              <span style={{ fontSize:13, fontWeight:800, color:"#1f2937" }}>My Tasks</span>
+              <span style={{ fontSize:10, color:"#9ca3af", background:"rgba(0,0,0,0.04)", borderRadius:10, padding:"1px 7px" }}>
+                {personalTasks.filter(t => t.status !== "Done").length} active
+              </span>
+            </div>
+            <button onClick={() => { setTaskForm({ title:"", status:"Not Started", priority:"Medium", dueDate:"", notes:"" }); setEditingTask(null); setShowTaskForm(true); }}
+              style={{ fontSize:11, fontWeight:700, color:"#6366f1", background:"rgba(99,102,241,0.08)", border:"none", borderRadius:6, padding:"4px 12px", cursor:"pointer", fontFamily:"inherit" }}>
+              + Add Task
+            </button>
+          </div>
+
+          {/* Active tasks */}
+          <div>
+            {personalTasks.filter(t => t.status !== "Done").length === 0 && (
+              <div style={{ fontSize:12, color:"#9ca3af", textAlign:"center", padding:"16px 0" }}>No active tasks. Add one above.</div>
+            )}
+            {personalTasks.filter(t => t.status !== "Done").map(task => {
+              const isOverdueT = task.dueDate && task.dueDate < todayStr;
+              const isDueTodayT = task.dueDate === todayStr;
+              return (
+                <div key={task.id} style={{ display:"flex", alignItems:"flex-start", gap:10, padding:"10px 16px", borderBottom:"1px solid rgba(0,0,0,0.04)" }}>
+                  {/* Checkbox */}
+                  <label style={{ display:"flex", alignItems:"center", cursor:"pointer", flexShrink:0, marginTop:1 }}>
+                    <input type="checkbox" checked={task.status === "Done"}
+                      onChange={() => onSavePersonalTask({ ...task, status: "Done" })}
+                      style={{ width:15, height:15, accentColor:"#6366f1", cursor:"pointer" }} />
+                  </label>
+                  <div style={{ flex:1, minWidth:0 }}>
+                    <div style={{ fontSize:12, fontWeight:600, color:"#1f2937" }}>{task.title}</div>
+                    {task.dueDate && (
+                      <div style={{ fontSize:10, marginTop:2, fontWeight: (isOverdueT||isDueTodayT) ? 700 : 400,
+                        color: isOverdueT ? "#ef4444" : isDueTodayT ? "#f97316" : "#9ca3af" }}>
+                        {isOverdueT ? "⚠ Overdue · " : isDueTodayT ? "⏰ Due today · " : ""}{task.dueDate}
+                      </div>
+                    )}
+                    {task.notes && <div style={{ fontSize:10, color:"#6b7280", marginTop:2, whiteSpace:"pre-wrap" }}>{task.notes}</div>}
+                  </div>
+                  <span style={{ fontSize:9, fontWeight:700, color:task.priority==="Critical"?"#ef4444":task.priority==="High"?"#f97316":task.priority==="Medium"?"#fbbf24":"#9ca3af",
+                    background:(task.priority==="Critical"?"rgba(239,68,68,0.1)":task.priority==="High"?"rgba(249,115,22,0.1)":task.priority==="Medium"?"rgba(251,191,36,0.1)":"rgba(0,0,0,0.04)"),
+                    borderRadius:4, padding:"2px 6px", flexShrink:0, alignSelf:"flex-start" }}>{task.priority}</span>
+                  <button onClick={() => { setEditingTask(task); setTaskForm({ title:task.title, status:task.status, priority:task.priority||"Medium", dueDate:task.dueDate||"", notes:task.notes||"" }); setShowTaskForm(true); }}
+                    style={{ background:"none", border:"none", color:"#9ca3af", cursor:"pointer", fontSize:12, flexShrink:0, padding:"0 2px" }}>✎</button>
+                  <button onClick={() => onDeletePersonalTask(task.id)}
+                    style={{ background:"none", border:"none", color:"#fca5a5", cursor:"pointer", fontSize:14, flexShrink:0, padding:"0 2px" }}>×</button>
+                </div>
+              );
+            })}
+          </div>
+
+          {/* Completed tasks — collapsed dropdown */}
+          {personalTasks.filter(t => t.status === "Done").length > 0 && (() => {
+            const doneTasks = personalTasks.filter(t => t.status === "Done");
+            const [showDone, setShowDone] = React.useState(false);
+            return (
+              <div style={{ borderTop:"1px solid rgba(0,0,0,0.06)" }}>
+                <button onClick={() => setShowDone(d => !d)}
+                  style={{ width:"100%", padding:"9px 16px", background:"rgba(0,0,0,0.02)", border:"none", textAlign:"left", cursor:"pointer", fontFamily:"inherit", display:"flex", alignItems:"center", gap:8, color:"#9ca3af", fontSize:11, fontWeight:600 }}>
+                  <span style={{ fontSize:10, transition:"transform 0.15s", display:"inline-block", transform: showDone ? "rotate(90deg)" : "rotate(0deg)" }}>▶</span>
+                  Completed ({doneTasks.length})
+                </button>
+                {showDone && doneTasks.map(task => (
+                  <div key={task.id} style={{ display:"flex", alignItems:"center", gap:10, padding:"8px 16px", borderTop:"1px solid rgba(0,0,0,0.04)", opacity:0.6 }}>
+                    <label style={{ display:"flex", alignItems:"center", cursor:"pointer", flexShrink:0 }}>
+                      <input type="checkbox" checked={true}
+                        onChange={() => onSavePersonalTask({ ...task, status: "Not Started" })}
+                        style={{ width:15, height:15, accentColor:"#34d399", cursor:"pointer" }} />
+                    </label>
+                    <div style={{ flex:1, minWidth:0 }}>
+                      <div style={{ fontSize:12, color:"#9ca3af", textDecoration:"line-through" }}>{task.title}</div>
+                      {task.dueDate && <div style={{ fontSize:10, color:"#c4c9d4" }}>{task.dueDate}</div>}
+                    </div>
+                    <button onClick={() => onDeletePersonalTask(task.id)}
+                      style={{ background:"none", border:"none", color:"#fca5a5", cursor:"pointer", fontSize:14, flexShrink:0 }}>×</button>
+                  </div>
+                ))}
+              </div>
+            );
+          })()}
+        </div>
 
         <Section title="Overdue" icon="⚠" count={overdueTasks.length} color="#f87171">
           {overdueTasks.map(t => <TaskCard key={t.id} task={t} badge="Overdue" badgeColor="#f87171" />)}
@@ -3810,7 +3995,7 @@ function MyHubView({ projects, people, holidays, pto = [], currentUserId, onSetC
           {dueSoonTasks.map(t => <TaskCard key={t.id} task={t} />)}
         </Section>
 
-        <Section title="Blocked" icon="⊘" count={blockedTasks.length} color="#f87171">
+        <Section title="Blocked" icon="⊘" count={blockedTasks.length} color="#f87171" collapsed={true}>
           {blockedTasks.map(t => {
             const blockers = blockedBy(t);
             return <TaskCard key={t.id} task={t} badge={blockers.length ? `Blocked · ${blockers.length}` : "Blocked"} badgeColor="#f87171" />;
@@ -3844,6 +4029,45 @@ function MyHubView({ projects, people, holidays, pto = [], currentUserId, onSetC
           {highEffort.map(t => <TaskCard key={t.id} task={t} badge="Large" badgeColor="#a78bfa" />)}
         </Section>
 
+
+        {/* ── Personal Task Form Modal ── */}
+        {showTaskForm && (
+          <div style={{ position:"fixed", inset:0, zIndex:2500, display:"flex", alignItems:"center", justifyContent:"center", background:"rgba(0,0,0,0.3)" }}
+            onClick={e => e.target===e.currentTarget && setShowTaskForm(false)}>
+            <div style={{ background:"#fff", borderRadius:12, padding:"24px 28px", maxWidth:380, width:"90vw", boxShadow:"0 8px 32px rgba(0,0,0,0.15)" }}>
+              <div style={{ fontSize:15, fontWeight:800, color:"#1f2937", marginBottom:16 }}>{editingTask ? "Edit Task" : "New Personal Task"}</div>
+              <div style={{ display:"flex", flexDirection:"column", gap:12 }}>
+                <input placeholder="Task title" value={taskForm.title} onChange={e => setTaskForm(f=>({...f,title:e.target.value}))}
+                  autoFocus onKeyDown={e => e.key==="Enter" && taskForm.title.trim() && (onSavePersonalTask({...(editingTask||{}), ...taskForm, dueDate:taskForm.dueDate||null}), setShowTaskForm(false))}
+                  style={{ width:"100%", padding:"9px 10px", borderRadius:7, border:"1px solid rgba(0,0,0,0.15)", fontSize:13, fontFamily:"inherit", boxSizing:"border-box", outline:"none" }} />
+                <div style={{ display:"flex", gap:8 }}>
+                  <select value={taskForm.status} onChange={e => setTaskForm(f=>({...f,status:e.target.value}))}
+                    style={{ flex:1, padding:"7px 8px", borderRadius:7, border:"1px solid rgba(0,0,0,0.15)", fontSize:12, fontFamily:"inherit" }}>
+                    {["Not Started","In Progress","Done"].map(s => <option key={s}>{s}</option>)}
+                  </select>
+                  <select value={taskForm.priority} onChange={e => setTaskForm(f=>({...f,priority:e.target.value}))}
+                    style={{ flex:1, padding:"7px 8px", borderRadius:7, border:"1px solid rgba(0,0,0,0.15)", fontSize:12, fontFamily:"inherit" }}>
+                    {["Low","Medium","High","Critical"].map(pr => <option key={pr}>{pr}</option>)}
+                  </select>
+                </div>
+                <input type="date" value={taskForm.dueDate} onChange={e => setTaskForm(f=>({...f,dueDate:e.target.value}))}
+                  style={{ width:"100%", padding:"7px 10px", borderRadius:7, border:"1px solid rgba(0,0,0,0.15)", fontSize:12, fontFamily:"inherit", boxSizing:"border-box" }} />
+                <textarea placeholder="Notes (optional)" value={taskForm.notes} onChange={e => setTaskForm(f=>({...f,notes:e.target.value}))}
+                  style={{ width:"100%", padding:"7px 10px", borderRadius:7, border:"1px solid rgba(0,0,0,0.15)", fontSize:12, fontFamily:"inherit", resize:"vertical", minHeight:56, boxSizing:"border-box" }} />
+              </div>
+              <div style={{ display:"flex", gap:8, marginTop:16 }}>
+                <button onClick={() => { if (!taskForm.title.trim()) return; onSavePersonalTask({...(editingTask||{}), ...taskForm, dueDate:taskForm.dueDate||null}); setShowTaskForm(false); }}
+                  style={{ flex:1, padding:"9px 0", borderRadius:7, background:"#6366f1", border:"none", color:"#fff", fontSize:12, fontWeight:700, cursor:"pointer", fontFamily:"inherit" }}>
+                  {editingTask ? "Save Changes" : "Add Task"}
+                </button>
+                <button onClick={() => setShowTaskForm(false)}
+                  style={{ flex:1, padding:"9px 0", borderRadius:7, background:"rgba(0,0,0,0.06)", border:"none", color:"#374151", fontSize:12, fontWeight:600, cursor:"pointer", fontFamily:"inherit" }}>
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -3854,37 +4078,37 @@ function MyHubView({ projects, people, holidays, pto = [], currentUserId, onSetC
 // --- STATUS VIEW ─────────────────────────────────────────────────────────────
 
 function getTrackStatus(del) {
-  if (del.status === "Done") return "done";
+  if (del.status === "Done")    return "done";
   if (del.status === "Blocked") return "blocked";
-  if (del.status === "Client Review") return "client-review";
 
-  const end   = parseDate(del.end);
-  const start = parseDate(del.start);
-  const today = new Date(); today.setHours(0,0,0,0);
+  const today    = new Date(); today.setHours(0,0,0,0);
+  const todayStr = today.toLocaleDateString("en-CA");
 
-  // Overdue → off track
-  if (end < today && del.status !== "Done") return "off-track";
+  // Off Track: deliverable end date has passed and it is not Done
+  if (del.end && del.end < todayStr) return "off-track";
 
-  // Only check progress if we're past the start date
-  if (today >= start) {
-    const totalDuration = Math.max(1, (end - start) / 86400000);
-    const elapsed       = (today - start) / 86400000;
-    const expectedPct   = Math.min(100, Math.round((elapsed / totalDuration) * 100));
+  const subs = del.subtasks || [];
 
-    let actualPct;
-    const subs = del.subtasks || [];
-    if (subs.length > 0) {
-      // Primary signal: subtask completion rate
-      const doneSubs = subs.filter(s => s.status === "Done").length;
-      actualPct = Math.round((doneSubs / subs.length) * 100);
-    } else {
-      // Fallback: manual progress field
-      actualPct = del.progress || 0;
-    }
+  // No subtasks: on track as long as end date has not passed
+  if (subs.length === 0) return "on-track";
 
-    if (actualPct < expectedPct - 20) return "at-risk";
-  }
+  // The ONLY factual signals used:
+  //   overdue = task whose end date has passed and is not Done
+  //   blocked = task explicitly marked Blocked
+  // Nothing else. No predictions. No timeline comparisons. No percent math.
+  const overdue = subs.filter(s => s.status !== "Done" && s.end && s.end < todayStr);
+  const blocked = subs.filter(s => s.status === "Blocked");
 
+  // Off Track: multiple overdue tasks, OR overdue + blocked
+  if (overdue.length >= 2)                        return "off-track";
+  if (overdue.length >= 1 && blocked.length >= 1) return "off-track";
+
+  // At Risk: exactly one overdue task, OR any blocked task
+  if (overdue.length === 1) return "at-risk";
+  if (blocked.length >= 1)  return "at-risk";
+
+  // On Track: zero overdue, zero blocked — regardless of what future work
+  // is scheduled or how much has been completed so far.
   return "on-track";
 }
 
@@ -3908,7 +4132,126 @@ function getCurrentTask(del) {
   return "Complete";
 }
 
-// ─── REPORTING DASHBOARD v2 ─────────────────────────────────────────────────
+// ── Shared health metadata used by ReportingDrawer and AtRiskProjRow ──────────
+const RISK_HEALTH_META = {
+  "healthy":         { label: "Healthy",         color: "#34d399", bg: "rgba(52,211,153,0.12)"  },
+  "watch":           { label: "Watch",            color: "#fbbf24", bg: "rgba(251,191,36,0.12)"  },
+  "needs-attention": { label: "Needs Attention",  color: "#f97316", bg: "rgba(249,115,22,0.12)"  },
+  "on-track":        { label: "On Track",         color: "#34d399", bg: "rgba(52,211,153,0.12)"  },
+  "at-risk":         { label: "At Risk",          color: "#fbbf24", bg: "rgba(251,191,36,0.12)"  },
+  "off-track":       { label: "Off Track",        color: "#ef4444", bg: "rgba(239,68,68,0.12)"   },
+  "blocked":         { label: "Blocked",          color: "#f87171", bg: "rgba(248,113,113,0.12)" },
+};
+
+function ReportingDrawer({ drawer, setDrawer }) {
+  if (!drawer) return null;
+  return (
+    <div style={{ position:"fixed", inset:0, zIndex:2000, display:"flex", alignItems:"flex-start", justifyContent:"flex-end" }}
+      onClick={e => e.target===e.currentTarget && setDrawer(null)}>
+      <div style={{ width:"min(520px, 96vw)", height:"100vh", maxHeight:"100vh", background:"#fff", boxShadow:"-4px 0 24px rgba(0,0,0,0.12)", display:"flex", flexDirection:"column", overflow:"hidden" }}>
+        {/* Header */}
+        <div style={{ padding:"20px 24px 14px", borderBottom:"1px solid rgba(0,0,0,0.07)", flexShrink:0 }}>
+          <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start" }}>
+            <div>
+              <div style={{ fontSize:15, fontWeight:800, color:"#1f2937" }}>{drawer.title}</div>
+              <div style={{ fontSize:11, color:"#6b7280", marginTop:3 }}>{drawer.subtitle}</div>
+            </div>
+            <button onClick={()=>setDrawer(null)} style={{ background:"none", border:"none", fontSize:20, color:"#9ca3af", cursor:"pointer", lineHeight:1, padding:4 }}>×</button>
+          </div>
+          <div style={{ marginTop:10, fontSize:22, fontWeight:900, color:BRAND_TEAL }}>
+            {drawer.rows?.length ?? 0} <span style={{ fontSize:11, color:"#9ca3af", fontWeight:600 }}>{drawer.unit||"items"}</span>
+          </div>
+        </div>
+        {/* Body — scrollable independently of the header */}
+        <div style={{ flex:1, overflowY:"auto", overflowX:"hidden", padding:"14px 24px", minHeight:0, WebkitOverflowScrolling:"touch" }}>
+          {drawer.note && <div style={{ fontSize:10, color:"#9ca3af", background:"rgba(0,0,0,0.03)", borderRadius:6, padding:"7px 10px", marginBottom:12 }}>ℹ {drawer.note}</div>}
+          {drawer.rows?.length === 0 && <div style={{ fontSize:12, color:"#9ca3af", padding:"20px 0", textAlign:"center" }}>No items to show.</div>}
+          {drawer.renderRows ? drawer.renderRows(drawer.rows) : drawer.rows?.map((row, i) => (
+            <div key={i} style={{ padding:"10px 0", borderBottom:"1px solid rgba(0,0,0,0.05)", display:"flex", flexDirection:"column", gap:4 }}>
+              <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", gap:8 }}>
+                <span style={{ fontSize:12, fontWeight:700, color:"#1f2937", flex:1 }}>{row.primary}</span>
+                {row.badge && (() => { const m=RISK_HEALTH_META[row.badge]||RISK_HEALTH_META["on-track"]; return <span style={{ fontSize:9, fontWeight:700, color:m.color, background:m.bg, borderRadius:4, padding:"2px 7px" }}>{m.label}</span>; })()}
+                {row.right && <span style={{ fontSize:10, color:"#9ca3af", flexShrink:0 }}>{row.right}</span>}
+              </div>
+              {row.secondary && <div style={{ fontSize:10, color:"#6b7280", display:"flex", gap:5, flexWrap:"wrap" }}>
+                {row.secondary.map((s,j) => <span key={j}>{s}</span>)}
+              </div>}
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── AtRiskProjRow — standalone so React hooks are valid ──────────────────────
+function AtRiskProjRow({ p, activeDels, offTrackDels, atRiskDels, projHealth }) {
+  const [open, setOpen] = React.useState(false);
+  const todayStr = new Date().toLocaleDateString("en-CA");
+  const today    = new Date(); today.setHours(0,0,0,0);
+  const hm = RISK_HEALTH_META[projHealth] || RISK_HEALTH_META["watch"];
+  const delRows = [
+    ...offTrackDels.map(d => ({ d, health: "off-track" })),
+    ...atRiskDels.map(d =>   ({ d, health: "at-risk"   })),
+  ];
+  return (
+    <div style={{ borderBottom: "1px solid rgba(0,0,0,0.05)" }}>
+      <div onClick={() => setOpen(o => !o)} style={{ padding: "11px 0", display: "flex", alignItems: "center", gap: 10, cursor: "pointer" }}>
+        <div style={{ width: 8, height: 8, borderRadius: "50%", background: p.color, flexShrink: 0 }} />
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontSize: 12, fontWeight: 700, color: "#1f2937", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.name}</div>
+          <div style={{ fontSize: 10, color: "#6b7280", marginTop: 2 }}>
+            {p.client || "No client"} ·{" "}
+            <span style={{ color: "#ef4444", fontWeight: 600 }}>{offTrackDels.length} off-track</span>
+            {atRiskDels.length > 0 && <span style={{ color: "#fbbf24", fontWeight: 600 }}> · {atRiskDels.length} at risk</span>}
+            {" · "}{activeDels.length} active deliverable{activeDels.length !== 1 ? "s" : ""}
+          </div>
+        </div>
+        <span style={{ fontSize: 9, fontWeight: 700, color: hm.color, background: hm.bg, borderRadius: 4, padding: "2px 7px", flexShrink: 0 }}>{hm.label}</span>
+        <span style={{ fontSize: 11, color: "#9ca3af", transition: "transform 0.15s", display: "inline-block", transform: open ? "rotate(180deg)" : "rotate(0deg)" }}>▼</span>
+      </div>
+      {open && (
+        <div style={{ background: "rgba(0,0,0,0.02)", borderRadius: 6, margin: "0 0 10px 18px", padding: "6px 0" }}>
+          {delRows.length === 0
+            ? <div style={{ fontSize: 10, color: "#9ca3af", padding: "6px 12px" }}>No off-track or at-risk deliverables found.</div>
+            : delRows.map(({ d, health }, j) => {
+                const dm = RISK_HEALTH_META[health];
+                const daysOverdue = health === "off-track" && d.end && d.end < todayStr
+                  ? Math.ceil((today - new Date(d.end + "T00:00:00")) / 86400000) : null;
+                const signal = d.trackOverride ? `Manual override: ${d.trackOverride}`
+                  : daysOverdue ? `${daysOverdue}d overdue`
+                  : health === "at-risk"
+                    ? (d.subtasks?.length > 0
+                        ? `${d.subtasks.filter(s=>s.status==="Done").length}/${d.subtasks.length} subtasks done`
+                        : "Behind schedule")
+                    : "";
+                return (
+                  <div key={j} style={{ display: "flex", alignItems: "flex-start", gap: 8, padding: "7px 12px", borderTop: j > 0 ? "1px solid rgba(0,0,0,0.04)" : "none" }}>
+                    <div style={{ width: 3, minHeight: 28, background: dm.color, borderRadius: 2, flexShrink: 0, alignSelf: "stretch" }} />
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 11, fontWeight: 600, color: "#374151", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{d.title}</div>
+                      <div style={{ fontSize: 9, color: "#9ca3af", marginTop: 2, display: "flex", gap: 6, flexWrap: "wrap" }}>
+                        {signal && <span style={{ color: dm.color, fontWeight: 600 }}>{signal}</span>}
+                        {d.end && <span>Due {d.end.slice(5)}</span>}
+                        {d.status && <span>{d.status}</span>}
+                      </div>
+                    </div>
+                    <span style={{ fontSize: 9, fontWeight: 700, color: dm.color, background: dm.bg, borderRadius: 4, padding: "2px 6px", flexShrink: 0 }}>{dm.label}</span>
+                  </div>
+                );
+              })
+          }
+          {activeDels.length > delRows.length && (
+            <div style={{ fontSize: 9, color: "#34d399", padding: "5px 12px", fontWeight: 600 }}>
+              ✓ {activeDels.length - delRows.length} deliverable{activeDels.length - delRows.length !== 1 ? "s" : ""} on track
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── REPORTING DASHBOARD v2 ───────────────────────────────────────────────────
 function ReportingDashboardView({ projects, people, holidays = [], pto = [] }) {
   const [drawer, setDrawer] = useState(null); // { title, subtitle, rows, cols, groupBy }
@@ -4065,46 +4408,6 @@ function ReportingDashboardView({ projects, people, holidays = [], pto = [] }) {
   const Hbadge = ({ h }) => { const m=healthMeta[h]||healthMeta["on-track"]; return <span style={{ fontSize:9, fontWeight:700, color:m.color, background:m.bg, borderRadius:4, padding:"2px 7px", whiteSpace:"nowrap" }}>{m.label}</span>; };
 
   // ── ReportingDetailDrawer (inline) ────────────────────────────────────────
-  const Drawer = () => {
-    if (!drawer) return null;
-    return (
-      <div style={{ position:"fixed", inset:0, zIndex:2000, display:"flex", alignItems:"flex-start", justifyContent:"flex-end" }}
-        onClick={e => e.target===e.currentTarget && setDrawer(null)}>
-        <div style={{ width:"min(520px, 96vw)", height:"100vh", background:"#fff", boxShadow:"-4px 0 24px rgba(0,0,0,0.12)", display:"flex", flexDirection:"column", overflow:"hidden" }}>
-          {/* Header */}
-          <div style={{ padding:"20px 24px 14px", borderBottom:"1px solid rgba(0,0,0,0.07)", flexShrink:0 }}>
-            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start" }}>
-              <div>
-                <div style={{ fontSize:15, fontWeight:800, color:"#1f2937" }}>{drawer.title}</div>
-                <div style={{ fontSize:11, color:"#6b7280", marginTop:3 }}>{drawer.subtitle}</div>
-              </div>
-              <button onClick={()=>setDrawer(null)} style={{ background:"none", border:"none", fontSize:20, color:"#9ca3af", cursor:"pointer", lineHeight:1, padding:4 }}>×</button>
-            </div>
-            <div style={{ marginTop:10, fontSize:22, fontWeight:900, color:BRAND_TEAL }}>
-              {drawer.rows?.length ?? 0} <span style={{ fontSize:11, color:"#9ca3af", fontWeight:600 }}>{drawer.unit||"items"}</span>
-            </div>
-          </div>
-          {/* Body */}
-          <div style={{ flex:1, overflowY:"auto", padding:"14px 24px" }}>
-            {drawer.note && <div style={{ fontSize:10, color:"#9ca3af", background:"rgba(0,0,0,0.03)", borderRadius:6, padding:"7px 10px", marginBottom:12 }}>ℹ {drawer.note}</div>}
-            {drawer.rows?.length === 0 && <div style={{ fontSize:12, color:"#9ca3af", padding:"20px 0", textAlign:"center" }}>No items to show.</div>}
-            {drawer.renderRows ? drawer.renderRows(drawer.rows) : drawer.rows?.map((row, i) => (
-              <div key={i} style={{ padding:"10px 0", borderBottom:"1px solid rgba(0,0,0,0.05)", display:"flex", flexDirection:"column", gap:4 }}>
-                <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", gap:8 }}>
-                  <span style={{ fontSize:12, fontWeight:700, color:"#1f2937", flex:1 }}>{row.primary}</span>
-                  {row.badge && <Hbadge h={row.badge} />}
-                  {row.right && <span style={{ fontSize:10, color:"#9ca3af", flexShrink:0 }}>{row.right}</span>}
-                </div>
-                {row.secondary && <div style={{ fontSize:10, color:"#6b7280", display:"flex", gap:5, flexWrap:"wrap" }}>
-                  {row.secondary.map((s,j) => <span key={j}>{s}</span>)}
-                </div>}
-              </div>
-            ))}
-          </div>
-        </div>
-      </div>
-    );
-  };
 
   // ── Drill-down data builders ──────────────────────────────────────────────
   const openDelsDueMonth = () => setDrawer({
@@ -4117,80 +4420,18 @@ function ReportingDashboardView({ projects, people, holidays = [], pto = [] }) {
       const activeDels   = p.deliverables.filter(d => d.status !== "Done");
       const offTrackDels = activeDels.filter(d => delHealth(d) === "off-track");
       const atRiskDels   = activeDels.filter(d => delHealth(d) === "at-risk");
-      return { p, activeDels, offTrackDels, atRiskDels };
+      const projHealth   = projectHealth(p);
+      return { p, activeDels, offTrackDels, atRiskDels, projHealth };
     });
     setDrawer({
       title: "At-Risk & Watch Projects",
       subtitle: "Projects with one or more deliverables off track, at risk, or blocked",
       unit: "projects",
-      renderRows: (rows) => rows.map(({ p, activeDels, offTrackDels, atRiskDels }, i) => {
-        const ProjRow = () => {
-          const [open, setOpen] = React.useState(false);
-          const h = projectHealth(p);
-          const hm = healthMeta[h] || healthMeta["watch"];
-          const delRows = [
-            ...offTrackDels.map(d => ({ d, health: "off-track" })),
-            ...atRiskDels.map(d =>   ({ d, health: "at-risk"   })),
-          ];
-          return (
-            <div style={{ borderBottom: "1px solid rgba(0,0,0,0.05)" }}>
-              <div onClick={() => setOpen(o => !o)} style={{ padding: "11px 0", display: "flex", alignItems: "center", gap: 10, cursor: "pointer" }}>
-                <div style={{ width: 8, height: 8, borderRadius: "50%", background: p.color, flexShrink: 0 }} />
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: 12, fontWeight: 700, color: "#1f2937", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.name}</div>
-                  <div style={{ fontSize: 10, color: "#6b7280", marginTop: 2 }}>
-                    {p.client || "No client"} ·{" "}
-                    <span style={{ color: "#ef4444", fontWeight: 600 }}>{offTrackDels.length} off-track</span>
-                    {atRiskDels.length > 0 && <span style={{ color: "#fbbf24", fontWeight: 600 }}> · {atRiskDels.length} at risk</span>}
-                    {" · "}{activeDels.length} active deliverable{activeDels.length !== 1 ? "s" : ""}
-                  </div>
-                </div>
-                <span style={{ fontSize: 9, fontWeight: 700, color: hm.color, background: hm.bg, borderRadius: 4, padding: "2px 7px", flexShrink: 0 }}>{hm.label}</span>
-                <span style={{ fontSize: 11, color: "#9ca3af", transition: "transform 0.15s", display: "inline-block", transform: open ? "rotate(180deg)" : "rotate(0deg)" }}>▼</span>
-              </div>
-              {open && (
-                <div style={{ background: "rgba(0,0,0,0.02)", borderRadius: 6, margin: "0 0 10px 18px", padding: "6px 0" }}>
-                  {delRows.length === 0
-                    ? <div style={{ fontSize: 10, color: "#9ca3af", padding: "6px 12px" }}>No off-track or at-risk deliverables found.</div>
-                    : delRows.map(({ d, health }, j) => {
-                        const dm = healthMeta[health];
-                        const daysOverdue = health === "off-track" && d.end && d.end < todayStr
-                          ? Math.ceil((today - new Date(d.end + "T00:00:00")) / 86400000) : null;
-                        const signal = d.trackOverride ? `Manual override: ${d.trackOverride}`
-                          : daysOverdue ? `${daysOverdue}d overdue`
-                          : health === "at-risk"
-                            ? (d.subtasks?.length > 0
-                                ? `${d.subtasks.filter(s=>s.status==="Done").length}/${d.subtasks.length} subtasks done`
-                                : "Behind expected progress")
-                            : "";
-                        return (
-                          <div key={j} style={{ display: "flex", alignItems: "flex-start", gap: 8, padding: "7px 12px", borderTop: j > 0 ? "1px solid rgba(0,0,0,0.04)" : "none" }}>
-                            <div style={{ width: 3, minHeight: 28, background: dm.color, borderRadius: 2, flexShrink: 0, alignSelf: "stretch" }} />
-                            <div style={{ flex: 1, minWidth: 0 }}>
-                              <div style={{ fontSize: 11, fontWeight: 600, color: "#374151", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{d.title}</div>
-                              <div style={{ fontSize: 9, color: "#9ca3af", marginTop: 2, display: "flex", gap: 6, flexWrap: "wrap" }}>
-                                {signal && <span style={{ color: dm.color, fontWeight: 600 }}>{signal}</span>}
-                                {d.end && <span>Due {d.end.slice(5)}</span>}
-                                {d.status && <span>{d.status}</span>}
-                              </div>
-                            </div>
-                            <span style={{ fontSize: 9, fontWeight: 700, color: dm.color, background: dm.bg, borderRadius: 4, padding: "2px 6px", flexShrink: 0 }}>{dm.label}</span>
-                          </div>
-                        );
-                      })
-                  }
-                  {activeDels.length > delRows.length && (
-                    <div style={{ fontSize: 9, color: "#34d399", padding: "5px 12px", fontWeight: 600 }}>
-                      ✓ {activeDels.length - delRows.length} deliverable{activeDels.length - delRows.length !== 1 ? "s" : ""} on track
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
-          );
-        };
-        return <ProjRow key={i} />;
-      }),
+      renderRows: (rows) => rows.map(({ p, activeDels, offTrackDels, atRiskDels, projHealth }, i) => (
+        <AtRiskProjRow key={i} p={p} activeDels={activeDels}
+          offTrackDels={offTrackDels} atRiskDels={atRiskDels}
+          projHealth={projHealth} />
+      )),
       rows: projRows,
     });
   };
@@ -4292,7 +4533,7 @@ function ReportingDashboardView({ projects, people, holidays = [], pto = [] }) {
 
   return (
     <div style={{ display:"flex", flexDirection:"column", gap:20 }}>
-      <Drawer />
+      <ReportingDrawer drawer={drawer} setDrawer={setDrawer} />
 
       {/* ── Header ── */}
       <div>
@@ -4526,6 +4767,8 @@ function ReportingDashboardView({ projects, people, holidays = [], pto = [] }) {
 
 
 function StatusView({ projects, people, statusNotes, onUpdateNote, onAddDeliverable, onAddSubtask, onSaveTrackOverride, onEditItem, onOpenProject }) {
+  const [trackOpenId, setTrackOpenId] = useState(null); // del.id whose track dropdown is open
+
   const [editingNote, setEditingNote] = useState(null); // { projId, delId }
   const [noteText, setNoteText] = useState("");
   const [filterProj, setFilterProj] = useState("all");
@@ -4550,7 +4793,15 @@ function StatusView({ projects, people, statusNotes, onUpdateNote, onAddDelivera
   const rows = projects.flatMap(proj =>
     proj.deliverables.map(del => {
       const track = getTrackStatus(del);
-      const assigneeNames = del.assignees
+      // Auto-derive display status: if any subtask is In Progress/Done, show In Progress
+      // Compute display status: auto-promote to In Progress when subtasks have started
+      const allSubsDone = del.subtasks.length > 0 && del.subtasks.every(s => s.status === "Done");
+      const anySubActive = del.subtasks.some(s => s.status === "In Progress" || s.status === "Done");
+      const displayStatus = del.status === "Done" ? "Done"
+        : allSubsDone ? "Done"
+        : del.status === "Not Started" && anySubActive ? "In Progress"
+        : del.status;
+      const assigneeNames = (del.assignees || [])
         .map(id => people.find(p => p.id === id))
         .filter(Boolean)
         .map(p => p.name.split(" ")[0])
@@ -4558,7 +4809,7 @@ function StatusView({ projects, people, statusNotes, onUpdateNote, onAddDelivera
       const key = `${proj.id}::${del.id}`;
       const activeSub = del.subtasks.find(s => s.status === "In Progress") || del.subtasks.find(s => s.status !== "Done");
       const taskEnd = activeSub?.end || del.end || "";
-      return { proj, del, track, assigneeNames, note: statusNotes[key] || "", key, taskEnd };
+      return { proj, del, track, displayStatus, assigneeNames, note: statusNotes[key] || "", key, taskEnd };
     })
   );
 
@@ -4626,7 +4877,7 @@ function StatusView({ projects, people, statusNotes, onUpdateNote, onAddDelivera
       {/* ── Status table ── */}
       <div style={{ background: "#ffffff", border: "1px solid rgba(0,0,0,0.07)", borderRadius: 10, overflow: "hidden" }}>
         {/* Header */}
-        <div style={{ display: "grid", gridTemplateColumns: "minmax(75px,0.9fr) minmax(95px,1.2fr) minmax(100px,1.3fr) minmax(100px,1.3fr) minmax(75px,0.65fr) minmax(55px,0.55fr) minmax(65px,0.6fr) minmax(65px,0.6fr) minmax(65px,0.6fr) minmax(110px,1.8fr) minmax(65px,0.65fr)", gap: 0, borderBottom: "1px solid rgba(0,0,0,0.07)", background: "#eceef2" }}>
+        <div style={{ display: "grid", gridTemplateColumns: "minmax(75px,0.9fr) minmax(95px,1.2fr) minmax(100px,1.3fr) minmax(100px,1.3fr) minmax(110px,0.85fr) minmax(90px,0.7fr) minmax(65px,0.6fr) minmax(65px,0.6fr) minmax(65px,0.6fr) minmax(110px,1.8fr) minmax(65px,0.65fr)", gap: 0, borderBottom: "1px solid rgba(0,0,0,0.07)", background: "#eceef2" }}>
           {[["Client","client"],["Project","project"],["Deliverable","deliverable"],["Current Task",null],["Track","track"],["Dept",null],["Proj Due","due"],["Task Due","taskdue"],["Team","assigned"],["Notes",null],["",null]].map(([h, col], i) => (
             <div key={i} onClick={col ? () => toggleStatusSort(col) : undefined}
               style={{ padding: "7px 10px", fontSize: 9, fontWeight: 700, color: col ? (statusSortCol === col ? BRAND_TEAL_D : "#6b7280") : "#6b7280", letterSpacing: "0.06em", textTransform: "uppercase", borderRight: i < 6 ? "1px solid rgba(0,0,0,0.06)" : "none", cursor: col ? "pointer" : "default", userSelect: "none", whiteSpace: "nowrap" }}>
@@ -4640,12 +4891,12 @@ function StatusView({ projects, people, statusNotes, onUpdateNote, onAddDelivera
           <div style={{ padding: 32, textAlign: "center", color: "#9ca3af", fontSize: 12 }}>No deliverables match the current filter.</div>
         )}
         {filtered.map(({ proj, del, track, assigneeNames, note, key, taskEnd }, i) => {
-          const m = trackMeta[track];
+          const m = trackMeta[track] || trackMeta["on-track"];
           const currentTask = getCurrentTask(del);
           const isDone = track === "done";
           return (
             <div key={key} style={{
-              display: "grid", gridTemplateColumns: "minmax(75px,0.9fr) minmax(95px,1.2fr) minmax(100px,1.3fr) minmax(100px,1.3fr) minmax(75px,0.65fr) minmax(55px,0.55fr) minmax(65px,0.6fr) minmax(65px,0.6fr) minmax(65px,0.6fr) minmax(110px,1.8fr) minmax(65px,0.65fr)",
+              display: "grid", gridTemplateColumns: "minmax(75px,0.9fr) minmax(95px,1.2fr) minmax(100px,1.3fr) minmax(100px,1.3fr) minmax(110px,0.85fr) minmax(90px,0.7fr) minmax(65px,0.6fr) minmax(65px,0.6fr) minmax(65px,0.6fr) minmax(110px,1.8fr) minmax(65px,0.65fr)",
               borderBottom: i < filtered.length - 1 ? "1px solid rgba(0,0,0,0.05)" : "none",
               opacity: isDone ? 0.5 : 1, transition: "opacity 0.15s",
             }}
@@ -4672,9 +4923,9 @@ function StatusView({ projects, people, statusNotes, onUpdateNote, onAddDelivera
                   title="Click to edit">{del.title}</span>
                 <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 2 }}>
                   <div style={{ flex: 1, height: 3, background: "rgba(0,0,0,0.07)", borderRadius: 2, overflow: "hidden" }}>
-                    <div style={{ width: `${del.progress}%`, height: "100%", background: proj.color, borderRadius: 2 }} />
+                    <div style={{ width: `${delProgress(del)}%`, height: "100%", background: proj.color, borderRadius: 2 }} />
                   </div>
-                  <span style={{ fontSize: 9, color: "#6b7280", flexShrink: 0 }}>{del.progress}%</span>
+                  <span style={{ fontSize: 9, color: "#6b7280", flexShrink: 0 }}>{delProgress(del)}%</span>
                 </div>
               </Cell>
 
@@ -4694,51 +4945,46 @@ function StatusView({ projects, people, statusNotes, onUpdateNote, onAddDelivera
               </Cell>
 
               {/* Track — with manual override (React state dropdown) */}
-              {(() => {
-                const [trackOpen, setTrackOpen] = React.useState(false);
-                return (
-                  <Cell border>
-                    <div style={{ position: "relative" }} data-no-pan>
-                      <span style={{
-                        display: "inline-flex", alignItems: "center", gap: 4,
-                        background: m.bg, color: m.color, border: `1px solid ${m.color}40`,
-                        borderRadius: 4, padding: "3px 7px", fontSize: 10, fontWeight: 700,
-                        whiteSpace: "nowrap", cursor: "pointer", userSelect: "none",
-                      }}
-                        title="Click to override track status"
-                        onClick={e => { e.stopPropagation(); setTrackOpen(o => !o); }}
-                      >{m.icon} {m.label} ▾</span>
-                      {trackOpen && (
-                        <div style={{ position: "absolute", top: "100%", left: 0, zIndex: 200,
-                          background: "#fff", border: "1px solid rgba(0,0,0,0.15)", borderRadius: 6,
-                          boxShadow: "0 4px 12px rgba(0,0,0,0.15)", minWidth: 130, overflow: "hidden" }}>
-                          <div onClick={() => { setTrackOpen(false); onSaveTrackOverride(proj.id, del.id, null); }}
-                            style={{ padding: "8px 12px", fontSize: 11, cursor: "pointer", color: "#6b7280",
-                              borderBottom: "1px solid rgba(0,0,0,0.06)" }}
-                            onMouseEnter={e=>e.currentTarget.style.background="#f5f6f8"}
-                            onMouseLeave={e=>e.currentTarget.style.background="transparent"}
-                          >— Auto —</div>
-                          {TRACK_OPTIONS.map(t => {
-                            const tm = trackMeta[t]; if (!tm) return null;
-                            return (
-                              <div key={t} onClick={() => { setTrackOpen(false); onSaveTrackOverride(proj.id, del.id, t); }}
-                                style={{ padding: "8px 12px", fontSize: 11, cursor: "pointer",
-                                  display: "flex", alignItems: "center", gap: 6,
-                                  background: del.trackOverride === t ? tm.bg : "transparent" }}
-                                onMouseEnter={e=>e.currentTarget.style.background=tm.bg}
-                                onMouseLeave={e=>e.currentTarget.style.background=del.trackOverride===t?tm.bg:"transparent"}
-                              >
-                                <span>{tm.icon}</span>
-                                <span style={{ color: tm.color, fontWeight: 700 }}>{tm.label}</span>
-                              </div>
-                            );
-                          })}
-                        </div>
-                      )}
+              <Cell border>
+                <div style={{ position: "relative" }} data-no-pan>
+                  <span style={{
+                    display: "inline-flex", alignItems: "center", gap: 4,
+                    background: m.bg, color: m.color, border: `1px solid ${m.color}40`,
+                    borderRadius: 4, padding: "3px 7px", fontSize: 10, fontWeight: 700,
+                    whiteSpace: "nowrap", cursor: "pointer", userSelect: "none",
+                  }}
+                    title="Click to override track status"
+                    onClick={e => { e.stopPropagation(); setTrackOpenId(id => id === del.id ? null : del.id); }}
+                  >{m.icon} {m.label} ▾</span>
+                  {trackOpenId === del.id && (
+                    <div style={{ position: "absolute", top: "100%", left: 0, zIndex: 200,
+                      background: "#fff", border: "1px solid rgba(0,0,0,0.15)", borderRadius: 6,
+                      boxShadow: "0 4px 12px rgba(0,0,0,0.15)", minWidth: 130, overflow: "hidden" }}>
+                      <div onClick={() => { setTrackOpenId(null); onSaveTrackOverride(proj.id, del.id, null); }}
+                        style={{ padding: "8px 12px", fontSize: 11, cursor: "pointer", color: "#6b7280",
+                          borderBottom: "1px solid rgba(0,0,0,0.06)" }}
+                        onMouseEnter={e=>e.currentTarget.style.background="#f5f6f8"}
+                        onMouseLeave={e=>e.currentTarget.style.background="transparent"}
+                      >— Auto —</div>
+                      {TRACK_OPTIONS.map(t => {
+                        const tm = trackMeta[t]; if (!tm) return null;
+                        return (
+                          <div key={t} onClick={() => { setTrackOpenId(null); onSaveTrackOverride(proj.id, del.id, t); }}
+                            style={{ padding: "8px 12px", fontSize: 11, cursor: "pointer",
+                              display: "flex", alignItems: "center", gap: 6,
+                              background: del.trackOverride === t ? tm.bg : "transparent" }}
+                            onMouseEnter={e=>e.currentTarget.style.background=tm.bg}
+                            onMouseLeave={e=>e.currentTarget.style.background=del.trackOverride===t?tm.bg:"transparent"}
+                          >
+                            <span>{tm.icon}</span>
+                            <span style={{ color: tm.color, fontWeight: 700 }}>{tm.label}</span>
+                          </div>
+                        );
+                      })}
                     </div>
-                  </Cell>
-                );
-              })()}
+                  )}
+                </div>
+              </Cell>
 
               {/* Department */}
               <Cell border>
@@ -4750,14 +4996,14 @@ function StatusView({ projects, people, statusNotes, onUpdateNote, onAddDelivera
 
               {/* Due Date */}
               <Cell border>
-                <span style={{ fontSize: 11, fontWeight: 600, color: del.end && parseDate(del.end) < TODAY_DATE && del.status !== "Done" ? "#f87171" : "#374151", whiteSpace: "nowrap" }}>
+                <span style={{ fontSize: 11, fontWeight: 600, color: del.end && parseDate(del.end) < TODAY && del.status !== "Done" ? "#f87171" : "#374151", whiteSpace: "nowrap" }}>
                   {del.end ? fmt(parseDate(del.end)) : "—"}
                 </span>
               </Cell>
 
               {/* Task Due — active subtask's end date */}
               <Cell border>
-                <span style={{ fontSize: 11, fontWeight: 600, color: taskEnd && parseDate(taskEnd) < TODAY_DATE && !isDone ? "#f87171" : "#374151", whiteSpace: "nowrap" }}>
+                <span style={{ fontSize: 11, fontWeight: 600, color: taskEnd && parseDate(taskEnd) < TODAY && !isDone ? "#f87171" : "#374151", whiteSpace: "nowrap" }}>
                   {taskEnd && taskEnd !== del.end ? fmt(parseDate(taskEnd)) : "—"}
                 </span>
               </Cell>
@@ -4861,17 +5107,16 @@ function StatusNoteCell({ note, color, onSave }) {
   useEffect(() => { setDraft(note); }, [note]);
   const commit = () => { setEditing(false); if (draft !== note) onSave(draft); };
   return (
-    <div style={{ padding: "8px 10px", display: "flex", alignItems: "flex-start", minWidth: 0, overflow: "hidden" }}>
+    <div style={{ padding: "8px 10px", display: "flex", alignItems: "flex-start", minWidth: 0 }}>
       {editing ? (
         <textarea autoFocus value={draft} onChange={e => setDraft(e.target.value)}
           onBlur={commit}
           onKeyDown={e => { if (e.key === "Escape") { setDraft(note); setEditing(false); } if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); commit(); } }}
-          style={{ width: "100%", border: `1px solid ${color}60`, borderRadius: 4, padding: "4px 8px", fontSize: 11, fontFamily: "inherit", resize: "none", height: 60, outline: "none", background: "#fff", color: "#1f2937", lineHeight: 1.5 }}
+          style={{ width: "100%", border: `1px solid ${color}60`, borderRadius: 4, padding: "4px 8px", fontSize: 11, fontFamily: "inherit", resize: "vertical", minHeight: 48, outline: "none", background: "#fff", color: "#1f2937", lineHeight: 1.5 }}
         />
       ) : note ? (
-        <div style={{ flex: 1 }}>
-          <div style={{ fontSize: 11, color: "#374151", lineHeight: 1.5, whiteSpace: "pre-wrap", overflow: "hidden", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical" }}>{note}</div>
-          <button onClick={() => setEditing(true)} style={{ marginTop: 2, background: "none", border: "none", color: "#9ca3af", cursor: "pointer", fontSize: 9, fontFamily: "inherit", padding: 0 }}>edit ✎</button>
+        <div style={{ flex: 1, cursor: "text" }} onClick={() => setEditing(true)}>
+          <div style={{ fontSize: 11, color: "#374151", lineHeight: 1.6, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>{note}</div>
         </div>
       ) : (
         <button onClick={() => setEditing(true)} style={{ background: "none", border: "1px dashed rgba(0,0,0,0.1)", borderRadius: 4, color: "#9ca3af", cursor: "pointer", padding: "3px 8px", fontSize: 10, fontFamily: "inherit", whiteSpace: "nowrap" }}>+ note</button>
@@ -5464,43 +5709,6 @@ function ExcelImportModal({ onClose, onImport, existingColors }) {
 }
 
 // --- COLOR PALETTE FOR NEW PROJECTS ──────────────────────────────────────────
-// ─── BUILT-IN TEMPLATES ───────────────────────────────────────────────────────
-const BUILT_IN_TEMPLATES = [
-  {
-    id: "tpl_email", name: "Email Campaign", icon: "✉",
-    deliverables: [
-      { title: "Email 1", subtasks: ["Copy Development","Internal Review","Revisions","Design & Build","QA & Send"] },
-      { title: "Email 2", subtasks: ["Copy Development","Internal Review","Revisions","Design & Build","QA & Send"] },
-      { title: "Email 3", subtasks: ["Copy Development","Internal Review","Revisions","Design & Build","QA & Send"] },
-    ],
-  },
-  {
-    id: "tpl_video", name: "Video Production", icon: "▶",
-    deliverables: [
-      { title: "Hero Video", subtasks: ["Creative Brief","Script Development","Client Review","Production","Edit & Post","Final Approval"] },
-      { title: "Social Cut 15s", subtasks: ["Edit from Hero","Motion Graphics","Internal Review","Revisions & Export"] },
-      { title: "Social Cut 30s", subtasks: ["Edit from Hero","Motion Graphics","Internal Review","Revisions & Export"] },
-    ],
-  },
-  {
-    id: "tpl_print", name: "Print / Collateral", icon: "◧",
-    deliverables: [
-      { title: "One-Pager", subtasks: ["Copy Development","Internal Review","Revisions","Design Layout","Proofreading","Print-Ready Export"] },
-      { title: "Brochure", subtasks: ["Copy Development","Internal Review","Revisions","Design Layout","Proofreading","Print-Ready Export"] },
-      { title: "Banner Set", subtasks: ["Concept","Design","Client Review","Revisions","Final Export"] },
-    ],
-  },
-  {
-    id: "tpl_launch", name: "Product Launch", icon: "🚀",
-    deliverables: [
-      { title: "Press Release", subtasks: ["First Draft","Legal Review","Revisions","Final Approval"] },
-      { title: "Landing Page", subtasks: ["Wireframe","Copy Development","Visual Design","Client Review","Development & QA"] },
-      { title: "Sales Deck", subtasks: ["Slide Outline","Copy Development","Design & Layout","Client Review","Revisions & Final"] },
-      { title: "Social Toolkit", subtasks: ["Copy — Captions","Static Graphics","Internal Review","Revisions","Package & Deliver"] },
-    ],
-  },
-];
-
 function buildProjectFromTemplate(tpl, name, client, color, startDate) {
   const start = new Date(startDate + "T00:00:00");
   let cursor = new Date(start);
@@ -6055,6 +6263,8 @@ function ModalFooter({ onClose, onSave, saveLabel, color }) {
 }
 
 // --- APP ──────────────────────────────────────────────────────────────────────
+
+
 export default function App() {
   // ── SUPABASE CONFIG — read after main.jsx has set window vars ────────────
   // Reading inside App() guarantees main.jsx has already run and set these.
@@ -6083,7 +6293,12 @@ export default function App() {
         ...restOpts,
         headers: {
           "apikey":        SB_KEY,
-          "Authorization": `Bearer ${SB_KEY}`,
+          "Authorization": (() => {
+            try {
+              const s = JSON.parse(localStorage.getItem("sb_session") || "{}");
+              return `Bearer ${s.access_token || SB_KEY}`;
+            } catch { return `Bearer ${SB_KEY}`; }
+          })(),
           "Content-Type":  "application/json",
           "Prefer":        prefer || "return=representation",
           ...(extraHeaders || {}),
@@ -6100,7 +6315,7 @@ export default function App() {
       console.error("[PulseX] fetch threw:", e.message, "→", path.split("?")[0]);
       return { data: null, error: e.message };
     }
-  }, [SB_URL, SB_KEY, SB_READY]); // re-creates if env vars somehow change
+  }, [SB_URL, SB_KEY, SB_READY]); // re-creates if env vars change
 
   // ── sb convenience object — re-created when sbFetch updates ──────────────
   const sb = useMemo(() => ({
@@ -6113,7 +6328,56 @@ export default function App() {
   }), [sbFetch]);
 
   // ── UI-only state (never persisted) ───────────────────────────────────────
-  const [view, setView] = useState("timeline");
+  // ── Auth — declared first so early returns are safe ─────────────────────────
+  const [authSession, setAuthSession] = useState(() => getStoredSession());
+  const [authUser,    setAuthUser]    = useState(null);
+  const [currentRole, setCurrentRole] = useState("member");
+  const [authLoading, setAuthLoading] = useState(true);
+  // Supabase v1 returns { user: { id } }, v2 may return { user_id } or decode from JWT
+  const authUUID = authSession?.user?.id
+    || authSession?.user_id
+    || authSession?.sub
+    || (() => {
+         // Decode JWT payload without a library to get sub (user UUID)
+         try {
+           const token = authSession?.access_token;
+           if (!token) return null;
+           const payload = JSON.parse(atob(token.split('.')[1].replace(/-/g,'+').replace(/_/g,'/')));
+           return payload.sub || null;
+         } catch { return null; }
+       })()
+    || null;
+
+  const handleLogin = async ({ session, user }) => {
+    setAuthSession(session); setAuthUser(user);
+    const appUser = await fetchAppUser(user.id, session.access_token);
+    if (appUser) { setCurrentRole(appUser.role); setCurrentUser(appUser.teamMemberId); }
+    setView("myhub"); setAuthLoading(false);
+  };
+  const handleLogout = async () => {
+    console.log("[PulseX] handleLogout called");
+    await signOut(authSession?.access_token || "");
+    setAuthSession(null);
+    setAuthUser(null);
+    setCurrentRole("member");
+    try { localStorage.removeItem("planr_view"); } catch {}
+  };
+  useEffect(() => {
+    const session = getStoredSession();
+    if (!session) { setAuthLoading(false); return; }
+    fetchAppUser(session.user?.id, session.access_token).then(appUser => {
+      if (appUser) { setCurrentRole(appUser.role); setCurrentUser(appUser.teamMemberId); }
+      setAuthSession(session); setAuthUser(session.user); setAuthLoading(false);
+    });
+  }, []); // eslint-disable-line
+
+  const [view, setViewRaw] = useState(() => {
+    try { return localStorage.getItem("planr_view") || "myhub"; } catch { return "myhub"; }
+  });
+  const setView = (v) => {
+    setViewRaw(v);
+    try { localStorage.setItem("planr_view", v); } catch {}
+  };
   const [editingItem, setEditingItem] = useState(null);
   const [showNewProject, setShowNewProject] = useState(false);
   const [showImport, setShowImport] = useState(false);
@@ -6130,6 +6394,7 @@ export default function App() {
 
   // ── PTO & current user ──────────────────────────────────────────────────
   const [pto, setPto] = useState([]);
+  const [personalTasks, setPersonalTasks] = useState([]);
   const [currentUserId, setCurrentUserId] = useState(() => {
     try { return localStorage.getItem("planr_current_user") || ""; } catch { return ""; }
   });
@@ -6176,14 +6441,15 @@ export default function App() {
     setDbError(null);
     try {
       const [pR, dR, sR, mR, hR, nR, tR, ptR] = await Promise.all([
-        sb.select("projects",     "order=position.asc,created_at.asc"),
-        sb.select("deliverables", "order=position.asc,created_at.asc"),
-        sb.select("subtasks",     "order=position.asc,created_at.asc"),
-        sb.select("team_members", "order=position.asc,created_at.asc"),
-        sb.select("holidays",     "order=date.asc"),
-        sb.select("status_notes", ""),
-        sb.select("templates",    "order=created_at.asc"),
-        sb.select("pto",          "order=start_date.asc"),
+        sb.select("projects",       "order=position.asc,created_at.asc"),
+        sb.select("deliverables",   "order=position.asc,created_at.asc"),
+        sb.select("subtasks",       "order=position.asc,created_at.asc"),
+        sb.select("team_members",   "order=position.asc,created_at.asc"),
+        sb.select("holidays",       "order=date.asc"),
+        sb.select("status_notes",   ""),
+        sb.select("templates",      "order=created_at.asc"),
+        sb.select("pto",            "order=start_date.asc"),
+
       ]);
       for (const r of [pR, dR, sR, mR, hR, nR, tR, ptR]) {
         if (r.error) throw new Error(r.error);
@@ -6222,6 +6488,7 @@ export default function App() {
       setStatusNotes(notes);
       setSavedTemplates((tR.data || []).map(t => ({ ...t.data, id: t.id, name: t.name })));
       setPto((ptR.data || []).map(rowToPto));
+
     } catch (e) {
       console.error("[PulseX] loadAll failed:", e.message);
       setDbError(e.message);
@@ -6231,6 +6498,30 @@ export default function App() {
   }, [sb, SB_READY]); // sb changes when sbFetch changes (env vars set)
 
   useEffect(() => { loadAll(); }, [loadAll]);
+
+  // Load personal tasks separately — needs authUser.id which isn't available during loadAll
+  useEffect(() => {
+    console.log("[PT] load effect — SB_READY:", SB_READY, "authUUID:", authUUID, "access_token:", authSession?.access_token?.slice(0,20));
+    console.log("[PT] authSession structure:", authSession ? Object.keys(authSession) : "NULL", "user:", authSession?.user);
+    if (!SB_READY || !authUUID) return;
+    sb.select("personal_tasks", `person_id=eq.${authUUID}&order=created_at.asc`)
+      .then(result => {
+        console.log("[PT] load result:", JSON.stringify(result).slice(0,200));
+        if (!result?.error && result?.data) {
+          setPersonalTasks(result.data.map(r => ({
+            id:       r.id,
+            personId: r.person_id,
+            title:    r.title     || "",
+            status:   r.status    || "Not Started",
+            priority: r.priority  || "Medium",
+            dueDate:  r.due_date  || null,
+            notes:    r.notes     || "",
+            createdAt:r.created_at,
+          })));
+        }
+      })
+      .catch(e => console.warn("[PulseX] personal_tasks load:", e.message));
+  }, [SB_READY, authUUID, sb]);
 
   async function seedDefaults() {
     for (let i = 0; i < initialPeople.length; i++) {
@@ -6441,6 +6732,39 @@ export default function App() {
     alert(`"${proj.name}" saved as a template!`);
   };
 
+  const savePersonalTask = async (task) => {
+    console.log("[PT] save — authUUID:", authUUID, "access_token:", authSession?.access_token?.slice(0,20), "title:", task.title);
+    const id = task.id && task.id.startsWith("pt_") ? task.id : ("pt_" + Date.now());
+    const entry = { ...task, id, personId: authUUID, updated_at: new Date().toISOString() };
+    setPersonalTasks(prev => {
+      const idx = prev.findIndex(t => t.id === id);
+      return idx >= 0 ? prev.map(t => t.id === id ? entry : t) : [...prev, entry];
+    });
+    if (SB_READY && authUUID) {
+      const result = await sb.upsert("personal_tasks", {
+        id,
+        person_id:  authUUID,
+        title:      entry.title || "",
+        status:     entry.status || "Not Started",
+        priority:   entry.priority || "Medium",
+        due_date:   entry.dueDate || null,
+        notes:      entry.notes || "",
+        updated_at: entry.updated_at,
+      });
+      console.log("[PT] upsert result:", JSON.stringify(result).slice(0,200));
+      if (result?.error) console.error("[PulseX] savePersonalTask error:", result.error);
+    } else {
+      console.warn("[PT] skipping upsert — SB_READY:", SB_READY, "authUUID:", authUUID);
+    }
+  };
+  const deletePersonalTask = async (id) => {
+    setPersonalTasks(prev => prev.filter(t => t.id !== id));
+    if (SB_READY) {
+      const result = await sb.delete("personal_tasks", id);
+      if (result?.error) console.error("[PulseX] deletePersonalTask error:", result.error);
+    }
+  };
+
   const savePto = async (ptoEntry) => {
     const entry = { ...ptoEntry, id: ptoEntry.id || ("pto_" + Date.now()) };
     setPto(prev => [...prev.filter(p => p.id !== entry.id), entry]);
@@ -6613,6 +6937,13 @@ export default function App() {
     { id: "reporting", label: "Reporting",  icon: "◈" },
   ];
 
+  // Auth gate — must be in App() so setting authSession=null triggers re-render
+  if (authLoading) return (
+    <div style={{ minHeight:"100vh", background:"#002A4E", display:"flex", alignItems:"center",
+      justifyContent:"center", color:"#50C0C0", fontFamily:"inherit", fontSize:14 }}>Loading…</div>
+  );
+  if (!authSession) return <LoginScreen onLogin={handleLogin} />;
+
   // Loading / error screens
   if (loading) return (
     <div style={{ minHeight: "100vh", background: "#f5f6f8", display: "flex", alignItems: "center", justifyContent: "center", flexDirection: "column", gap: 16, fontFamily: '"Roboto", Arial, sans-serif' }}>
@@ -6665,36 +6996,40 @@ export default function App() {
       `}</style>
 
       {/* Nav */}
-      <header style={{ borderBottom: `1px solid rgba(255,255,255,0.08)`, padding: "0 8px 0 10px", display: "flex", alignItems: "center", height: 52, flexShrink: 0, background: BRAND_NAVY, width: "100%", boxSizing: "border-box", overflow: "visible", gap: 6 }}>
+      <header style={{ borderBottom: `1px solid rgba(255,255,255,0.08)`, padding: "0 8px 0 10px", display: "flex", alignItems: "center", height: 52, flexShrink: 0, background: BRAND_NAVY, width: "100%", boxSizing: "border-box", overflow: "hidden", gap: 6, position: "relative" }}>
         {/* Logo — compact, no wide margin */}
-        <div style={{ display: "flex", alignItems: "center", gap: 7, flexShrink: 0 }}>
-          <div style={{ width: 26, height: 26, background: BRAND_TEAL, borderRadius: 5, display: "flex", alignItems: "center", justifyContent: "center" }}>
-            <span style={{ fontSize: 13, fontWeight: 900, color: BRAND_NAVY, fontFamily: '"Roboto", Arial, sans-serif' }}>X</span>
+        <div style={{ display: "flex", alignItems: "center", gap: 5, flexShrink: 0 }} title="PulseX">
+          <div style={{ width: 28, height: 28, background: BRAND_TEAL, borderRadius: 6, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+            <span style={{ fontSize: 13, fontWeight: 900, color: BRAND_NAVY, fontFamily: '"Roboto", Arial, sans-serif' }}>PX</span>
           </div>
-          <span className="nav-label" style={{ fontSize: 14, fontWeight: 800, color: "#ffffff", fontFamily: '"Roboto", Arial, sans-serif', letterSpacing: "-0.01em" }}>PulseX</span>
         </div>
         {/* Nav tabs — get all remaining space, scroll horizontally */}
-        <nav style={{ display: "flex", gap: 2, overflowX: "auto", overflowY: "visible", flex: 1, scrollbarWidth: "none", msOverflowStyle: "none", WebkitOverflowScrolling: "touch", minWidth: 0 }}>
+        <nav
+          style={{ display: "flex", gap: 2, overflowX: "auto", overflowY: "visible", flex: 1, scrollbarWidth: "none", msOverflowStyle: "none", WebkitOverflowScrolling: "touch", minWidth: 0 }}
+          onWheel={e => { if (!e.shiftKey && Math.abs(e.deltaX) < Math.abs(e.deltaY)) { e.currentTarget.scrollLeft += e.deltaY; } }}
+        >
           {navItems.map(n => (
-            <button key={n.id} onClick={() => setView(n.id)} style={{
+            <button key={n.id} onClick={() => setView(n.id)} title={n.label} style={{
               background: view === n.id ? BRAND_TEAL_L : "none",
               border: `1px solid ${view === n.id ? BRAND_TEAL + "50" : "rgba(255,255,255,0.1)"}`,
-              color: view === n.id ? BRAND_TEAL : "rgba(255,255,255,0.65)", padding: "5px 10px",
-              borderRadius: 5, cursor: "pointer", fontSize: 11, fontWeight: 700,
-              letterSpacing: "0.05em", fontFamily: "inherit", display: "flex", alignItems: "center", gap: 4, transition: "all 0.12s", flexShrink: 0, whiteSpace: "nowrap",
-            }}>{n.icon} <span className="nav-label">{n.label}</span></button>
+              color: view === n.id ? BRAND_TEAL : "rgba(255,255,255,0.65)",
+              padding: "5px 8px", borderRadius: 5, cursor: "pointer", fontSize: 14,
+              fontFamily: "inherit", display: "flex", alignItems: "center", justifyContent: "center",
+              flexDirection: "column", gap: 1, transition: "all 0.12s", flexShrink: 0,
+              minWidth: 36,
+            }}>
+              <span>{n.icon}</span>
+              <span style={{ fontSize: 8, fontWeight: 700, letterSpacing: "0.04em", opacity: 0.8, whiteSpace: "nowrap" }}>{n.label}</span>
+            </button>
           ))}
         </nav>
         {/* Zoom + Settings — hidden on very small screens via CSS */}
         <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }} className="nav-controls">
-          {/* ── ZOOM CONTROL ── */}
-          <div style={{ display: "flex", alignItems: "center", gap: 4, background: "rgba(255,255,255,0.08)", borderRadius: 6, padding: "2px 4px" }}>
-            {ZOOM_LEVELS.map(z => (
-              <button key={z.id} onClick={() => setZoom(z.id)} title={`${z.label} (${z.base}px)`}
-                style={{ background: zoomId === z.id ? BRAND_TEAL : "none", border: "none", borderRadius: 4, padding: "3px 7px", cursor: "pointer", fontSize: 10, fontWeight: zoomId === z.id ? 800 : 500, color: zoomId === z.id ? BRAND_NAVY : "rgba(255,255,255,0.5)", fontFamily: "inherit", boxShadow: zoomId === z.id ? "0 1px 3px rgba(0,0,0,0.1)" : "none", transition: "all 0.12s" }}
-              >{z.label.split(" ")[0]}</button>
-            ))}
-          </div>
+          {/* ── ZOOM — compact select ── */}
+          <select value={zoomId} onChange={e => setZoom(e.target.value)} title="Zoom level"
+            style={{ background: "rgba(255,255,255,0.1)", border: "1px solid rgba(255,255,255,0.15)", color: "rgba(255,255,255,0.8)", borderRadius: 5, padding: "4px 2px", fontSize: 10, cursor: "pointer", fontFamily: "inherit", width: 34 }}>
+            {ZOOM_LEVELS.map(z => <option key={z.id} value={z.id} style={{ color: "#000" }}>{z.label[0]}</option>)}
+          </select>
 
           {/* ── SETTINGS MENU ── */}
           <div style={{ position: "relative" }}>
@@ -6703,8 +7038,8 @@ export default function App() {
               background: showSettingsMenu ? "rgba(255,255,255,0.15)" : "rgba(255,255,255,0.08)",
               border: "1px solid rgba(255,255,255,0.15)", color: "rgba(255,255,255,0.85)",
               borderRadius: 6, padding: "5px 13px", cursor: "pointer",
-              fontSize: 11, fontWeight: 800, letterSpacing: "0.06em", fontFamily: "inherit",
-            }}>⚙ SETTINGS {showSettingsMenu ? "▲" : "▼"}</button>
+              fontSize: 14, fontWeight: 800, fontFamily: "inherit",
+            }}>⚙</button>
             {showSettingsMenu && (
               <div style={{
                 position: "fixed", right: 12, top: 58, zIndex: 1500,
@@ -6733,15 +7068,22 @@ export default function App() {
                     {item.label}
                   </button>
                 ))}
+
               </div>
             )}
-          </div>
+            <button onClick={handleLogout} title="Sign Out"
+            style={{ background:"rgba(239,68,68,0.15)", border:"1px solid rgba(239,68,68,0.3)",
+              color:"#fca5a5", borderRadius:6, padding:"4px 10px", cursor:"pointer",
+              fontSize:12, fontFamily:"inherit", fontWeight:700, flexShrink:0 }}>
+            ⎋
+          </button>
+        </div>
           {/* ── NEW PROJECT BUTTON ── */}
           <button onClick={() => setShowNewProject(true)} style={{
             display: "flex", alignItems: "center", gap: 6,
             background: BRAND_TEAL_L, border: `1px solid ${BRAND_TEAL}80`,
             color: BRAND_TEAL_D, borderRadius: 6, padding: "5px 13px", cursor: "pointer",
-            fontSize: 11, fontWeight: 800, letterSpacing: "0.06em", fontFamily: "inherit",
+            fontSize: 14, fontWeight: 800, fontFamily: "inherit",
             transition: "all 0.12s",
           }}>
             <span style={{ fontSize: 15, lineHeight: 1 }}>+</span> NEW PROJECT
@@ -6833,6 +7175,9 @@ export default function App() {
             currentUserId={currentUserId} onSetCurrentUser={setCurrentUser}
             onEditItem={handleEditItem} onMarkDone={handleMarkDone}
             savePto={savePto} deletePto={deletePto}
+            personalTasks={personalTasks}
+            onSavePersonalTask={savePersonalTask}
+            onDeletePersonalTask={deletePersonalTask}
           />
         )}
         {view === "dashboard" && <DashboardView projects={projects} people={people} holidays={holidays} pto={pto} savePto={savePto} onEditItem={handleEditItem} onAddDeliverable={(proj) => setNewDeliverable(proj)} onAddSubtask={(proj, del) => setNewSubtask({ project: proj, deliverable: del })} onNewProject={() => setShowNewProject(true)} onOpenProject={id => setProjectDetailsId(id)} />}
