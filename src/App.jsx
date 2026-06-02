@@ -3588,7 +3588,37 @@ function Section({ title, icon, count, color = "#6b7280", children, empty, colla
   );
   }
 
-function MyHubView({ projects, people, holidays, pto = [], currentUserId, onSetCurrentUser, onEditItem, onMarkDone, savePto, deletePto, personalTasks = [], onSavePersonalTask, onDeletePersonalTask, currentRole = "member", authMemberId = "" }) {
+// ── DoneTasksDropdown — top-level so useState hook is valid ──────────────────
+function DoneTasksDropdown({ tasks, onReopen, onDelete }) {
+  const [showDone, setShowDone] = React.useState(false);
+  if (!tasks.length) return null;
+  return (
+    <div style={{ borderTop:"1px solid rgba(0,0,0,0.06)" }}>
+      <button onClick={() => setShowDone(d => !d)}
+        style={{ width:"100%", padding:"9px 16px", background:"rgba(0,0,0,0.02)", border:"none", textAlign:"left", cursor:"pointer", fontFamily:"inherit", display:"flex", alignItems:"center", gap:8, color:"#9ca3af", fontSize:11, fontWeight:600 }}>
+        <span style={{ fontSize:10, transition:"transform 0.15s", display:"inline-block", transform: showDone ? "rotate(90deg)" : "rotate(0deg)" }}>▶</span>
+        Completed ({tasks.length})
+      </button>
+      {showDone && tasks.map(task => (
+        <div key={task.id} style={{ display:"flex", alignItems:"center", gap:10, padding:"8px 16px", borderTop:"1px solid rgba(0,0,0,0.04)", opacity:0.6 }}>
+          <label style={{ display:"flex", alignItems:"center", cursor:"pointer", flexShrink:0 }}>
+            <input type="checkbox" checked={true} onChange={() => onReopen(task)}
+              style={{ width:15, height:15, accentColor:"#34d399", cursor:"pointer" }} />
+          </label>
+          <div style={{ flex:1, minWidth:0 }}>
+            <div style={{ fontSize:12, color:"#9ca3af", textDecoration:"line-through" }}>{task.title}</div>
+            {task.dueDate && <div style={{ fontSize:10, color:"#c4c9d4" }}>{task.dueDate}</div>}
+          </div>
+          <button onClick={() => onDelete(task.id)}
+            style={{ background:"none", border:"none", color:"#fca5a5", cursor:"pointer", fontSize:14, flexShrink:0 }}>×</button>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+
+function MyHubView({ projects, people, holidays, pto = [], currentUserId, onSetCurrentUser, onEditItem, onMarkDone, savePto, deletePto, personalTasks = [], onSavePersonalTask, onDeletePersonalTask, currentRole = "member", authMemberId = "", authUUID = "", notifications = [], onDismissNotification, onOpenNotifTask, setToastNotif }) {
   const TODAY = new Date(); TODAY.setHours(0,0,0,0);
 
   // Week bounds (Mon–Sun)
@@ -3926,6 +3956,54 @@ function MyHubView({ projects, people, holidays, pto = [], currentUserId, onSetC
       {/* ── Sections ── */}
       <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
 
+        {/* ── Needs Review — admin only ── */}
+        {currentRole === "admin" && (() => {
+          const unreviewed = notifications.filter(n => !n.isRead && n.type === "task_completed");
+          if (!unreviewed.length) return null;
+          return (
+            <div style={{ background:"#fff", border:"1px solid rgba(249,115,22,0.25)", borderRadius:10, overflow:"hidden" }}>
+              <div style={{ padding:"12px 16px", borderBottom:"1px solid rgba(0,0,0,0.07)", display:"flex", alignItems:"center", justifyContent:"space-between" }}>
+                <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+                  <span style={{ fontSize:13, color:"#f97316" }}>✓</span>
+                  <span style={{ fontSize:12, fontWeight:800, color:"#1f2937" }}>Needs Review</span>
+                  <span style={{ fontSize:10, color:"#f97316", background:"rgba(249,115,22,0.1)", borderRadius:10, padding:"1px 7px", fontWeight:700 }}>{unreviewed.length}</span>
+                </div>
+                <button onClick={() => unreviewed.forEach(n => onDismissNotification?.(n.id))}
+                  style={{ fontSize:10, color:"#9ca3af", background:"none", border:"none", cursor:"pointer", fontFamily:"inherit" }}>
+                  Mark all reviewed
+                </button>
+              </div>
+              <div>
+                {unreviewed.map(n => {
+                  const person = people.find(p => p.id === n.completedByPersonId);
+                  const when   = n.createdAt ? new Date(n.createdAt).toLocaleString("en-US",{month:"short",day:"numeric",hour:"numeric",minute:"2-digit"}) : "";
+                  return (
+                    <div key={n.id} style={{ display:"flex", alignItems:"flex-start", gap:10, padding:"10px 16px", borderBottom:"1px solid rgba(0,0,0,0.04)" }}>
+                      <div style={{ width:28, height:28, borderRadius:"50%", background:person?.color||"#e5e7eb", display:"flex", alignItems:"center", justifyContent:"center", fontSize:9, fontWeight:800, color:"#fff", flexShrink:0 }}>
+                        {person?.name?.split(" ").map(w=>w[0]).join("").slice(0,2)||"?"}
+                      </div>
+                      <div style={{ flex:1, minWidth:0 }}>
+                        <div style={{ fontSize:12, fontWeight:600, color:"#1f2937" }}>{n.message}</div>
+                        <div style={{ fontSize:10, color:"#9ca3af", marginTop:2 }}>{when}</div>
+                      </div>
+                      <div style={{ display:"flex", gap:6, flexShrink:0 }}>
+                        <button onClick={() => onOpenNotifTask?.(n)}
+                          style={{ fontSize:10, fontWeight:700, color:BRAND_TEAL, background:"rgba(80,192,192,0.1)", border:"none", borderRadius:5, padding:"4px 9px", cursor:"pointer", fontFamily:"inherit", whiteSpace:"nowrap" }}>
+                          Open
+                        </button>
+                        <button onClick={() => onDismissNotification?.(n.id)}
+                          style={{ fontSize:10, color:"#9ca3af", background:"rgba(0,0,0,0.05)", border:"none", borderRadius:5, padding:"4px 8px", cursor:"pointer", fontFamily:"inherit" }}>
+                          ✓ Reviewed
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          );
+        })()}
+
         {/* ── My Tasks — top of page, always visible ── */}
         <div style={{ background:"#fff", border:"1px solid rgba(0,0,0,0.07)", borderRadius:10, overflow:"hidden" }}>
           {/* Header */}
@@ -3934,7 +4012,7 @@ function MyHubView({ projects, people, holidays, pto = [], currentUserId, onSetC
               <span style={{ fontSize:13, color:"#6366f1" }}>☑</span>
               <span style={{ fontSize:13, fontWeight:800, color:"#1f2937" }}>My Tasks</span>
               <span style={{ fontSize:10, color:"#9ca3af", background:"rgba(0,0,0,0.04)", borderRadius:10, padding:"1px 7px" }}>
-                {personalTasks.filter(t => t.status !== "Done").length} active
+                {(meId === authMemberId ? personalTasks : []).filter(t => t.status !== "Done").length} active
               </span>
             </div>
             <button onClick={() => { setTaskForm({ title:"", status:"Not Started", priority:"Medium", dueDate:"", notes:"" }); setEditingTask(null); setShowTaskForm(true); }}
@@ -3945,10 +4023,16 @@ function MyHubView({ projects, people, holidays, pto = [], currentUserId, onSetC
 
           {/* Active tasks */}
           <div>
-            {personalTasks.filter(t => t.status !== "Done").length === 0 && (
+            {(() => { 
+              // Only show personal tasks when viewing your own hub
+              // Admin viewing another person's hub: their tasks aren't loaded
+              // Only show personal tasks when viewing your own hub
+              const myTasks = meId === authMemberId ? personalTasks : [];
+              return (<>
+            {myTasks.filter(t => t.status !== "Done").length === 0 && (
               <div style={{ fontSize:12, color:"#9ca3af", textAlign:"center", padding:"16px 0" }}>No active tasks. Add one above.</div>
             )}
-            {personalTasks.filter(t => t.status !== "Done").map(task => {
+            {myTasks.filter(t => t.status !== "Done").map(task => {
               const isOverdueT = task.dueDate && task.dueDate < todayStr;
               const isDueTodayT = task.dueDate === todayStr;
               return (
@@ -3979,37 +4063,15 @@ function MyHubView({ projects, people, holidays, pto = [], currentUserId, onSetC
                 </div>
               );
             })}
+            </>);})()} 
           </div>
 
           {/* Completed tasks — collapsed dropdown */}
-          {personalTasks.filter(t => t.status === "Done").length > 0 && (() => {
-            const doneTasks = personalTasks.filter(t => t.status === "Done");
-            const [showDone, setShowDone] = React.useState(false);
-            return (
-              <div style={{ borderTop:"1px solid rgba(0,0,0,0.06)" }}>
-                <button onClick={() => setShowDone(d => !d)}
-                  style={{ width:"100%", padding:"9px 16px", background:"rgba(0,0,0,0.02)", border:"none", textAlign:"left", cursor:"pointer", fontFamily:"inherit", display:"flex", alignItems:"center", gap:8, color:"#9ca3af", fontSize:11, fontWeight:600 }}>
-                  <span style={{ fontSize:10, transition:"transform 0.15s", display:"inline-block", transform: showDone ? "rotate(90deg)" : "rotate(0deg)" }}>▶</span>
-                  Completed ({doneTasks.length})
-                </button>
-                {showDone && doneTasks.map(task => (
-                  <div key={task.id} style={{ display:"flex", alignItems:"center", gap:10, padding:"8px 16px", borderTop:"1px solid rgba(0,0,0,0.04)", opacity:0.6 }}>
-                    <label style={{ display:"flex", alignItems:"center", cursor:"pointer", flexShrink:0 }}>
-                      <input type="checkbox" checked={true}
-                        onChange={() => onSavePersonalTask({ ...task, status: "Not Started" })}
-                        style={{ width:15, height:15, accentColor:"#34d399", cursor:"pointer" }} />
-                    </label>
-                    <div style={{ flex:1, minWidth:0 }}>
-                      <div style={{ fontSize:12, color:"#9ca3af", textDecoration:"line-through" }}>{task.title}</div>
-                      {task.dueDate && <div style={{ fontSize:10, color:"#c4c9d4" }}>{task.dueDate}</div>}
-                    </div>
-                    <button onClick={() => onDeletePersonalTask(task.id)}
-                      style={{ background:"none", border:"none", color:"#fca5a5", cursor:"pointer", fontSize:14, flexShrink:0 }}>×</button>
-                  </div>
-                ))}
-              </div>
-            );
-          })()}
+          {meId === authMemberId && <DoneTasksDropdown
+            tasks={personalTasks.filter(t => t.status === "Done")}
+            onReopen={(task) => onSavePersonalTask({ ...task, status: "Not Started" })}
+            onDelete={onDeletePersonalTask}
+          />}
         </div>
 
         <Section title="Overdue" icon="⚠" count={overdueTasks.length} color="#f87171">
@@ -6786,6 +6848,14 @@ export default function App() {
       if (!res.ok) {
         const text = await res.text();
         console.error("[PulseX] HTTP", res.status, path.split("?")[0], "→", text.slice(0, 200));
+        // Auto-clear expired/invalid session — avoid scary "Could not connect" message
+        try {
+          const errBody = JSON.parse(text);
+          if (res.status === 401 || errBody?.code === "PGRST303" || /jwt expired/i.test(errBody?.message || "")) {
+            try { localStorage.removeItem("sb_session"); } catch {}
+            window.__pulsex_session_expired__ = true;
+          }
+        } catch {}
         return { data: null, error: text };
       }
       const text = await res.text();
@@ -6830,7 +6900,12 @@ export default function App() {
   const handleLogin = async ({ session, user }) => {
     setAuthSession(session); setAuthUser(user);
     const appUser = await fetchAppUser(user.id, session.access_token);
-    if (appUser) { setCurrentRole(appUser.role); setCurrentUser(appUser.teamMemberId); }
+    if (appUser) {
+      setCurrentRole(appUser.role);
+      setCurrentUser(appUser.teamMemberId);
+      setOwnMemberId(appUser.teamMemberId);
+      try { localStorage.setItem("planr_own_member_id", appUser.teamMemberId); } catch {}
+    }
     setView("myhub"); setAuthLoading(false);
   };
   const handleLogout = async () => {
@@ -6845,7 +6920,12 @@ export default function App() {
     const session = getStoredSession();
     if (!session) { setAuthLoading(false); return; }
     fetchAppUser(session.user?.id, session.access_token).then(appUser => {
-      if (appUser) { setCurrentRole(appUser.role); setCurrentUser(appUser.teamMemberId); }
+      if (appUser) {
+        setCurrentRole(appUser.role);
+        setCurrentUser(appUser.teamMemberId);
+        setOwnMemberId(appUser.teamMemberId);
+        try { localStorage.setItem("planr_own_member_id", appUser.teamMemberId); } catch {}
+      }
       setAuthSession(session); setAuthUser(session.user); setAuthLoading(false);
     });
   }, []); // eslint-disable-line
@@ -6873,6 +6953,8 @@ export default function App() {
 
   // ── PTO & current user ──────────────────────────────────────────────────
   const [pto, setPto] = useState([]);
+  const [notifications, setNotifications] = useState([]);
+  const [toastNotif, setToastNotif] = useState(null); // { id, message, taskInfo }
   const [personalTasks, setPersonalTasks] = useState([]);
   const [currentUserId, setCurrentUserId] = useState(() => {
     try { return localStorage.getItem("planr_current_user") || ""; } catch { return ""; }
@@ -6881,6 +6963,10 @@ export default function App() {
     setCurrentUserId(id);
     try { localStorage.setItem("planr_current_user", id); } catch {}
   };
+  // The logged-in user's OWN team member ID — never changes when admin switches hubs
+  const [ownMemberId, setOwnMemberId] = useState(() => {
+    try { return localStorage.getItem("planr_own_member_id") || ""; } catch { return ""; }
+  });
   const [clipboard, setClipboard] = useState(null); // { type: "subtask"|"deliverable", data }
   const [zoomId, setZoomId] = useState(() => {
     try { return localStorage.getItem("planr_zoom") || "standard"; } catch { return "standard"; }
@@ -7211,6 +7297,12 @@ export default function App() {
     alert(`"${proj.name}" saved as a template!`);
   };
 
+  const dismissNotification = async (id) => {
+    setNotifications(prev => prev.map(n => n.id === id ? { ...n, isRead: true, reviewedAt: new Date().toISOString() } : n));
+    setToastNotif(null);
+    if (SB_READY) await sb.update("task_notifications", id, { is_read: true, reviewed_at: new Date().toISOString() });
+  };
+
   const savePersonalTask = async (task) => {
     console.log("[PT] save — authUUID:", authUUID, "access_token:", authSession?.access_token?.slice(0,20), "title:", task.title);
     const id = task.id && task.id.startsWith("pt_") ? task.id : ("pt_" + Date.now());
@@ -7353,18 +7445,48 @@ export default function App() {
 
   const handleMarkDone = (projectId, deliverableId, subtaskId) => {
     const proj = projects.find(p => p.id === projectId);
-    const del = proj?.deliverables.find(d => d.id === deliverableId);
+    const del  = proj?.deliverables.find(d => d.id === deliverableId);
+
+    const createNotification = async (taskTitle, delTitle, prevStatus) => {
+      if (prevStatus === "Done") return; // already Done — no new notification
+      const notifId = "notif_" + Date.now();
+      const person  = people.find(p => p.id === currentUserId);
+      const message = `${person?.name || "Someone"} completed "${taskTitle}" in ${proj?.name || "a project"}`;
+      const notif   = {
+        id: notifId, taskId: subtaskId || deliverableId, deliverableId,
+        projectId, completedByPersonId: currentUserId,
+        type: "task_completed", message, isRead: false,
+        reviewedAt: null, createdAt: new Date().toISOString(),
+      };
+      setNotifications(prev => [notif, ...prev]);
+      if (currentRole === "admin") {
+        setToastNotif(notif); // admin sees their own completions too
+      } else {
+        setToastNotif(notif); // show toast for the person who completed it; admin will see on next load
+      }
+      if (SB_READY) {
+        await sb.upsert("task_notifications", {
+          id: notifId, task_id: notif.taskId, deliverable_id: deliverableId,
+          project_id: projectId, completed_by_person_id: currentUserId,
+          notification_type: "task_completed", message,
+          is_read: false, reviewed_at: null, created_at: notif.createdAt,
+        });
+      }
+    };
+
     if (subtaskId) {
-      const sub = del?.subtasks.find(s => s.id === subtaskId);
+      const sub  = del?.subtasks.find(s => s.id === subtaskId);
       const next = sub?.status === "Done" ? "In Progress" : "Done";
       const newProg = next === "Done" ? 100 : 0;
+      if (next === "Done") createNotification(sub?.title || "Task", del?.title || "", sub?.status);
       optimistic(
         () => setProjects(ps => ps.map(p => p.id !== projectId ? p : { ...p, deliverables: p.deliverables.map(d => d.id !== deliverableId ? d : { ...d, subtasks: d.subtasks.map(s => s.id !== subtaskId ? s : { ...s, status: next, progress: newProg }) }) })),
         async () => { const { error } = await sb.update("subtasks", subtaskId, { status: next, progress: newProg }); return error; }
       );
     } else {
-      const next = del?.status === "Done" ? "In Progress" : "Done";
+      const next    = del?.status === "Done" ? "In Progress" : "Done";
       const newProg = next === "Done" ? 100 : del?.progress ?? 0;
+      if (next === "Done") createNotification(del?.title || "Deliverable", del?.title || "", del?.status);
       optimistic(
         () => setProjects(ps => ps.map(p => p.id !== projectId ? p : { ...p, deliverables: p.deliverables.map(d => d.id !== deliverableId ? d : { ...d, status: next, progress: newProg, subtasks: next === "Done" ? d.subtasks.map(s => ({ ...s, status: "Done", progress: 100 })) : d.subtasks }) })),
         async () => {
@@ -7661,7 +7783,16 @@ export default function App() {
             onSavePersonalTask={savePersonalTask}
             onDeletePersonalTask={deletePersonalTask}
             currentRole={currentRole}
-            authMemberId={currentUserId}
+            authMemberId={ownMemberId}
+            authUUID={authUUID}
+            notifications={notifications}
+            onDismissNotification={dismissNotification}
+            setToastNotif={setToastNotif}
+            onOpenNotifTask={(notif) => {
+              const proj = projects.find(p => p.id === notif.projectId);
+              const del  = proj?.deliverables.find(d => d.id === notif.deliverableId);
+              if (del) handleEditItem({ ...del, projectId: proj.id, projectName: proj.name, projectColor: proj.color });
+            }}
           />
         )}
         {view === "dashboard" && <DashboardView projects={projects} people={people} holidays={holidays} pto={pto} savePto={savePto} onEditItem={handleEditItem} onAddDeliverable={(proj) => setNewDeliverable(proj)} onAddSubtask={(proj, del) => setNewSubtask({ project: proj, deliverable: del })} onNewProject={() => setShowNewProject(true)} onOpenProject={id => setProjectDetailsId(id)} />}
@@ -7863,6 +7994,22 @@ export default function App() {
           })()}
         />
       )}
+
+      {/* ── Completion toast — visible on any page ── */}
+      {toastNotif && (
+        <div style={{ position:"fixed", bottom:24, right:24, zIndex:9999, maxWidth:360, width:"calc(100vw - 48px)",
+          background:"#1e293b", color:"#f8fafc", borderRadius:12, padding:"14px 16px",
+          boxShadow:"0 8px 32px rgba(0,0,0,0.35)", display:"flex", alignItems:"flex-start", gap:12 }}>
+          <div style={{ width:32, height:32, borderRadius:"50%", background:"#34d399", display:"flex", alignItems:"center", justifyContent:"center", fontSize:15, flexShrink:0 }}>✓</div>
+          <div style={{ flex:1, minWidth:0 }}>
+            <div style={{ fontSize:12, fontWeight:700, color:"#f8fafc", marginBottom:3 }}>Task Completed</div>
+            <div style={{ fontSize:11, color:"rgba(248,250,252,0.7)", lineHeight:1.45 }}>{toastNotif.message}</div>
+          </div>
+          <button onClick={() => { dismissNotification(toastNotif.id); setToastNotif(null); }}
+            style={{ background:"none", border:"none", color:"rgba(248,250,252,0.5)", cursor:"pointer", fontSize:18, lineHeight:1, flexShrink:0, padding:"0 2px" }}>×</button>
+        </div>
+      )}
+
     </div>
   );
 }
