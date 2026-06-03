@@ -2734,11 +2734,18 @@ function InlineAssignees({ assignees, onChange, people }) {
   const handleOpen = () => {
     if (triggerRef.current) {
       const rect = triggerRef.current.getBoundingClientRect();
-      // Try below first, flip above if not enough space
-      const spaceBelow = window.innerHeight - rect.bottom;
-      const popH = people.length * 40 + 50;
-      const top = spaceBelow > popH ? rect.bottom + 4 : rect.top - popH - 4;
-      setPopPos({ top, left: rect.left });
+      const popW = 220;
+      const popH = Math.min(people.length * 44 + 60, window.innerHeight - 40);
+      // Vertical: prefer below, flip above if no room
+      const spaceBelow = window.innerHeight - rect.bottom - 8;
+      let top = spaceBelow >= popH ? rect.bottom + 4 : Math.max(8, rect.top - popH - 4);
+      // Clamp vertical to viewport
+      top = Math.max(8, Math.min(top, window.innerHeight - popH - 8));
+      // Horizontal: prefer left-align with trigger, clamp right edge
+      let left = rect.left;
+      if (left + popW > window.innerWidth - 8) left = window.innerWidth - popW - 8;
+      if (left < 8) left = 8;
+      setPopPos({ top, left, maxH: popH });
     }
     setOpen(o => !o);
   };
@@ -2771,6 +2778,7 @@ function InlineAssignees({ assignees, onChange, people }) {
             background: "#fff", border: "1px solid rgba(0,0,0,0.12)", borderRadius: 10,
             boxShadow: "0 8px 32px rgba(0,0,0,0.18)", padding: 10,
             display: "flex", flexDirection: "column", gap: 4, minWidth: 200,
+            maxHeight: popPos.maxH || 400, overflowY: "auto",
           }}>
             <div style={{ fontSize: 10, fontWeight: 700, color: "#6b7280", letterSpacing: "0.08em", textTransform: "uppercase", marginBottom: 4, padding: "0 4px" }}>Assign To</div>
             {people.map(p => (
@@ -3698,7 +3706,7 @@ function AssignTaskModal({ people, onClose, onSave, editing = null }) {
 }
 
 
-function MyHubView({ projects, people, holidays, pto = [], currentUserId, onSetCurrentUser, onEditItem, onMarkDone, savePto, deletePto, personalTasks = [], onSavePersonalTask, onDeletePersonalTask, currentRole = "member", authMemberId = "", authUUID = "", adminTasks = [], onSaveAdminTask, onUpdateAdminTaskStatus, onDeleteAdminTask, notifications = [], onDismissNotification, onOpenNotifTask, setToastNotif }) {
+function MyHubView({ projects, people, holidays, pto = [], currentUserId, onSetCurrentUser, onEditItem, onMarkDone, onSaveItem, savePto, deletePto, personalTasks = [], onSavePersonalTask, onDeletePersonalTask, currentRole = "member", authMemberId = "", authUUID = "", adminTasks = [], onSaveAdminTask, onUpdateAdminTaskStatus, onDeleteAdminTask, notifications = [], onDismissNotification, onOpenNotifTask, setToastNotif }) {
   const TODAY = new Date(); TODAY.setHours(0,0,0,0);
 
   // Week bounds (Mon–Sun)
@@ -3815,19 +3823,24 @@ function MyHubView({ projects, people, holidays, pto = [], currentUserId, onSetC
     return s;
   };
 
-  // ── Section data ──────────────────────────────────────────────────────────
+  // ── Section data — SINGLE SECTION RULE: each task appears in highest-priority section only ──
   const activeTasks   = allMyTasks.filter(t => t.status !== "Done");
-  const overdueTasks  = allMyTasks.filter(isOverdue).sort((a,b) => daysDiff(a.end) - daysDiff(b.end));
-  const dueSoonTasks  = allMyTasks.filter(t => !isOverdue(t) && isDueSoon(t)).sort((a,b) => daysDiff(a.end) - daysDiff(b.end));
-  const blockedTasks  = allMyTasks.filter(t => t.status === "Blocked" || (t.status !== "Done" && blockedBy(t).length > 0));
-  const readyTasks    = allMyTasks.filter(t => t.status !== "Done" && t.status !== "Blocked" && isDependencyClear(t));
-  const recommended   = [...readyTasks].sort((a,b) => score(b) - score(a)).slice(0, 8);
-  const waitingTasks  = allMyTasks.filter(t =>
+  // Build sections in priority order; track which IDs have been claimed
+  const claimedIds = new Set();
+  const claim = (tasks) => { tasks.forEach(t => claimedIds.add(t.id)); return tasks; };
+  const unclaimed = (tasks) => tasks.filter(t => !claimedIds.has(t.id));
+
+  const overdueTasks  = claim(allMyTasks.filter(isOverdue).sort((a,b) => daysDiff(a.end) - daysDiff(b.end)));
+  const blockedTasks  = claim(unclaimed(allMyTasks.filter(t => t.status === "Blocked" || (t.status !== "Done" && blockedBy(t).length > 0))));
+  const dueSoonTasks  = claim(unclaimed(allMyTasks.filter(t => !isOverdue(t) && isDueSoon(t)).sort((a,b) => daysDiff(a.end) - daysDiff(b.end))));
+  const readyTasks    = claim(unclaimed(allMyTasks.filter(t => t.status !== "Done" && t.status !== "Blocked" && isDependencyClear(t))));
+  const waitingTasks  = claim(unclaimed(allMyTasks.filter(t =>
     t.status !== "Done" && (t.dependencies || []).some(depId => {
       const dep = taskById[depId];
       return dep && dep.status !== "Done" && !(dep.assignees || []).includes(meId);
     })
-  );
+  )));
+  const recommended   = [...readyTasks].sort((a,b) => score(b) - score(a)).slice(0, 8);
   const weekTasks     = allMyTasks.filter(t => t.status !== "Done" && isDueThisWk(t));
   const highEffort    = allMyTasks.filter(t => t.status !== "Done" && efv(t.effort) >= 3 && isDueThisWk(t));
 
@@ -3845,54 +3858,74 @@ function MyHubView({ projects, people, holidays, pto = [], currentUserId, onSetC
   const ptoThisWk = myPto.filter(p => p.start <= weekEndStr && p.end >= weekStartStr);
 
   // ── Render helpers ────────────────────────────────────────────────────────
+  // Status cycle helper — next logical status for a task
+  const cycleStatus = (current) => {
+    const cycle = { "Not Started": "In Progress", "In Progress": "Done", "Done": "Not Started", "Blocked": "In Progress" };
+    return cycle[current] || "In Progress";
+  };
+  const saveStatus = (task, newStatus) => {
+    // Optimistic update via onSaveItem (or onMarkDone for Done)
+    if (newStatus === "Done") {
+      onMarkDone(task.projId, task.isSubtask ? task.delId : task.id, task.isSubtask ? task.id : null);
+    } else {
+      onSaveItem && onSaveItem({ ...task, status: newStatus,
+        projectId: task.projId, projectName: task.projName,
+        deliverableId: task.isSubtask ? (task.deliverableId || task.delId) : null });
+    }
+  };
+
   const TaskCard = ({ task, badge, badgeColor }) => {
     const d       = daysDiff(task.end);
     const overdue = isOverdue(task);
     const cleared = isDependencyClear(task);
     const blkd    = blockedBy(task);
+    const hrs     = EFFORT_HOURS[task.effort] || (task.customHours ? parseFloat(task.customHours) : 4);
     const dateTxt = !task.end ? null
       : overdue      ? `${Math.abs(d)}d overdue`
       : d === 0      ? "Due today"
       : d === 1      ? "Due tomorrow"
       :                `Due in ${d}d`;
     const dateColor = overdue ? "#f87171" : d <= 1 ? "#f97316" : d <= 3 ? "#fbbf24" : "#9ca3af";
-    const statusDot = { "Done":"#34d399","In Progress":"#38bdf8","Blocked":"#f87171","Not Started":"#d1d5db" };
+    const statusColors = { "Done":"#34d399","In Progress":"#38bdf8","Blocked":"#f87171","Not Started":"#d1d5db" };
+    const nextStatus = cycleStatus(task.status);
+    const nextLabel  = { "Not Started":"→ Start", "In Progress":"→ Done", "Done":"↩ Reopen", "Blocked":"→ Unblock" }[task.status] || "→ Next";
     return (
-      <div onClick={() => onEditItem({ ...task, projectId:task.projId, projectName:task.projName, projectColor:task.projColor, deliverableId:task.isSubtask?(task.deliverableId||task.delId):null, delTitle:task.isSubtask?task.delTitle:null })}
-        style={{ display:"flex", alignItems:"center", gap:8, padding:"9px 12px", background:"#fff",
+      <div style={{ display:"flex", alignItems:"center", gap:8, padding:"9px 12px", background:"#fff",
           border:`1px solid ${overdue?"rgba(248,113,113,0.25)":"rgba(0,0,0,0.07)"}`,
-          borderLeft:`3px solid ${task.projColor}`, borderRadius:8, cursor:"pointer", transition:"box-shadow 0.12s", minWidth:0 }}
+          borderLeft:`3px solid ${task.projColor}`, borderRadius:8, minWidth:0,
+          transition:"box-shadow 0.12s" }}
         onMouseEnter={e => e.currentTarget.style.boxShadow = "0 2px 10px rgba(0,0,0,0.08)"}
         onMouseLeave={e => e.currentTarget.style.boxShadow = "none"}
       >
-        {/* Title + context */}
-        <div style={{ flex:1, minWidth:0 }}>
+        {/* Title + context — clicking title opens edit modal */}
+        <div style={{ flex:1, minWidth:0, cursor:"pointer" }}
+          onClick={() => onEditItem({ ...task, projectId:task.projId, projectName:task.projName, projectColor:task.projColor, deliverableId:task.isSubtask?(task.deliverableId||task.delId):null, delTitle:task.isSubtask?task.delTitle:null })}>
           <div style={{ fontSize:12, fontWeight:700, color:"#1f2937", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{task.title}</div>
           <div style={{ fontSize:10, color:task.projColor, fontWeight:600, marginTop:1, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>
-            {task.projName}{task.isSubtask && task.delTitle ? ` · ${task.delTitle}` : ""}
+            {task.projName}{task.isSubtask && task.delTitle ? ` · ${task.delTitle}` : ""}{task.effort && task.effort !== "M" ? ` · ${hrs}h` : ""}
           </div>
         </div>
         {/* Badges */}
-        <div style={{ display:"flex", alignItems:"center", gap:5, flexShrink:0, flexWrap:"nowrap" }}>
+        <div style={{ display:"flex", alignItems:"center", gap:5, flexShrink:0 }}>
           {badge && <span style={{ fontSize:9, fontWeight:700, background:badgeColor+"18", color:badgeColor, borderRadius:4, padding:"2px 6px", whiteSpace:"nowrap" }}>{badge}</span>}
           {!cleared && blkd.length > 0 && <span style={{ fontSize:9, color:"#f87171", background:"rgba(248,113,113,0.1)", borderRadius:4, padding:"2px 6px", whiteSpace:"nowrap" }}>Blocked</span>}
-          <div style={{ display:"flex", alignItems:"center", gap:4 }}>
-            <div style={{ width:6, height:6, borderRadius:"50%", background:statusDot[task.status]||"#d1d5db", flexShrink:0 }} />
-            <span style={{ fontSize:10, color:"#6b7280", whiteSpace:"nowrap" }}>{task.status}</span>
-          </div>
           {dateTxt && (
             <span style={{ fontSize:10, fontWeight:overdue?700:600, color:dateColor, background:`${dateColor}18`, borderRadius:5, padding:"2px 7px", whiteSpace:"nowrap" }}>
               {dateTxt}
             </span>
           )}
         </div>
-        {/* Mark done */}
-        <button onClick={e => { e.stopPropagation(); onMarkDone(task.projId, task.isSubtask?task.delId:task.id, task.isSubtask?task.id:null); }}
-          style={{ flexShrink:0, width:20, height:20, borderRadius:"50%", border:"2px solid rgba(0,0,0,0.13)", background:"none", cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", fontSize:10, color:"#9ca3af", transition:"all 0.12s" }}
-          title="Mark done"
-          onMouseEnter={e=>{e.currentTarget.style.borderColor="#34d399";e.currentTarget.style.color="#34d399";}}
-          onMouseLeave={e=>{e.currentTarget.style.borderColor="rgba(0,0,0,0.13)";e.currentTarget.style.color="#9ca3af";}}
-        >✓</button>
+        {/* Inline status cycle button */}
+        <button onClick={e => { e.stopPropagation(); saveStatus(task, nextStatus); }}
+          title={`${nextLabel} (${nextStatus})`}
+          style={{ flexShrink:0, fontSize:9, fontWeight:700, padding:"3px 8px", borderRadius:5,
+            border:`1px solid ${statusColors[task.status]}50`,
+            background:`${statusColors[task.status]}12`,
+            color:statusColors[task.status], cursor:"pointer", fontFamily:"inherit", whiteSpace:"nowrap",
+            transition:"all 0.12s" }}
+          onMouseEnter={e => { e.currentTarget.style.background = `${statusColors[task.status]}25`; }}
+          onMouseLeave={e => { e.currentTarget.style.background = `${statusColors[task.status]}12`; }}
+        >{task.status === "Not Started" ? "▶ Start" : task.status === "In Progress" ? "✓ Done" : task.status === "Blocked" ? "▶ Unblock" : "↩"}</button>
       </div>
     );
   };
@@ -3907,65 +3940,85 @@ function MyHubView({ projects, people, holidays, pto = [], currentUserId, onSetC
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
 
-      {/* ── Top bar: user selector ── */}
-      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-        <div style={{ width: 36, height: 36, borderRadius: "50%", background: me.color, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 13, fontWeight: 800, color: "#fff", flexShrink: 0 }}>
-          {me.name.split(" ").map(n=>n[0]).join("").slice(0,2)}
-        </div>
-        <div>
-          <div style={{ fontSize: 16, fontWeight: 800, color: "#1f2937" }}>{me.name}'s Hub</div>
-          <div style={{ fontSize: 11, color: "#9ca3af" }}>Your personal work command center</div>
-          {currentRole === "admin" && (
-            <button onClick={() => { setEditingAdminTask(null); setShowAssignModal(true); }}
-              style={{ fontSize:10, fontWeight:700, color:"#fff", background:BRAND_TEAL, border:"none", borderRadius:6, padding:"4px 12px", cursor:"pointer", fontFamily:"inherit", flexShrink:0 }}>
-              + Assign Task
-            </button>
-          )}
-        </div>
-        <div style={{ marginLeft: "auto", display: "flex", gap: 8, alignItems: "center" }}>
-          {currentRole === "admin" ? (
-            <select value={meId} onChange={e => onSetCurrentUser(e.target.value)}
-              style={{ fontSize: 11, border: "1px solid rgba(0,0,0,0.1)", borderRadius: 6, padding: "5px 10px", background: "#fff", fontFamily: "inherit" }}>
-              {people.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
-            </select>
-          ) : (
-            <span style={{ fontSize: 11, color: "#6b7280", fontWeight: 600 }}>{me?.name}</span>
-          )}
-        </div>
-      </div>
-
-      {/* ── Summary cards ── */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(160px, 1fr))", gap: 10 }}>
-        {[
-          { label: "Active Tasks", value: activeTasks.length, color: BRAND_TEAL, icon: "◉" },
-          { label: "Due This Week", value: weekTasks.length, color: weekTasks.length > 5 ? "#fb923c" : "#34d399", icon: "◷" },
-          { label: "Overdue", value: overdueTasks.length, color: overdueTasks.length > 0 ? "#f87171" : "#9ca3af", icon: "⚠" },
-          { label: "Blocked", value: blockedTasks.length, color: blockedTasks.length > 0 ? "#f87171" : "#9ca3af", icon: "⊘" },
-          { label: "Blocking Downstream", value: tasksBlockedByMe.length, color: tasksBlockedByMe.length > 0 ? "#ef4444" : "#9ca3af", icon: "◎" },
-        ].map(card => (
-          <div key={card.label} style={{ background: "#fff", border: "1px solid rgba(0,0,0,0.07)", borderRadius: 10, padding: "14px 16px" }}>
-            <div style={{ fontSize: 20, color: card.color, fontWeight: 900, lineHeight: 1 }}>{card.value}</div>
-            <div style={{ fontSize: 10, color: "#6b7280", marginTop: 4, fontWeight: 600 }}>{card.label}</div>
-          </div>
-        ))}
-      </div>
-
-      {/* ── This week: workload + PTO ── */}
-      <div style={{ background: "#fff", border: "1px solid rgba(0,0,0,0.07)", borderRadius: 10, padding: "14px 18px" }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-          <div style={{ flex: 1, minWidth: 200 }}>
-            <div style={{ fontSize: 11, fontWeight: 700, color: "#1f2937", marginBottom: 6 }}>This week's workload</div>
-            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-              <div style={{ flex: 1, height: 8, background: "rgba(0,0,0,0.06)", borderRadius: 4, overflow: "hidden" }}>
-                <div style={{ height: "100%", width: `${Math.min(100, (weekHours / Math.max(weekAvail, 8)) * 100)}%`, background: loadColor, borderRadius: 4, transition: "width 0.3s" }} />
+      {/* ── Hub Header ── */}
+      <div style={{ background: BRAND_NAVY, borderRadius: 12, padding: "18px 20px", color: "#fff" }}>
+        <div style={{ display:"flex", alignItems:"flex-start", justifyContent:"space-between", gap:12, flexWrap:"wrap" }}>
+          <div style={{ display:"flex", alignItems:"center", gap:12 }}>
+            <div style={{ width:42, height:42, borderRadius:"50%", background:me.color, display:"flex", alignItems:"center", justifyContent:"center", fontSize:15, fontWeight:900, color:"#fff", flexShrink:0, border:"2px solid rgba(255,255,255,0.2)" }}>
+              {me.name.split(" ").map(n=>n[0]).join("").slice(0,2)}
+            </div>
+            <div>
+              <div style={{ fontSize:17, fontWeight:900, color:"#fff", lineHeight:1.2 }}>{me.name}</div>
+              <div style={{ fontSize:10, color:"rgba(255,255,255,0.55)", marginTop:2 }}>
+                {new Date().toLocaleDateString("en-US",{weekday:"long",month:"long",day:"numeric"})}
               </div>
-              <span style={{ fontSize: 11, fontWeight: 700, color: loadColor, minWidth: 55 }}>{loadLabel}</span>
-            </div>
-            <div style={{ fontSize: 10, color: "#9ca3af", marginTop: 4 }}>
-              {weekTasks.length} task{weekTasks.length !== 1 ? "s" : ""} · {highEffort.length > 0 ? `${highEffort.length} large` : "no large tasks"}
             </div>
           </div>
+          <div style={{ display:"flex", gap:8, alignItems:"center" }}>
+            {currentRole === "admin" && (
+              <>
+                <select value={meId} onChange={e => onSetCurrentUser(e.target.value)}
+                  style={{ fontSize:11, border:"1px solid rgba(255,255,255,0.2)", borderRadius:6, padding:"5px 10px", background:"rgba(255,255,255,0.1)", color:"#fff", fontFamily:"inherit" }}>
+                  {people.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+                </select>
+                <button onClick={() => { setEditingAdminTask(null); setShowAssignModal(true); }}
+                  style={{ fontSize:10, fontWeight:700, color:BRAND_NAVY, background:BRAND_TEAL, border:"none", borderRadius:6, padding:"6px 12px", cursor:"pointer", fontFamily:"inherit" }}>
+                  + Assign Task
+                </button>
+              </>
+            )}
+          </div>
+        </div>
 
+        {/* Focus strip — top recommended task */}
+        {recommended[0] && (() => {
+          const top = recommended[0];
+          const d = daysDiff(top.end);
+          const urgency = d < 0 ? "Overdue" : d === 0 ? "Due today" : d <= 2 ? `Due in ${d}d` : "Next up";
+          const urgColor = d < 0 ? "#f87171" : d === 0 ? "#fb923c" : d <= 2 ? "#fbbf24" : BRAND_TEAL;
+          return (
+            <div style={{ marginTop:14, background:"rgba(255,255,255,0.08)", borderRadius:8, padding:"10px 14px", display:"flex", alignItems:"center", gap:12 }}>
+              <div style={{ flex:1, minWidth:0 }}>
+                <div style={{ fontSize:9, fontWeight:700, color:urgColor, textTransform:"uppercase", letterSpacing:"0.06em", marginBottom:3 }}>
+                  {urgency} · Focus
+                </div>
+                <div style={{ fontSize:13, fontWeight:700, color:"#fff", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{top.title}</div>
+                <div style={{ fontSize:10, color:"rgba(255,255,255,0.5)", marginTop:1 }}>{top.projName}{top.delTitle ? ` · ${top.delTitle}` : ""}</div>
+              </div>
+              <div style={{ display:"flex", gap:6, flexShrink:0 }}>
+                <button onClick={() => saveStatus(top, "In Progress")}
+                  style={{ fontSize:10, fontWeight:700, color:BRAND_TEAL, background:"rgba(80,192,192,0.15)", border:"1px solid rgba(80,192,192,0.3)", borderRadius:6, padding:"5px 10px", cursor:"pointer", fontFamily:"inherit" }}>
+                  ▶ Start
+                </button>
+                <button onClick={() => onEditItem({ ...top, projectId:top.projId, projectName:top.projName, projectColor:top.projColor, deliverableId:top.isSubtask?(top.deliverableId||top.delId):null })}
+                  style={{ fontSize:10, fontWeight:700, color:"rgba(255,255,255,0.6)", background:"rgba(255,255,255,0.08)", border:"1px solid rgba(255,255,255,0.15)", borderRadius:6, padding:"5px 10px", cursor:"pointer", fontFamily:"inherit" }}>
+                  Open
+                </button>
+              </div>
+            </div>
+          );
+        })()}
+
+        {/* Workload summary row */}
+        <div style={{ marginTop:10, display:"flex", gap:20, flexWrap:"wrap" }}>
+          {[
+            { label:"Active", val:activeTasks.length, color:"rgba(255,255,255,0.9)" },
+            { label:"Due this week", val:weekTasks.length, color:weekTasks.length > 5 ? "#fbbf24" : "rgba(255,255,255,0.9)" },
+            { label:"Overdue", val:overdueTasks.length, color:overdueTasks.length > 0 ? "#f87171" : "rgba(255,255,255,0.4)" },
+            { label:"Capacity", val:loadLabel, color:loadColor },
+          ].map(item => (
+            <div key={item.label} style={{ display:"flex", flexDirection:"column", gap:1 }}>
+              <span style={{ fontSize:13, fontWeight:900, color:item.color, lineHeight:1 }}>{item.val}</span>
+              <span style={{ fontSize:9, color:"rgba(255,255,255,0.4)", textTransform:"uppercase", letterSpacing:"0.05em" }}>{item.label}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+
+
+
+      {/* ── PTO ── */}
+      <div style={{ background:"#fff", border:"1px solid rgba(0,0,0,0.07)", borderRadius:10, padding:"12px 16px" }}>
           {/* PTO strip */}
           <div style={{ borderLeft: "1px solid rgba(0,0,0,0.07)", paddingLeft: 16 }}>
             <div style={{ fontSize: 11, fontWeight: 700, color: "#1f2937", marginBottom: 6, display: "flex", alignItems: "center", gap: 6 }}>
@@ -4002,369 +4055,364 @@ function MyHubView({ projects, people, holidays, pto = [], currentUserId, onSetC
               </div>
             )}
           </div>
-        </div>
+
       </div>
 
-      {/* ── Dependency intelligence ── */}
-      {(recentlyUnblocked.length > 0 || tasksBlockedByMe.length > 0 || waitingTasks.length > 0) && (
-        <div style={{ background: "rgba(80,192,192,0.06)", border: `1px solid ${BRAND_TEAL}30`, borderRadius: 10, padding: "12px 16px", display: "flex", flexDirection: "column", gap: 6 }}>
-          <div style={{ fontSize: 11, fontWeight: 700, color: BRAND_TEAL_D, marginBottom: 2 }}>Dependency Updates</div>
-          {recentlyUnblocked.length > 0 && (
-            <div style={{ fontSize: 11, color: "#374151" }}>
-              ✅ <strong>{recentlyUnblocked.length} task{recentlyUnblocked.length !== 1 ? "s" : ""}</strong> just became ready — dependencies completed
-            </div>
-          )}
-          {tasksBlockedByMe.length > 0 && (
-            <div style={{ fontSize: 11, color: "#374151" }}>
-              🔴 <strong>{tasksBlockedByMe.length} task{tasksBlockedByMe.length !== 1 ? "s" : ""} you own {tasksBlockedByMe.length !== 1 ? "are" : "is"} blocking downstream work</strong> — due today or overdue
-            </div>
-          )}
-          {upcomingDepRisk.length > 0 && (
-            <div style={{ fontSize: 11, color: "#374151" }}>
-              ⏰ <strong>{upcomingDepRisk.length} upcoming dependency risk{upcomingDepRisk.length !== 1 ? "s" : ""}</strong> — others are waiting on your future tasks
-            </div>
-          )}
-          {waitingTasks.length > 0 && (() => {
-            const waitingOn = [...new Set(waitingTasks.flatMap(t =>
-              (t.dependencies || []).map(depId => {
-                const dep = taskById[depId];
-                if (!dep || dep.status === "Done") return null;
-                return (dep.assignees || []).filter(a => a !== meId).map(a => people.find(p => p.id === a)?.name).filter(Boolean);
-              }).flat().filter(Boolean)
-            ))].slice(0,3);
-            return (
-              <div style={{ fontSize: 11, color: "#374151" }}>
-                ⏳ Waiting on {waitingOn.length > 0 ? waitingOn.join(", ") : "others"} for {waitingTasks.length} task{waitingTasks.length !== 1 ? "s" : ""}
-              </div>
-            );
-          })()}
-        </div>
-      )}
-
-      {/* ── Sections ── */}
-      <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
-
-        {/* ── Needs Review — admin only ── */}
-        {currentRole === "admin" && (() => {
-          const unreviewed = notifications.filter(n => !n.isRead && n.type === "task_completed");
-          if (!unreviewed.length) return null;
-          return (
-            <div style={{ background:"#fff", border:"1px solid rgba(249,115,22,0.25)", borderRadius:10, overflow:"hidden" }}>
-              <div style={{ padding:"12px 16px", borderBottom:"1px solid rgba(0,0,0,0.07)", display:"flex", alignItems:"center", justifyContent:"space-between" }}>
-                <div style={{ display:"flex", alignItems:"center", gap:8 }}>
-                  <span style={{ fontSize:13, color:"#f97316" }}>✓</span>
-                  <span style={{ fontSize:12, fontWeight:800, color:"#1f2937" }}>Needs Review</span>
-                  <span style={{ fontSize:10, color:"#f97316", background:"rgba(249,115,22,0.1)", borderRadius:10, padding:"1px 7px", fontWeight:700 }}>{unreviewed.length}</span>
+      {/* ── Notification Center ── */}
+      {(() => {
+        const allUnread = notifications.filter(n => !n.isRead);
+        const completions = allUnread.filter(n => n.type === "task_completed");
+        // task_assigned: always filter to whoever's hub we're viewing
+        const assignments = allUnread.filter(n => n.type === "task_assigned" && n.assignedToPersonId === meId);
+        // Admin sees: completions (all) + assignments for the person they're viewing
+        // Member sees: their own assignments only
+        const visibleNotifs = currentRole === "admin"
+          ? [...completions, ...assignments]
+          : assignments;
+        if (!visibleNotifs.length) return null;
+        const typeIcon  = { task_completed:"✓", task_assigned:"+" };
+        const typeColor = { task_completed:"#f97316", task_assigned:BRAND_TEAL };
+        const typeLabel = { task_completed:"Task Completed", task_assigned:"Assigned to You" };
+        return (
+          <div style={{ background:"#fff", border:"1px solid rgba(0,0,0,0.08)", borderRadius:10, overflow:"hidden" }}>
+            <div style={{ padding:"12px 16px", background:"#f8fafc", borderBottom:"1px solid rgba(0,0,0,0.07)", display:"flex", alignItems:"center", justifyContent:"space-between", gap:10 }}>
+              <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+                <span style={{ fontSize:15 }}>🔔</span>
+                <div>
+                  <div style={{ fontSize:12, fontWeight:800, color:"#1f2937" }}>Notifications</div>
+                  <div style={{ fontSize:10, color:"#9ca3af" }}>
+                    {completions.length > 0 && assignments.length > 0
+                    ? `${completions.length} completion${completions.length!==1?"s":""} to review · ${assignments.length} assigned to ${meId===authMemberId?"you":me?.name}`
+                    : completions.length > 0
+                    ? `${completions.length} task${completions.length!==1?"s":""} completed — tap to review`
+                    : `${assignments.length} task${assignments.length!==1?"s":""} assigned to ${meId===authMemberId?"you":me?.name}`}
+                  </div>
                 </div>
-                <button onClick={() => unreviewed.forEach(n => onDismissNotification?.(n.id))}
-                  style={{ fontSize:10, color:"#9ca3af", background:"none", border:"none", cursor:"pointer", fontFamily:"inherit" }}>
-                  Mark all reviewed
-                </button>
+                <span style={{ fontSize:10, fontWeight:700, color:"#fff", background:"#f97316", borderRadius:10, padding:"1px 8px", flexShrink:0 }}>{visibleNotifs.length}</span>
               </div>
-              <div>
-                {unreviewed.map(n => {
-                  const person = people.find(p => p.id === n.completedByPersonId);
-                  const when   = n.createdAt ? new Date(n.createdAt).toLocaleString("en-US",{month:"short",day:"numeric",hour:"numeric",minute:"2-digit"}) : "";
-                  return (
-                    <div key={n.id} style={{ display:"flex", alignItems:"flex-start", gap:10, padding:"10px 16px", borderBottom:"1px solid rgba(0,0,0,0.04)" }}>
-                      <div style={{ width:28, height:28, borderRadius:"50%", background:person?.color||"#e5e7eb", display:"flex", alignItems:"center", justifyContent:"center", fontSize:9, fontWeight:800, color:"#fff", flexShrink:0 }}>
+              <button onClick={() => visibleNotifs.forEach(n => onDismissNotification?.(n.id))}
+                style={{ fontSize:10, color:"#6b7280", background:"none", border:"1px solid rgba(0,0,0,0.1)", borderRadius:5, padding:"4px 10px", cursor:"pointer", fontFamily:"inherit" }}>
+                Clear all
+              </button>
+            </div>
+            <div>
+              {visibleNotifs.map(n => {
+                const person = people.find(p => p.id === (n.completedByPersonId || n.assignedToPersonId));
+                const when = n.createdAt ? new Date(n.createdAt).toLocaleString("en-US",{month:"short",day:"numeric",hour:"numeric",minute:"2-digit"}) : "";
+                const color = typeColor[n.type] || "#9ca3af";
+                return (
+                  <div key={n.id}
+                    style={{ display:"flex", alignItems:"flex-start", gap:12, padding:"10px 16px", borderBottom:"1px solid rgba(0,0,0,0.04)", cursor:n.type==="task_completed"?"pointer":"default" }}
+                    onClick={() => n.type === "task_completed" && onOpenNotifTask?.(n)}
+                    onMouseEnter={e=>e.currentTarget.style.background="rgba(0,0,0,0.015)"}
+                    onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
+                    <div style={{ position:"relative", flexShrink:0 }}>
+                      <div style={{ width:32, height:32, borderRadius:"50%", background:person?.color||"#e5e7eb", display:"flex", alignItems:"center", justifyContent:"center", fontSize:10, fontWeight:800, color:"#fff" }}>
                         {person?.name?.split(" ").map(w=>w[0]).join("").slice(0,2)||"?"}
                       </div>
-                      <div style={{ flex:1, minWidth:0 }}>
-                        <div style={{ fontSize:12, fontWeight:600, color:"#1f2937" }}>{n.message}</div>
-                        <div style={{ fontSize:10, color:"#9ca3af", marginTop:2 }}>{when}</div>
-                      </div>
-                      <div style={{ display:"flex", gap:6, flexShrink:0 }}>
-                        <button onClick={() => onOpenNotifTask?.(n)}
-                          style={{ fontSize:10, fontWeight:700, color:BRAND_TEAL, background:"rgba(80,192,192,0.1)", border:"none", borderRadius:5, padding:"4px 9px", cursor:"pointer", fontFamily:"inherit", whiteSpace:"nowrap" }}>
-                          Open
-                        </button>
-                        <button onClick={() => onDismissNotification?.(n.id)}
-                          style={{ fontSize:10, color:"#9ca3af", background:"rgba(0,0,0,0.05)", border:"none", borderRadius:5, padding:"4px 8px", cursor:"pointer", fontFamily:"inherit" }}>
-                          ✓ Reviewed
-                        </button>
-                      </div>
+                      <span style={{ position:"absolute", bottom:-1, right:-1, width:14, height:14, borderRadius:"50%", background:color, border:"2px solid #fff", display:"flex", alignItems:"center", justifyContent:"center", fontSize:7, color:"#fff", fontWeight:900 }}>
+                        {typeIcon[n.type]||"●"}
+                      </span>
                     </div>
-                  );
-                })}
-              </div>
-            </div>
-          );
-        })()}
-
-        {/* ── Assigned Tasks (admin-assigned) ── */}
-        {(() => {
-          const myAssigned = meId === authMemberId
-            ? adminTasks.filter(t => t.assignedTo === meId)
-            : currentRole === "admin"
-              ? adminTasks.filter(t => t.assignedTo === meId)
-              : [];
-          if (!myAssigned.length && currentRole !== "admin") return null;
-          const activeAssigned = myAssigned.filter(t => t.status !== "Done");
-          if (!activeAssigned.length && !myAssigned.length) return null;
-          return (
-            <div style={{ background:"#fff", border:"1px solid rgba(80,192,192,0.25)", borderRadius:10, overflow:"hidden" }}>
-              <div style={{ padding:"12px 16px", borderBottom:"1px solid rgba(0,0,0,0.07)", display:"flex", alignItems:"center", justifyContent:"space-between" }}>
-                <div style={{ display:"flex", alignItems:"center", gap:8 }}>
-                  <span style={{ fontSize:13, color:BRAND_TEAL }}>◎</span>
-                  <span style={{ fontSize:12, fontWeight:800, color:"#1f2937" }}>Assigned Tasks</span>
-                  <span style={{ fontSize:10, color:BRAND_TEAL, background:"rgba(80,192,192,0.1)", borderRadius:10, padding:"1px 7px", fontWeight:700 }}>{activeAssigned.length} active</span>
-                </div>
-                {currentRole === "admin" && (
-                  <button onClick={() => { setEditingAdminTask(null); setShowAssignModal(true); }}
-                    style={{ fontSize:10, fontWeight:700, color:BRAND_TEAL, background:"rgba(80,192,192,0.08)", border:"none", borderRadius:6, padding:"4px 10px", cursor:"pointer", fontFamily:"inherit" }}>
-                    + Assign
-                  </button>
-                )}
-              </div>
-              <div>
-                {activeAssigned.length === 0 && (
-                  <div style={{ fontSize:12, color:"#9ca3af", textAlign:"center", padding:"14px 0" }}>No active assigned tasks.</div>
-                )}
-                {activeAssigned.map(task => {
-                  const isOverdueT = task.dueDate && task.dueDate < todayStr;
-                  const isDueTodayT = task.dueDate === todayStr;
-                  const hrs = effortHrs(task.effort, task.customHours);
-                  const assignedByPerson = people.find(p => p.id === task.assignedBy);
-                  return (
-                    <div key={task.id} style={{ display:"flex", alignItems:"flex-start", gap:10, padding:"10px 16px", borderBottom:"1px solid rgba(0,0,0,0.04)" }}>
-                      <label style={{ display:"flex", alignItems:"center", cursor:"pointer", flexShrink:0, marginTop:1 }}>
-                        <input type="checkbox" checked={task.status === "Done"}
-                          onChange={() => onUpdateAdminTaskStatus(task.id, task.status === "Done" ? "Not Started" : "Done")}
-                          style={{ width:15, height:15, accentColor:BRAND_TEAL, cursor:"pointer" }} />
-                      </label>
-                      <div style={{ flex:1, minWidth:0 }}>
-                        <div style={{ fontSize:12, fontWeight:600, color:"#1f2937" }}>{task.title}</div>
-                        <div style={{ fontSize:10, color:"#9ca3af", marginTop:2, display:"flex", gap:8, flexWrap:"wrap" }}>
-                          {assignedByPerson && <span>Assigned by {assignedByPerson.name}</span>}
-                          <span>{EFFORT_LABEL[task.effort] || task.effort} · {hrs}h</span>
-                          {task.dueDate && <span style={{ color:isOverdueT?"#ef4444":isDueTodayT?"#f97316":"#9ca3af", fontWeight:(isOverdueT||isDueTodayT)?700:400 }}>{isOverdueT?"⚠ Overdue · ":isDueTodayT?"⏰ Due today · ":""}{task.dueDate}</span>}
-                        </div>
-                        {task.notes && <div style={{ fontSize:10, color:"#6b7280", marginTop:2 }}>{task.notes}</div>}
+                    <div style={{ flex:1, minWidth:0 }}>
+                      <div style={{ fontSize:10, color:color, fontWeight:700, marginBottom:2 }}>
+                        {typeLabel[n.type] || n.type}
+                        {n.type==="task_completed" && <span style={{ fontSize:9, color:"#9ca3af", fontWeight:400, marginLeft:6 }}>click to open</span>}
                       </div>
-                      {currentRole === "admin" && (
-                        <div style={{ display:"flex", gap:4, flexShrink:0 }}>
-                          <button onClick={() => { setEditingAdminTask(task); setShowAssignModal(true); }}
-                            style={{ background:"none", border:"none", color:"#9ca3af", cursor:"pointer", fontSize:12 }}>✎</button>
-                          <button onClick={() => onDeleteAdminTask(task.id)}
-                            style={{ background:"none", border:"none", color:"#fca5a5", cursor:"pointer", fontSize:14 }}>×</button>
-                        </div>
+                      <div style={{ fontSize:12, fontWeight:600, color:"#1f2937", lineHeight:1.4 }}>{n.message}</div>
+                      <div style={{ fontSize:10, color:"#9ca3af", marginTop:3 }}>{when}</div>
+                    </div>
+                    <div style={{ display:"flex", flexDirection:"column", gap:4, flexShrink:0 }}>
+                      {n.type === "task_assigned" && (
+                        <button onClick={e => { e.stopPropagation(); setEditingAdminTask(adminTasks.find(t=>t.id===n.taskId)||null); setShowAssignModal(true); }}
+                          style={{ fontSize:10, fontWeight:700, color:BRAND_TEAL, background:"rgba(80,192,192,0.1)", border:"1px solid rgba(80,192,192,0.25)", borderRadius:5, padding:"4px 9px", cursor:"pointer", fontFamily:"inherit" }}>
+                          View Task
+                        </button>
                       )}
+                      <button onClick={e => { e.stopPropagation(); onDismissNotification?.(n.id); }}
+                        style={{ fontSize:10, color:"#9ca3af", background:"rgba(0,0,0,0.04)", border:"none", borderRadius:5, padding:"4px 8px", cursor:"pointer", fontFamily:"inherit" }}>
+                        {n.type==="task_completed" ? "✓ Reviewed" : "✓ Clear"}
+                      </button>
                     </div>
-                  );
-                })}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* ── My Tasks (personal, private) ── */}
+      {meId === authMemberId && (() => {
+        const myTasks = personalTasks;
+        return (
+          <div style={{ background:"#fff", border:"1px solid rgba(0,0,0,0.08)", borderRadius:10, overflow:"hidden" }}>
+            <div style={{ padding:"12px 16px", borderBottom:"1px solid rgba(0,0,0,0.07)", display:"flex", alignItems:"center", justifyContent:"space-between" }}>
+              <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+                <span style={{ fontSize:13 }}>☑</span>
+                <span style={{ fontSize:12, fontWeight:800, color:"#1f2937" }}>My Tasks</span>
+                <span style={{ fontSize:9, color:"#9ca3af", background:"rgba(0,0,0,0.04)", borderRadius:4, padding:"1px 6px" }}>🔒 Only you</span>
+                <span style={{ fontSize:10, color:"#6b7280", background:"rgba(0,0,0,0.05)", borderRadius:10, padding:"1px 7px" }}>{myTasks.filter(t=>t.status!=="Done").length} active</span>
+              </div>
+              <button onClick={() => { setEditingTask(null); setTaskForm({ title:"", priority:"Medium", dueDate:"", notes:"" }); setShowTaskForm(true); }}
+                style={{ fontSize:11, fontWeight:700, color:BRAND_TEAL, background:"rgba(80,192,192,0.08)", border:"1px solid rgba(80,192,192,0.25)", borderRadius:6, padding:"5px 12px", cursor:"pointer", fontFamily:"inherit" }}>
+                + Add Task
+              </button>
+            </div>
+            <div style={{ padding:"8px 0" }}>
+              {myTasks.filter(t=>t.status!=="Done").length === 0 && (
+                <div style={{ fontSize:12, color:"#9ca3af", textAlign:"center", padding:"16px 0" }}>No active tasks. Add one above.</div>
+              )}
+              {myTasks.filter(t=>t.status!=="Done").map(task => {
+                const isOverdueT = task.dueDate && task.dueDate < todayStr;
+                const isDueTodayT = task.dueDate === todayStr;
+                return (
+                  <div key={task.id} style={{ display:"flex", alignItems:"flex-start", gap:10, padding:"9px 16px", borderBottom:"1px solid rgba(0,0,0,0.04)" }}>
+                    <label style={{ display:"flex", alignItems:"center", cursor:"pointer", flexShrink:0, marginTop:1 }}>
+                      <input type="checkbox" checked={task.status==="Done"}
+                        onChange={() => onSavePersonalTask({...task, status: task.status==="Done"?"Not Started":"Done"})}
+                        style={{ width:15, height:15, accentColor:BRAND_TEAL, cursor:"pointer" }} />
+                    </label>
+                    <div style={{ flex:1, minWidth:0 }}>
+                      <div style={{ fontSize:12, fontWeight:600, color:"#1f2937" }}>{task.title}</div>
+                      {task.dueDate && <div style={{ fontSize:10, color:isOverdueT?"#f87171":isDueTodayT?"#f97316":"#9ca3af", fontWeight:isOverdueT||isDueTodayT?700:400, marginTop:1 }}>{isOverdueT?"Overdue · ":isDueTodayT?"Due today · ":""}{task.dueDate}</div>}
+                    </div>
+                    <button onClick={() => { setEditingTask(task); setTaskForm({ title:task.title, priority:task.priority||"Medium", dueDate:task.dueDate||"", notes:task.notes||"" }); setShowTaskForm(true); }}
+                      style={{ background:"none", border:"none", color:"#9ca3af", cursor:"pointer", fontSize:12, padding:"0 2px" }}>✎</button>
+                    <button onClick={() => onDeletePersonalTask(task.id)}
+                      style={{ background:"none", border:"none", color:"#fca5a5", cursor:"pointer", fontSize:15, padding:"0 2px" }}>×</button>
+                  </div>
+                );
+              })}
+            </div>
+            <DoneTasksDropdown
+              tasks={myTasks.filter(t=>t.status==="Done")}
+              onReopen={task => onSavePersonalTask({...task, status:"Not Started"})}
+              onDelete={onDeletePersonalTask}
+            />
+          </div>
+        );
+      })()}
+
+
+      {/* ── Assigned to Me — combined project + admin tasks, temporal buckets ── */}
+      {(() => {
+        const todayD = new Date(); todayD.setHours(0,0,0,0);
+        const todayISO = todayD.toISOString().slice(0,10);
+        const in14  = new Date(todayD); in14.setDate(todayD.getDate()+14);
+        const in28  = new Date(todayD); in28.setDate(todayD.getDate()+28);
+        const in14s = in14.toISOString().slice(0,10);
+        const in28s = in28.toISOString().slice(0,10);
+
+        const diffD = (ds) => {
+          if (!ds) return null;
+          return Math.ceil((new Date(ds+"T00:00:00") - todayD) / 86400000);
+        };
+        const urgency = (ds) => {
+          const d = diffD(ds);
+          if (d === null) return null;
+          if (d < 0)  return { text: Math.abs(d)+"d overdue", color:"#f87171", bg:"rgba(248,113,113,0.1)", w:700 };
+          if (d === 0) return { text:"Due today",              color:"#f97316", bg:"rgba(249,115,22,0.1)",  w:700 };
+          if (d === 1) return { text:"Due tomorrow",           color:"#fbbf24", bg:"rgba(251,191,36,0.1)",  w:600 };
+          if (d <= 7)  return { text:"Due in "+d+"d",          color:"#9ca3af", bg:"rgba(0,0,0,0.05)",      w:500 };
+          return null;
+        };
+
+        const statusC = {"Done":"#34d399","In Progress":"#38bdf8","Blocked":"#f87171","Not Started":"#d1d5db"};
+
+        // Merge project tasks + admin tasks
+        const projItems = allMyTasks
+          .filter(t => t.status !== "Done")
+          .map(t => ({
+            ...t, _type:"project", _key:t.id,
+            _label: t.projName + (t.isSubtask && t.delTitle ? " · "+t.delTitle : ""),
+            _color: t.projColor, _due: t.end||"",
+          }));
+
+        const adminItems = adminTasks
+          .filter(t => t.assignedTo === meId && t.status !== "Done")
+          .map(t => {
+            const by = people.find(p=>p.id===t.assignedBy);
+            return {
+              ...t, status:t.status||"Not Started", effort:t.effort||"M",
+              dependencies:[], assignees:[meId],
+              projId:null, delId:null, projName:"", projColor:BRAND_TEAL,
+              _type:"admin", _key:t.id,
+              _label: by ? "Assigned by "+by.name : "One-off task",
+              _color: BRAND_TEAL, _due: t.dueDate||"",
+            };
+          });
+
+        const all = [...projItems, ...adminItems].sort((a,b)=>{
+          const ad=a._due, bd=b._due;
+          if(!ad&&!bd) return 0; if(!ad) return 1; if(!bd) return -1;
+          return ad<bd?-1:ad>bd?1:0;
+        });
+
+        // Bucket by time horizon
+        const overdueItems = all.filter(t => t._due && t._due < todayISO);
+        const todayItems   = all.filter(t => t._due === todayISO);
+        const week2Items   = all.filter(t => t._due && t._due > todayISO && t._due <= in14s);
+        const week4Items   = all.filter(t => t._due && t._due > in14s  && t._due <= in28s);
+        const futureItems  = all.filter(t => t._due && t._due > in28s);
+        const nodateItems  = all.filter(t => !t._due);
+
+        const activeNow = [...overdueItems, ...todayItems, ...week2Items];
+        const totalActive = all.length;
+        const overdueCount = overdueItems.length + todayItems.length;
+
+        const TaskTile = ({ item }) => {
+          const urg = urgency(item._due);
+          const hrs = EFFORT_HOURS[item.effort] || (item.customHours ? parseFloat(item.customHours) : null);
+          const isBlk = item.status === "Blocked";
+          const next = cycleStatus(item.status);
+          const nextLabel = {
+            "Not Started":"▶ Start", "In Progress":"✓ Done",
+            "Blocked":"▶ Go", "Done":"↩"
+          }[item.status] || "▶";
+          const handleAction = () => {
+            if (item._type === "admin") onUpdateAdminTaskStatus(item._key, next);
+            else saveStatus(item, next);
+          };
+          const handleOpen = () => {
+            if (item._type === "admin") {
+              setEditingAdminTask(adminTasks.find(t=>t.id===item._key)||null);
+              setShowAssignModal(true);
+            } else {
+              onEditItem({...item, projectId:item.projId, projectName:item.projName,
+                projectColor:item.projColor,
+                deliverableId:item.isSubtask?(item.deliverableId||item.delId):null,
+                delTitle:item.isSubtask?item.delTitle:null});
+            }
+          };
+          return (
+            <div style={{ display:"flex", alignItems:"stretch", background:"#fff",
+              border:`1px solid ${urg?.color==="f87171"?"rgba(248,113,113,0.2)":isBlk?"rgba(248,113,113,0.15)":"rgba(0,0,0,0.07)"}`,
+              borderLeft:`3px solid ${item._color}`, borderRadius:8, overflow:"hidden",
+              transition:"box-shadow 0.12s" }}
+              onMouseEnter={e=>e.currentTarget.style.boxShadow="0 2px 8px rgba(0,0,0,0.08)"}
+              onMouseLeave={e=>e.currentTarget.style.boxShadow="none"}>
+              <div style={{ flex:1, padding:"9px 10px", minWidth:0, cursor:"pointer" }} onClick={handleOpen}>
+                <div style={{ fontSize:12, fontWeight:700, color:"#1f2937", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{item.title}</div>
+                <div style={{ fontSize:10, color:item._color, fontWeight:600, marginTop:1, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{item._label}</div>
+                <div style={{ display:"flex", gap:5, flexWrap:"wrap", alignItems:"center", marginTop:4 }}>
+                  {urg && <span style={{ fontSize:9, fontWeight:urg.w, color:urg.color, background:urg.bg, borderRadius:4, padding:"2px 6px", whiteSpace:"nowrap" }}>{urg.text}</span>}
+                  {isBlk && <span style={{ fontSize:9, fontWeight:700, color:"#f87171", background:"rgba(248,113,113,0.1)", borderRadius:4, padding:"2px 6px" }}>Blocked</span>}
+                  <div style={{ display:"flex", alignItems:"center", gap:3 }}>
+                    <div style={{ width:5, height:5, borderRadius:"50%", background:statusC[item.status]||"#d1d5db" }} />
+                    <span style={{ fontSize:9, color:"#9ca3af" }}>{item.status}</span>
+                  </div>
+                  {hrs && item.effort !== "M" && <span style={{ fontSize:9, color:"#9ca3af" }}>{hrs}h</span>}
+                </div>
+              </div>
+              <div style={{ display:"flex", alignItems:"center", justifyContent:"center", padding:"0 8px", borderLeft:"1px solid rgba(0,0,0,0.05)", background:"rgba(0,0,0,0.01)", flexShrink:0 }}>
+                <button onClick={e=>{e.stopPropagation();handleAction();}}
+                  style={{ fontSize:9, fontWeight:700, padding:"4px 8px", borderRadius:5,
+                    border:`1px solid ${statusC[item.status]}40`,
+                    background:`${statusC[item.status]}12`,
+                    color:statusC[item.status], cursor:"pointer", fontFamily:"inherit", whiteSpace:"nowrap" }}>
+                  {nextLabel}
+                </button>
               </div>
             </div>
           );
-        })()}
+        };
 
-        {/* ── My Tasks — top of page, always visible ── */}
-        <div style={{ background:"#fff", border:"1px solid rgba(0,0,0,0.07)", borderRadius:10, overflow:"hidden" }}>
-          {/* Header */}
-          <div style={{ padding:"12px 16px", borderBottom:"1px solid rgba(0,0,0,0.07)", display:"flex", alignItems:"center", justifyContent:"space-between" }}>
-            <div style={{ display:"flex", alignItems:"center", gap:8 }}>
-              <span style={{ fontSize:13, color:"#6366f1" }}>☑</span>
-              <span style={{ fontSize:13, fontWeight:800, color:"#1f2937" }}>My Tasks</span>
-              <span style={{ fontSize:10, color:"#9ca3af", background:"rgba(0,0,0,0.04)", borderRadius:10, padding:"1px 7px" }}>
-                {(meId === authMemberId ? personalTasks : []).filter(t => t.status !== "Done").length} active
-              </span>
+        const CollapsibleBucket = ({ label, items, defaultOpen=false, accent="#6b7280" }) => {
+          const [open, setOpen] = React.useState(defaultOpen);
+          if (!items.length) return null;
+          return (
+            <div style={{ marginTop:8 }}>
+              <button onClick={()=>setOpen(o=>!o)}
+                style={{ width:"100%", display:"flex", alignItems:"center", gap:8, background:"rgba(0,0,0,0.02)", border:"1px solid rgba(0,0,0,0.07)", borderRadius:7, padding:"7px 12px", cursor:"pointer", fontFamily:"inherit", textAlign:"left" }}>
+                <span style={{ fontSize:10, color:accent, transition:"transform 0.15s", display:"inline-block", transform:open?"rotate(90deg)":"rotate(0deg)" }}>▶</span>
+                <span style={{ fontSize:11, fontWeight:700, color:"#374151" }}>{label}</span>
+                <span style={{ fontSize:10, color:"#9ca3af", background:"rgba(0,0,0,0.06)", borderRadius:10, padding:"1px 7px", marginLeft:"auto" }}>{items.length}</span>
+              </button>
+              {open && (
+                <div style={{ display:"grid", gridTemplateColumns:"repeat(2,1fr)", gap:8, marginTop:8 }}>
+                  {items.map(item => <TaskTile key={item._key} item={item} />)}
+                </div>
+              )}
             </div>
-            <button onClick={() => { setTaskForm({ title:"", status:"Not Started", priority:"Medium", dueDate:"", notes:"" }); setEditingTask(null); setShowTaskForm(true); }}
-              style={{ fontSize:11, fontWeight:700, color:"#6366f1", background:"rgba(99,102,241,0.08)", border:"none", borderRadius:6, padding:"4px 12px", cursor:"pointer", fontFamily:"inherit" }}>
-              + Add Task
-            </button>
-          </div>
+          );
+        };
 
-          {/* Active tasks */}
-          <div>
-            {(() => { 
-              // Only show personal tasks when viewing your own hub
-              // Admin viewing another person's hub: their tasks aren't loaded
-              // Only show personal tasks when viewing your own hub
-              const myTasks = meId === authMemberId ? personalTasks : [];
-              return (<>
-            {myTasks.filter(t => t.status !== "Done").length === 0 && (
-              <div style={{ fontSize:12, color:"#9ca3af", textAlign:"center", padding:"16px 0" }}>No active tasks. Add one above.</div>
+        return (
+          <div style={{ background:"#fff", border:"1px solid rgba(0,0,0,0.08)", borderRadius:10, overflow:"hidden" }}>
+            {/* Header */}
+            <div style={{ padding:"12px 16px", background:"#f8fafc", borderBottom:"1px solid rgba(0,0,0,0.07)", display:"flex", alignItems:"center", justifyContent:"space-between" }}>
+              <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+                <span style={{ fontSize:13 }}>◎</span>
+                <span style={{ fontSize:13, fontWeight:800, color:"#1f2937" }}>
+                  Assigned to {meId === authMemberId ? "Me" : (people.find(p=>p.id===meId)?.name||"Them")}
+                </span>
+                <span style={{ fontSize:10, color:"#6b7280", background:"rgba(0,0,0,0.05)", borderRadius:10, padding:"1px 8px", fontWeight:600 }}>
+                  {totalActive} active
+                </span>
+                {overdueCount > 0 && (
+                  <span style={{ fontSize:10, color:"#f87171", background:"rgba(248,113,113,0.1)", borderRadius:10, padding:"1px 8px", fontWeight:700 }}>
+                    {overdueCount} urgent
+                  </span>
+                )}
+              </div>
+              {currentRole === "admin" && (
+                <button onClick={() => { setEditingAdminTask(null); setShowAssignModal(true); }}
+                  style={{ fontSize:11, fontWeight:700, color:"#fff", background:BRAND_TEAL, border:"none", borderRadius:6, padding:"6px 14px", cursor:"pointer", fontFamily:"inherit" }}>
+                  + Assign Task
+                </button>
+              )}
+            </div>
+
+            {/* Dependency awareness */}
+            {(tasksBlockedByMe.length > 0 || waitingTasks.length > 0) && (
+              <div style={{ padding:"7px 16px", background:"rgba(251,191,36,0.05)", borderBottom:"1px solid rgba(251,191,36,0.15)", display:"flex", gap:16, flexWrap:"wrap" }}>
+                {tasksBlockedByMe.length > 0 && (
+                  <span style={{ fontSize:10, color:"#f97316", fontWeight:600 }}>⚠ You are blocking {tasksBlockedByMe.length} downstream task{tasksBlockedByMe.length!==1?"s":""}</span>
+                )}
+                {waitingTasks.length > 0 && (
+                  <span style={{ fontSize:10, color:"#9ca3af", fontWeight:600 }}>⏳ Waiting on {waitingTasks.length} task{waitingTasks.length!==1?"s":""} from others before you can proceed</span>
+                )}
+              </div>
             )}
-            {myTasks.filter(t => t.status !== "Done").map(task => {
-              const isOverdueT = task.dueDate && task.dueDate < todayStr;
-              const isDueTodayT = task.dueDate === todayStr;
-              return (
-                <div key={task.id} style={{ display:"flex", alignItems:"flex-start", gap:10, padding:"10px 16px", borderBottom:"1px solid rgba(0,0,0,0.04)" }}>
-                  {/* Checkbox */}
-                  <label style={{ display:"flex", alignItems:"center", cursor:"pointer", flexShrink:0, marginTop:1 }}>
-                    <input type="checkbox" checked={task.status === "Done"}
-                      onChange={() => onSavePersonalTask({ ...task, status: "Done" })}
-                      style={{ width:15, height:15, accentColor:"#6366f1", cursor:"pointer" }} />
-                  </label>
-                  <div style={{ flex:1, minWidth:0 }}>
-                    <div style={{ fontSize:12, fontWeight:600, color:"#1f2937" }}>{task.title}</div>
-                    {task.dueDate && (
-                      <div style={{ fontSize:10, marginTop:2, fontWeight: (isOverdueT||isDueTodayT) ? 700 : 400,
-                        color: isOverdueT ? "#ef4444" : isDueTodayT ? "#f97316" : "#9ca3af" }}>
-                        {isOverdueT ? "⚠ Overdue · " : isDueTodayT ? "⏰ Due today · " : ""}{task.dueDate}
-                      </div>
-                    )}
-                    {task.notes && <div style={{ fontSize:10, color:"#6b7280", marginTop:2, whiteSpace:"pre-wrap" }}>{task.notes}</div>}
-                  </div>
-                  <span style={{ fontSize:9, fontWeight:700, color:task.priority==="Critical"?"#ef4444":task.priority==="High"?"#f97316":task.priority==="Medium"?"#fbbf24":"#9ca3af",
-                    background:(task.priority==="Critical"?"rgba(239,68,68,0.1)":task.priority==="High"?"rgba(249,115,22,0.1)":task.priority==="Medium"?"rgba(251,191,36,0.1)":"rgba(0,0,0,0.04)"),
-                    borderRadius:4, padding:"2px 6px", flexShrink:0, alignSelf:"flex-start" }}>{task.priority}</span>
-                  <button onClick={() => { setEditingTask(task); setTaskForm({ title:task.title, status:task.status, priority:task.priority||"Medium", dueDate:task.dueDate||"", notes:task.notes||"" }); setShowTaskForm(true); }}
-                    style={{ background:"none", border:"none", color:"#9ca3af", cursor:"pointer", fontSize:12, flexShrink:0, padding:"0 2px" }}>✎</button>
-                  <button onClick={() => onDeletePersonalTask(task.id)}
-                    style={{ background:"none", border:"none", color:"#fca5a5", cursor:"pointer", fontSize:14, flexShrink:0, padding:"0 2px" }}>×</button>
-                </div>
-              );
-            })}
-            </>);})()} 
-          </div>
 
-          {/* Completed tasks — collapsed dropdown */}
-          {meId === authMemberId && <DoneTasksDropdown
-            tasks={personalTasks.filter(t => t.status === "Done")}
-            onReopen={(task) => onSavePersonalTask({ ...task, status: "Not Started" })}
-            onDelete={onDeletePersonalTask}
-          />}
-        </div>
-
-        <Section title="Overdue" icon="⚠" count={overdueTasks.length} color="#f87171">
-          <div style={{ display:"grid", gridTemplateColumns:"repeat(2, 1fr)", gap:8, padding:"8px 12px 12px" }}>{overdueTasks.map(t => <TaskCard key={t.id} task={t} badge="Overdue" badgeColor="#f87171" />)}</div>
-        </Section>
-
-        <Section title="Due Soon" icon="◷" count={dueSoonTasks.length} color="#fb923c">
-          <div style={{ display:"grid", gridTemplateColumns:"repeat(2, 1fr)", gap:8, padding:"8px 12px 12px" }}>
-            {dueSoonTasks.map(t => {
-              const d        = daysDiff(t.end);
-              const dueTodayT = d === 0;
-              const dueTomorrow = d === 1;
-              const accentColor = dueTodayT ? "#f97316" : d <= 2 ? "#fbbf24" : "#9ca3af";
-              const dueTxt    = dueTodayT ? "Due today" : dueTomorrow ? "Due tomorrow" : `Due in ${d}d`;
-              const statusColors = { "Done":"#34d399","In Progress":"#38bdf8","Blocked":"#f87171","Not Started":"#d1d5db" };
-              const sc = statusColors[t.status] || "#d1d5db";
-              return (
-                <div key={t.id}
-                  onClick={() => onEditItem({ ...t, projectId:t.projId, projectName:t.projName, projectColor:t.projColor, deliverableId:t.isSubtask?(t.deliverableId||t.delId):null, delTitle:t.isSubtask?t.delTitle:null })}
-                  style={{ display:"flex", alignItems:"center", gap:10, padding:"10px 12px", cursor:"pointer", background:"#fff", border:`1px solid rgba(0,0,0,0.07)`, borderLeft:`3px solid ${t.projColor}`, borderRadius:8, transition:"box-shadow 0.12s" }}
-                  onMouseEnter={e => e.currentTarget.style.boxShadow = "0 2px 10px rgba(0,0,0,0.08)"}
-                  onMouseLeave={e => e.currentTarget.style.boxShadow = "none"}
-                >
-                  {/* Title + context */}
-                  <div style={{ flex:1, minWidth:0 }}>
-                    <div style={{ fontSize:12, fontWeight:700, color:"#1f2937", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{t.title}</div>
-                    <div style={{ fontSize:10, color:t.projColor, fontWeight:600, marginTop:1, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>
-                      {t.projName}{t.isSubtask && t.delTitle ? ` · ${t.delTitle}` : ""}
-                    </div>
-                  </div>
-
-                  {/* Status dot */}
-                  <div style={{ display:"flex", alignItems:"center", gap:5, flexShrink:0 }}>
-                    <div style={{ width:7, height:7, borderRadius:"50%", background:sc }} />
-                    <span style={{ fontSize:10, color:"#6b7280", whiteSpace:"nowrap" }}>{t.status}</span>
-                  </div>
-
-                  {/* Effort */}
-                  {t.effort && t.effort !== "M" && (
-                    <span style={{ fontSize:9, color:"#9ca3af", background:"rgba(0,0,0,0.05)", borderRadius:3, padding:"2px 6px", flexShrink:0 }}>
-                      {EFFORT_LABEL[t.effort] || t.effort}
-                    </span>
-                  )}
-
-                  {/* Due badge */}
-                  <div style={{ flexShrink:0, textAlign:"right", minWidth:78 }}>
-                    <span style={{ fontSize:10, fontWeight:700, color:accentColor, background:`${accentColor}18`, borderRadius:5, padding:"3px 8px", whiteSpace:"nowrap" }}>
-                      {dueTxt}
-                    </span>
-                    {t.end && <div style={{ fontSize:9, color:"#9ca3af", marginTop:2 }}>{t.end}</div>}
-                  </div>
-
-                  {/* Mark done */}
-                  <button onClick={e => { e.stopPropagation(); onMarkDone(t.projId, t.isSubtask?t.delId:t.id, t.isSubtask?t.id:null); }}
-                    style={{ flexShrink:0, width:22, height:22, borderRadius:"50%", border:"2px solid rgba(0,0,0,0.15)", background:"none", cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", fontSize:10, color:"#9ca3af", transition:"all 0.12s" }}
-                    title="Mark done"
-                    onMouseEnter={e => { e.currentTarget.style.borderColor="#34d399"; e.currentTarget.style.color="#34d399"; }}
-                    onMouseLeave={e => { e.currentTarget.style.borderColor="rgba(0,0,0,0.15)"; e.currentTarget.style.color="#9ca3af"; }}
-                  >✓</button>
-                </div>
-              );
-            })}
-          </div>
-        </Section>
-
-        <Section title="Blocked" icon="⊘" count={blockedTasks.length} color="#f87171" collapsed={true}>
-          <div style={{ display:"grid", gridTemplateColumns:"repeat(2, 1fr)", gap:8, padding:"8px 12px 12px" }}>{blockedTasks.map(t => {
-            const blockers = blockedBy(t);
-            return <TaskCard key={t.id} task={t} badge={blockers.length ? `Blocked · ${blockers.length}` : "Blocked"} badgeColor="#f87171" />;
-          })}</div>
-        </Section>
-
-        <Section title="Currently Blocking Downstream Work" icon="🔴" count={tasksBlockedByMe.length} color="#ef4444" collapsed={true}>
-          <div style={{ display:"grid", gridTemplateColumns:"repeat(2, 1fr)", gap:8, padding:"8px 12px 12px" }}>{tasksBlockedByMe.map(t => {
-            const blockingCount = allTasksFlat.filter(dt =>
-              dt.status !== "Done" && (dt.dependencies || []).some(depId => taskById[depId]?.id === t.id)
-            ).length;
-            return <TaskCard key={t.id} task={t} badge={`Needs attention · blocking ${blockingCount}`} badgeColor="#ef4444" />;
-          })}</div>
-        </Section>
-
-        {upcomingDepRisk.length > 0 && (
-          <Section title="Upcoming Dependency Risk" icon="⏰" count={upcomingDepRisk.length} color="#fb923c" collapsed={true}>
-            <div style={{ display:"grid", gridTemplateColumns:"repeat(2, 1fr)", gap:8, padding:"8px 12px 12px" }}>{upcomingDepRisk.map(t => <TaskCard key={t.id} task={t} badge="Future dep risk" badgeColor="#fb923c" />)}</div>
-          </Section>
-        )}
-
-        <Section title="Waiting on Others" icon="⏳" count={waitingTasks.length} color="#9ca3af" collapsed={true}>
-          <div style={{ display:"grid", gridTemplateColumns:"repeat(2, 1fr)", gap:8, padding:"8px 12px 12px" }}>{waitingTasks.map(t => <TaskCard key={t.id} task={t} badge="Waiting" badgeColor="#9ca3af" />)}</div>
-        </Section>
-
-        <Section title="Ready to Start" icon="→" count={readyTasks.filter(t => t.status === "Not Started").length} color="#34d399" collapsed={true}>
-          <div style={{ display:"grid", gridTemplateColumns:"repeat(2, 1fr)", gap:8, padding:"8px 12px 12px" }}>{readyTasks.filter(t => t.status === "Not Started").map(t => <TaskCard key={t.id} task={t} />)}</div>
-        </Section>
-
-        <Section title="High Effort This Week" icon="◈" count={highEffort.length} color="#a78bfa" collapsed={true}>
-          <div style={{ display:"grid", gridTemplateColumns:"repeat(2, 1fr)", gap:8, padding:"8px 12px 12px" }}>{highEffort.map(t => <TaskCard key={t.id} task={t} badge="Large" badgeColor="#a78bfa" />)}</div>
-        </Section>
-
-
-        {/* ── Personal Task Form Modal ── */}
-        {showTaskForm && (
-          <div style={{ position:"fixed", inset:0, zIndex:2500, display:"flex", alignItems:"center", justifyContent:"center", background:"rgba(0,0,0,0.3)" }}
-            onClick={e => e.target===e.currentTarget && setShowTaskForm(false)}>
-            <div style={{ background:"#fff", borderRadius:12, padding:"24px 28px", maxWidth:380, width:"90vw", boxShadow:"0 8px 32px rgba(0,0,0,0.15)" }}>
-              <div style={{ fontSize:15, fontWeight:800, color:"#1f2937", marginBottom:16 }}>{editingTask ? "Edit Task" : "New Personal Task"}</div>
-              <div style={{ display:"flex", flexDirection:"column", gap:12 }}>
-                <input placeholder="Task title" value={taskForm.title} onChange={e => setTaskForm(f=>({...f,title:e.target.value}))}
-                  autoFocus onKeyDown={e => e.key==="Enter" && taskForm.title.trim() && (onSavePersonalTask({...(editingTask||{}), ...taskForm, dueDate:taskForm.dueDate||null}), setShowTaskForm(false))}
-                  style={{ width:"100%", padding:"9px 10px", borderRadius:7, border:"1px solid rgba(0,0,0,0.15)", fontSize:13, fontFamily:"inherit", boxSizing:"border-box", outline:"none" }} />
-                <div style={{ display:"flex", gap:8 }}>
-                  <select value={taskForm.status} onChange={e => setTaskForm(f=>({...f,status:e.target.value}))}
-                    style={{ flex:1, padding:"7px 8px", borderRadius:7, border:"1px solid rgba(0,0,0,0.15)", fontSize:12, fontFamily:"inherit" }}>
-                    {["Not Started","In Progress","Done"].map(s => <option key={s}>{s}</option>)}
-                  </select>
-                  <select value={taskForm.priority} onChange={e => setTaskForm(f=>({...f,priority:e.target.value}))}
-                    style={{ flex:1, padding:"7px 8px", borderRadius:7, border:"1px solid rgba(0,0,0,0.15)", fontSize:12, fontFamily:"inherit" }}>
-                    {["Low","Medium","High","Critical"].map(pr => <option key={pr}>{pr}</option>)}
-                  </select>
-                </div>
-                <input type="date" value={taskForm.dueDate} onChange={e => setTaskForm(f=>({...f,dueDate:e.target.value}))}
-                  style={{ width:"100%", padding:"7px 10px", borderRadius:7, border:"1px solid rgba(0,0,0,0.15)", fontSize:12, fontFamily:"inherit", boxSizing:"border-box" }} />
-                <textarea placeholder="Notes (optional)" value={taskForm.notes} onChange={e => setTaskForm(f=>({...f,notes:e.target.value}))}
-                  style={{ width:"100%", padding:"7px 10px", borderRadius:7, border:"1px solid rgba(0,0,0,0.15)", fontSize:12, fontFamily:"inherit", resize:"vertical", minHeight:56, boxSizing:"border-box" }} />
+            {all.length === 0 && (
+              <div style={{ padding:"28px 16px", textAlign:"center", color:"#9ca3af", fontSize:12 }}>
+                No active tasks assigned to you.
+                {currentRole === "admin" && <span style={{ display:"block", fontSize:11, marginTop:4, color:"#d1d5db" }}>Use + Assign Task to add a one-off task for any team member.</span>}
               </div>
-              <div style={{ display:"flex", gap:8, marginTop:16 }}>
-                <button onClick={() => { if (!taskForm.title.trim()) return; onSavePersonalTask({...(editingTask||{}), ...taskForm, dueDate:taskForm.dueDate||null}); setShowTaskForm(false); }}
-                  style={{ flex:1, padding:"9px 0", borderRadius:7, background:"#6366f1", border:"none", color:"#fff", fontSize:12, fontWeight:700, cursor:"pointer", fontFamily:"inherit" }}>
-                  {editingTask ? "Save Changes" : "Add Task"}
-                </button>
-                <button onClick={() => setShowTaskForm(false)}
-                  style={{ flex:1, padding:"9px 0", borderRadius:7, background:"rgba(0,0,0,0.06)", border:"none", color:"#374151", fontSize:12, fontWeight:600, cursor:"pointer", fontFamily:"inherit" }}>
-                  Cancel
-                </button>
+            )}
+
+            {all.length > 0 && (
+              <div style={{ padding:"10px 12px 14px" }}>
+                {/* Active zone: overdue + today + next 2 weeks */}
+                <div style={{ fontSize:10, fontWeight:700, color:"#9ca3af", textTransform:"uppercase", letterSpacing:"0.07em", marginBottom:8 }}>
+                  Now &amp; Next 2 Weeks
+                  {activeNow.length > 0 && <span style={{ color:"#6b7280", fontWeight:500, textTransform:"none", letterSpacing:0, marginLeft:6 }}>{activeNow.length} task{activeNow.length!==1?"s":""}</span>}
+                </div>
+                {activeNow.length === 0 && (
+                  <div style={{ fontSize:11, color:"#9ca3af", padding:"8px 0", marginBottom:8 }}>All clear for the next two weeks.</div>
+                )}
+                <div style={{ display:"grid", gridTemplateColumns:"repeat(2,1fr)", gap:8, marginBottom:8 }}>
+                  {activeNow.map(item => <TaskTile key={item._key} item={item} />)}
+                </div>
+
+                {/* Collapsed future buckets */}
+                <CollapsibleBucket label="Weeks 3–4 (Coming up)" items={week4Items} accent="#6366f1" />
+                <CollapsibleBucket label="Beyond 4 weeks (On the horizon)" items={[...futureItems,...nodateItems]} accent="#9ca3af" />
               </div>
-            </div>
+            )}
+
+            {/* Done tasks */}
+            <DoneTasksDropdown
+              tasks={allMyTasks.filter(t=>t.status==="Done")}
+              onReopen={task => onSaveItem && onSaveItem({...task, status:"Not Started", projectId:task.projId, projectName:task.projName, deliverableId:task.isSubtask?(task.deliverableId||task.delId):null})}
+              onDelete={()=>{}}
+            />
           </div>
-        )}
-      </div>
+        );
+      })()}
+
 
       {showAssignModal && (
         <AssignTaskModal
@@ -5127,7 +5175,7 @@ function ReportingDashboardView({ projects, people, holidays = [], pto = [], adm
           // Neutral pace label — not surveillance language
           let paceLabel, paceColor;
           if (forecastedHrs === 0 && completedHrs === 0) {
-            paceLabel = "Needs Planning"; paceColor = "#9ca3af";
+            paceLabel = "No Tasks Planned"; paceColor = "#9ca3af";
           } else if (pctOfTarget >= 95 && pctOfTarget <= 110) {
             paceLabel = "On Pace";         paceColor = "#34d399";
           } else if (pctOfTarget > 110) {
@@ -5135,7 +5183,7 @@ function ReportingDashboardView({ projects, people, holidays = [], pto = [], adm
           } else if (pctOfTarget >= 75) {
             paceLabel = "Below Forecast";  paceColor = "#fbbf24";
           } else {
-            paceLabel = "Needs Planning Review"; paceColor = "#f97316";
+            paceLabel = "Capacity Not Planned"; paceColor = "#f97316";
           }
 
           return { person, target, completedHrs, plannedFuture: Math.round(plannedFuture), forecastedHrs, pctOfTarget, paceLabel, paceColor, myTasks: myTasks.length };
@@ -5349,7 +5397,7 @@ function StatusView({ projects, people, statusNotes, onUpdateNote, onAddDelivera
       <div style={{ background: "#ffffff", border: "1px solid rgba(0,0,0,0.07)", borderRadius: 10, overflow: "hidden" }}>
         {/* Header */}
         <div style={{ display: "grid", gridTemplateColumns: "minmax(75px,0.9fr) minmax(95px,1.2fr) minmax(100px,1.3fr) minmax(100px,1.3fr) minmax(110px,0.85fr) minmax(90px,0.7fr) minmax(65px,0.6fr) minmax(65px,0.6fr) minmax(65px,0.6fr) minmax(110px,1.8fr) minmax(65px,0.65fr)", gap: 0, borderBottom: "1px solid rgba(0,0,0,0.07)", background: "#eceef2" }}>
-          {[["Client","client"],["Project","project"],["Deliverable","deliverable"],["Current Task",null],["Track","track"],["Dept",null],["Proj Due","due"],["Task Due","taskdue"],["Team","assigned"],["Notes",null],["",null]].map(([h, col], i) => (
+          {[["Client","client"],["Project","project"],["Deliverable","deliverable"],["Current Task",null],["Health","track"],["Dept",null],["Proj Due","due"],["Task Due","taskdue"],["Team","assigned"],["Notes",null],["",null]].map(([h, col], i) => (
             <div key={i} onClick={col ? () => toggleStatusSort(col) : undefined}
               style={{ padding: "7px 10px", fontSize: 9, fontWeight: 700, color: col ? (statusSortCol === col ? BRAND_TEAL_D : "#6b7280") : "#6b7280", letterSpacing: "0.06em", textTransform: "uppercase", borderRight: i < 6 ? "1px solid rgba(0,0,0,0.06)" : "none", cursor: col ? "pointer" : "default", userSelect: "none", whiteSpace: "nowrap" }}>
               {h}{col && statusSortCol === col ? (statusSortDir === "asc" ? " ↑" : " ↓") : ""}
@@ -7157,6 +7205,7 @@ export default function App() {
           if (res.status === 401 || errBody?.code === "PGRST303" || /jwt expired/i.test(errBody?.message || "")) {
             try { localStorage.removeItem("sb_session"); } catch {}
             window.__pulsex_session_expired__ = true;
+            window.__pulsex_session_expired_flag__ = true;
           }
         } catch {}
         return { data: null, error: text };
@@ -7185,6 +7234,7 @@ export default function App() {
   const [authUser,    setAuthUser]    = useState(null);
   const [currentRole, setCurrentRole] = useState("member");
   const [authLoading, setAuthLoading] = useState(true);
+  const [sessionExpired, setSessionExpired] = useState(false);
   // Supabase v1 returns { user: { id } }, v2 may return { user_id } or decode from JWT
   const authUUID = authSession?.user?.id
     || authSession?.user_id
@@ -7209,7 +7259,8 @@ export default function App() {
       setOwnMemberId(appUser.teamMemberId);
       try { localStorage.setItem("planr_own_member_id", appUser.teamMemberId); } catch {}
     }
-    setView("myhub"); setAuthLoading(false);
+    setSessionExpired(false);
+    setSessionExpired(false); setView("myhub"); setAuthLoading(false);
   };
   const handleLogout = async () => {
     console.log("[PulseX] handleLogout called");
@@ -7233,10 +7284,35 @@ export default function App() {
         setAuthSession(session); setAuthUser(session.user); setAuthLoading(false);
       })
       .catch(() => {
-        // fetchAppUser failed — still restore session so user isn't locked out
         setAuthSession(session); setAuthUser(session.user); setAuthLoading(false);
       });
   }, []); // eslint-disable-line
+
+  // Detect session expiry from sbFetch and show friendly message
+  useEffect(() => {
+    const t = setInterval(() => {
+      if (window.__pulsex_session_expired_flag__) {
+        window.__pulsex_session_expired_flag__ = false;
+        setAuthSession(null); setAuthUser(null); setCurrentRole("member");
+        setSessionExpired(true);
+      }
+    }, 1000);
+    return () => clearInterval(t);
+  }, []);
+
+  // Watch for session expiry signal from sbFetch
+  useEffect(() => {
+    const interval = setInterval(() => {
+      if (window.__pulsex_session_expired_flag__) {
+        window.__pulsex_session_expired_flag__ = false;
+        setAuthSession(null);
+        setAuthUser(null);
+        setCurrentRole("member");
+        setSessionExpired(true);
+      }
+    }, 1000);
+    return () => clearInterval(interval);
+  }, []);
 
   const [view, setViewRaw] = useState(() => {
     try { return localStorage.getItem("planr_view") || "myhub"; } catch { return "myhub"; }
@@ -7406,10 +7482,14 @@ export default function App() {
             }).catch(() => {});
         }
       }).catch(() => {});
-    // Load admin-assigned tasks (all — admin sees all, members filter client-side)
+    // Load admin-assigned tasks — graceful if table doesn't exist yet
     sb.select("admin_tasks", "order=created_at.desc")
       .then(r => {
-        if (!r?.error && r?.data) {
+        if (r?.error) {
+          console.warn("[PulseX] admin_tasks not available — run the setup SQL:", r.error);
+          return;
+        }
+        if (r?.data) {
           setAdminTasks(r.data.map(t => ({
             id: t.id, title: t.title || "", assignedTo: t.assigned_to,
             assignedBy: t.assigned_by || "", effort: t.effort || "M",
@@ -7473,6 +7553,48 @@ export default function App() {
     if (updated.dependencies) {
       console.log("[PulseX] saveItem — id:", updated.id, "deps:", updated.dependencies);
     }
+
+    // ── Detect newly added assignees and fire notifications immediately ────────
+    // Run synchronously before the optimistic call so it always fires, even in
+    // environments where Supabase isn't configured (preview, offline, etc.)
+    const allItems = projects.flatMap(p => [...p.deliverables, ...p.deliverables.flatMap(d => d.subtasks)]);
+    const oldItem  = allItems.find(x => x.id === updated.id);
+    const oldAssignees = oldItem?.assignees || [];
+    const newAssignees = updated.assignees || [];
+    const addedPersonIds = newAssignees.filter(id => !oldAssignees.includes(id));
+    const proj = projects.find(p =>
+      p.deliverables.some(d => d.id === updated.id || d.subtasks.some(s => s.id === updated.id))
+    );
+
+    if (addedPersonIds.length > 0) {
+      for (const personId of addedPersonIds) {
+        const person = people.find(p => p.id === personId);
+        if (!person) continue;
+        const notifId = "notif_" + Date.now() + "_" + personId;
+        const msg = `${person.name} has been assigned to "${updated.title || oldItem?.title || "a task"}" in ${proj?.name || "a project"}`;
+        const notif = {
+          id: notifId, type: "task_assigned", message: msg,
+          assignedToPersonId: personId, completedByPersonId: null,
+          isRead: false, reviewedAt: null, createdAt: new Date().toISOString(),
+        };
+        setNotifications(prev => [notif, ...prev]);
+        setToastNotif({ ...notif });
+        console.log("[PulseX] assignment notification fired →", person.name);
+        // Persist to Supabase asynchronously (non-blocking)
+        if (SB_READY) {
+          sb.upsert("task_notifications", {
+            id: notifId, task_id: updated.id, notification_type: "task_assigned",
+            message: msg, assigned_to_person_id: personId,
+            is_read: false, created_at: notif.createdAt,
+          }).then(r => {
+            if (r?.error) console.error("[PulseX] assignee notif save failed:", r.error);
+          });
+        }
+      }
+    }
+
+    // Stub so the two call sites below still compile
+    const fireAssigneeNotifications = () => {};
     // Date cascade logic (unchanged)
     const doSave = (projs) => {
       const original = projs.flatMap(p => [...p.deliverables, ...p.deliverables.flatMap(d => d.subtasks)]).find(x => x.id === updated.id);
@@ -7711,22 +7833,26 @@ export default function App() {
         notes: entry.notes || "", updated_at: new Date().toISOString(),
       });
     }
-    // Notify the assignee — toast shows for admin immediately; assignee sees on their hub
-    const assignee = people.find(p => p.id === entry.assignedTo);
-    if (assignee) {
-      const notifId = "notif_" + Date.now();
+    // Notify — fire regardless of people lookup so toast always works
+    {
+      const assignee = people.find(p => p.id === entry.assignedTo);
+      const assigneeName = assignee?.name || entry.assignedTo || "team member";
       const assigner = people.find(p => p.id === currentUserId)?.name || "Admin";
-      const msg = `"${entry.title}" assigned to ${assignee.name} by ${assigner}`;
+      const notifId = "notif_" + Date.now();
+      const msg = `"${entry.title}" assigned to ${assigneeName} by ${assigner}`;
       const notif = { id:notifId, type:"task_assigned", message:msg, assignedToPersonId:entry.assignedTo,
         isRead:false, reviewedAt:null, createdAt:new Date().toISOString() };
       setNotifications(prev => [notif, ...prev]);
-      // Show toast confirmation to the admin who assigned it
       setToastNotif({ id:notifId, message:msg, type:"task_assigned" });
-      if (SB_READY) await sb.upsert("task_notifications", {
-        id:notifId, task_id:id, notification_type:"task_assigned", message:msg,
-        assigned_to_person_id:entry.assignedTo, is_read:false, created_at:notif.createdAt,
-      });
+      if (SB_READY) {
+        const r = await sb.upsert("task_notifications", {
+          id:notifId, task_id:id, notification_type:"task_assigned", message:msg,
+          assigned_to_person_id:entry.assignedTo, is_read:false, created_at:notif.createdAt,
+        });
+        if (r?.error) console.error("[PulseX] notification save failed:", r.error);
+      }
     }
+
   };
 
   const updateAdminTaskStatus = async (id, status) => {
@@ -7756,6 +7882,13 @@ export default function App() {
     setAdminTasks(prev => prev.filter(t => t.id !== id));
     if (SB_READY) await sb.delete("admin_tasks", id);
   };
+
+  // Auto-dismiss toast after 8s using useEffect (not in render)
+  useEffect(() => {
+    if (!toastNotif) return;
+    const t = setTimeout(() => setToastNotif(null), 8000);
+    return () => clearTimeout(t);
+  }, [toastNotif]);
 
   const dismissNotification = async (id) => {
     setNotifications(prev => prev.map(n => n.id === id ? { ...n, isRead: true, reviewedAt: new Date().toISOString() } : n));
@@ -8002,7 +8135,7 @@ export default function App() {
     <div style={{ minHeight:"100vh", background:"#002A4E", display:"flex", alignItems:"center",
       justifyContent:"center", color:"#50C0C0", fontFamily:"inherit", fontSize:14 }}>Loading…</div>
   );
-  if (!authSession) return <LoginScreen onLogin={handleLogin} />;
+  if (!authSession) return <LoginScreen onLogin={handleLogin} sessionExpired={sessionExpired} />;
 
   // Loading / error screens
   if (loading) return (
@@ -8068,20 +8201,41 @@ export default function App() {
           style={{ display: "flex", gap: 2, overflowX: "auto", overflowY: "visible", flex: 1, scrollbarWidth: "none", msOverflowStyle: "none", WebkitOverflowScrolling: "touch", minWidth: 0 }}
           onWheel={e => { if (!e.shiftKey && Math.abs(e.deltaX) < Math.abs(e.deltaY)) { e.currentTarget.scrollLeft += e.deltaY; } }}
         >
-          {navItems.map(n => (
-            <button key={n.id} onClick={() => setView(n.id)} title={n.label} style={{
-              background: view === n.id ? BRAND_TEAL_L : "none",
-              border: `1px solid ${view === n.id ? BRAND_TEAL + "50" : "rgba(255,255,255,0.1)"}`,
-              color: view === n.id ? BRAND_TEAL : "rgba(255,255,255,0.65)",
-              padding: "5px 8px", borderRadius: 5, cursor: "pointer", fontSize: 14,
-              fontFamily: "inherit", display: "flex", alignItems: "center", justifyContent: "center",
-              flexDirection: "column", gap: 1, transition: "all 0.12s", flexShrink: 0,
-              minWidth: 36,
-            }}>
-              <span>{n.icon}</span>
-              <span style={{ fontSize: 8, fontWeight: 700, letterSpacing: "0.04em", opacity: 0.8, whiteSpace: "nowrap" }}>{n.label}</span>
-            </button>
-          ))}
+          {navItems.map(n => {
+            // Badge = unread notifications (all types) for this user
+            // Admin sees all unread; members see only their own assignments
+            // Badge: shows unread notifications FOR THE LOGGED-IN USER (ownMemberId)
+            // Admin: all unread (completions to review + their own assignments)
+            // Member: only their own assignment notifications
+            const badgeNotifs = currentRole === "admin"
+              ? notifications.filter(x => !x.isRead)
+              : notifications.filter(x => !x.isRead && x.assignedToPersonId === ownMemberId);
+            const unreadCount = n.id === "myhub" ? badgeNotifs.length : 0;
+            return (
+              <button key={n.id} onClick={() => setView(n.id)} title={n.label} style={{
+                background: view === n.id ? BRAND_TEAL_L : "none",
+                border: `1px solid ${view === n.id ? BRAND_TEAL + "50" : "rgba(255,255,255,0.1)"}`,
+                color: view === n.id ? BRAND_TEAL : "rgba(255,255,255,0.65)",
+                padding: "5px 8px", borderRadius: 5, cursor: "pointer", fontSize: 14,
+                fontFamily: "inherit", display: "flex", alignItems: "center", justifyContent: "center",
+                flexDirection: "column", gap: 1, transition: "all 0.12s", flexShrink: 0,
+                minWidth: 36, position: "relative",
+              }}>
+                <span>{n.icon}</span>
+                <span style={{ fontSize: 8, fontWeight: 700, letterSpacing: "0.04em", opacity: 0.8, whiteSpace: "nowrap" }}>{n.label}</span>
+                {unreadCount > 0 && (
+                  <span
+                    title={unreadCount > 0 ? `${unreadCount} unread notification${unreadCount !== 1 ? "s" : ""} — go to My Hub` : "My Hub"}
+                    style={{ position:"absolute", top:2, right:2, minWidth:14, height:14, borderRadius:7,
+                      background:"#f97316", color:"#fff", fontSize:8, fontWeight:900,
+                      display:"flex", alignItems:"center", justifyContent:"center", lineHeight:1, padding:"0 3px",
+                      cursor:"help" }}>
+                    {unreadCount > 9 ? "9+" : unreadCount}
+                  </span>
+                )}
+              </button>
+            );
+          })}
         </nav>
         {/* Zoom + Settings — hidden on very small screens via CSS */}
         <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }} className="nav-controls">
@@ -8237,7 +8391,7 @@ export default function App() {
               if (currentRole !== "admin") return;
               setCurrentUser(id);
             }}
-            onEditItem={handleEditItem} onMarkDone={handleMarkDone}
+            onEditItem={handleEditItem} onMarkDone={handleMarkDone} onSaveItem={handleSaveItem}
             savePto={savePto} deletePto={deletePto}
             personalTasks={personalTasks}
             onSavePersonalTask={savePersonalTask}
@@ -8460,17 +8614,25 @@ export default function App() {
         />
       )}
 
-      {/* ── Completion toast — visible on any page ── */}
+      {/* ── Completion toast — auto-dismisses after 8s ── */}
       {toastNotif && (
         <div style={{ position:"fixed", bottom:24, right:24, zIndex:9999, maxWidth:360, width:"calc(100vw - 48px)",
           background:"#1e293b", color:"#f8fafc", borderRadius:12, padding:"14px 16px",
           boxShadow:"0 8px 32px rgba(0,0,0,0.35)", display:"flex", alignItems:"flex-start", gap:12 }}>
-          <div style={{ width:32, height:32, borderRadius:"50%", background:"#34d399", display:"flex", alignItems:"center", justifyContent:"center", fontSize:15, flexShrink:0 }}>✓</div>
+          <div style={{ width:32, height:32, borderRadius:"50%", background:toastNotif.type==="task_assigned"?BRAND_TEAL:"#34d399", display:"flex", alignItems:"center", justifyContent:"center", fontSize:15, flexShrink:0 }}>
+            {toastNotif.type === "task_assigned" ? "◎" : "✓"}
+          </div>
           <div style={{ flex:1, minWidth:0 }}>
-            <div style={{ fontSize:12, fontWeight:700, color:"#f8fafc", marginBottom:3 }}>Task Completed</div>
+            <div style={{ fontSize:12, fontWeight:700, color:"#f8fafc", marginBottom:3 }}>
+              {toastNotif.type === "task_assigned" ? "Task Assigned" : "Task Completed"}
+            </div>
             <div style={{ fontSize:11, color:"rgba(248,250,252,0.7)", lineHeight:1.45 }}>{toastNotif.message}</div>
           </div>
-          <button onClick={() => { dismissNotification(toastNotif.id); setToastNotif(null); }}
+          <button onClick={() => {
+              // Only mark reviewed for completions — assignments stay unread in the assignee's center
+              if (toastNotif.type === "task_completed") dismissNotification(toastNotif.id);
+              setToastNotif(null);
+            }}
             style={{ background:"none", border:"none", color:"rgba(248,250,252,0.5)", cursor:"pointer", fontSize:18, lineHeight:1, flexShrink:0, padding:"0 2px" }}>×</button>
         </div>
       )}
