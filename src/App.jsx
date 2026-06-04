@@ -7133,6 +7133,221 @@ function ModalFooter({ onClose, onSave, saveLabel, color }) {
 // --- APP ──────────────────────────────────────────────────────────────────────
 
 
+// ── ChangeHistoryView — admin-only audit log with restore ────────────────────
+function ChangeHistoryView({ people, projects, currentUserId, sb, SB_READY }) {
+  const [history,       setHistory]       = React.useState([]);
+  const [loading,       setLoading]       = React.useState(true);
+  const [filterPerson,  setFilterPerson]  = React.useState("");
+  const [filterProject, setFilterProject] = React.useState("");
+  const [filterAction,  setFilterAction]  = React.useState("");
+  const [filterEntity,  setFilterEntity]  = React.useState("");
+  const [restoring,     setRestoring]     = React.useState(null);
+  const [error,         setError]         = React.useState("");
+  const [confirmDel,    setConfirmDel]    = React.useState(null);
+
+  React.useEffect(() => {
+    if (!SB_READY) { setLoading(false); return; }
+    sb.select("change_history", "order=changed_at.desc&limit=500")
+      .then(r => {
+        if (r?.data) setHistory(r.data.map(row => ({
+          id: row.id, entityType: row.entity_type, entityId: row.entity_id,
+          entityTitle: row.entity_title, projectId: row.parent_project_id,
+          projectName: row.parent_project_name, deliverableId: row.parent_deliverable_id,
+          action: row.action, field: row.field_name,
+          oldValue: row.old_value, newValue: row.new_value,
+          byPersonId: row.changed_by_person_id, byName: row.changed_by_name,
+          byAuthId: row.changed_by_auth_id, at: row.changed_at,
+          meta: row.metadata,
+        })));
+        setLoading(false);
+      })
+      .catch(() => setLoading(false));
+  }, [SB_READY]);
+
+  const handleRestore = async (entry) => {
+    if (!SB_READY) return;
+    setRestoring(entry.id);
+    setError("");
+    let tableMap = {
+      deliverable:"deliverables", subtask:"subtasks", pto:"pto",
+      personal_task:"personal_tasks", admin_task:"admin_tasks", template:"deliverable_templates",
+    };
+    const table = tableMap[entry.entityType];
+    if (!table) { setRestoring(null); setError("Restore not supported for " + entry.entityType); return; }
+
+    // For delete actions: un-soft-delete the record
+    if (entry.action === "delete") {
+      const r = await sb.restore(table, entry.entityId, currentUserId);
+      if (r?.error) {
+        setError("Restore failed: " + (r.error?.message || r.error));
+      } else {
+        setHistory(h => h.map(x => x.id === entry.id ? { ...x, action: x.action + " (restored)" } : x));
+      }
+    }
+    // For field-level updates: revert to old value
+    else if (entry.action === "update" && entry.field && entry.oldValue !== undefined) {
+      const r = await sb.update(table, entry.entityId, { [entry.field]: entry.oldValue });
+      if (r?.error) setError("Revert failed: " + (r.error?.message || r.error));
+      else setHistory(h => h.map(x => x.id === entry.id ? { ...x, action: x.action + " (reverted)" } : x));
+    }
+    setRestoring(null);
+  };
+
+  const actionColors = {
+    create: "#34d399", update: "#38bdf8", delete: "#f87171",
+    restore: "#a78bfa", status_change: "#fbbf24", assignment_change: "#fb923c",
+  };
+
+  // Apply filters
+  const visible = history.filter(h =>
+    (!filterPerson  || h.byPersonId === filterPerson) &&
+    (!filterProject || h.projectId  === filterProject) &&
+    (!filterAction  || h.action.startsWith(filterAction)) &&
+    (!filterEntity  || h.entityType === filterEntity)
+  );
+
+  const uniqueEntities = [...new Set(history.map(h => h.entityType))].sort();
+  const uniqueActions  = [...new Set(history.map(h => h.action))].sort();
+
+  const fmt = (ts) => ts ? new Date(ts).toLocaleString("en-US",{month:"short",day:"numeric",hour:"numeric",minute:"2-digit"}) : "";
+  const selectSt = { fontSize:11, border:"1px solid rgba(0,0,0,0.1)", borderRadius:6, padding:"5px 10px", fontFamily:"inherit", background:"#fff", color:"#374151" };
+
+  return (
+    <div style={{ display:"flex", flexDirection:"column", gap:14 }}>
+      {/* Header */}
+      <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", flexWrap:"wrap", gap:10 }}>
+        <div>
+          <div style={{ fontSize:16, fontWeight:900, color:"#1f2937" }}>Change History</div>
+          <div style={{ fontSize:12, color:"#6b7280", marginTop:2 }}>{visible.length} of {history.length} entries</div>
+        </div>
+      </div>
+
+      {/* Filters */}
+      <div style={{ background:"#fff", border:"1px solid rgba(0,0,0,0.08)", borderRadius:10, padding:"12px 16px", display:"flex", gap:10, flexWrap:"wrap", alignItems:"center" }}>
+        <span style={{ fontSize:11, fontWeight:700, color:"#6b7280" }}>FILTER</span>
+        <select value={filterPerson} onChange={e=>setFilterPerson(e.target.value)} style={selectSt}>
+          <option value="">All people</option>
+          {people.map(p=><option key={p.id} value={p.id}>{p.name}</option>)}
+        </select>
+        <select value={filterProject} onChange={e=>setFilterProject(e.target.value)} style={selectSt}>
+          <option value="">All projects</option>
+          {projects.map(p=><option key={p.id} value={p.id}>{p.name}</option>)}
+        </select>
+        <select value={filterEntity} onChange={e=>setFilterEntity(e.target.value)} style={selectSt}>
+          <option value="">All types</option>
+          {uniqueEntities.map(e=><option key={e} value={e}>{e}</option>)}
+        </select>
+        <select value={filterAction} onChange={e=>setFilterAction(e.target.value)} style={selectSt}>
+          <option value="">All actions</option>
+          {uniqueActions.map(a=><option key={a} value={a}>{a}</option>)}
+        </select>
+        {(filterPerson||filterProject||filterEntity||filterAction) && (
+          <button onClick={()=>{setFilterPerson("");setFilterProject("");setFilterEntity("");setFilterAction("");}}
+            style={{ fontSize:11, color:"#6b7280", background:"none", border:"1px solid rgba(0,0,0,0.1)", borderRadius:5, padding:"4px 10px", cursor:"pointer", fontFamily:"inherit" }}>
+            Clear
+          </button>
+        )}
+      </div>
+
+      {error && (
+        <div style={{ fontSize:12, color:"#ef4444", background:"rgba(239,68,68,0.08)", borderRadius:8, padding:"10px 14px" }}>{error}</div>
+      )}
+
+      {/* Table */}
+      <div style={{ background:"#fff", border:"1px solid rgba(0,0,0,0.08)", borderRadius:10, overflow:"hidden" }}>
+        {loading && <div style={{ padding:32, textAlign:"center", color:"#9ca3af", fontSize:13 }}>Loading history…</div>}
+        {!loading && visible.length === 0 && (
+          <div style={{ padding:32, textAlign:"center", color:"#9ca3af", fontSize:13 }}>
+            {history.length === 0 ? "No change history recorded yet. Changes will appear here as the team uses PulseX." : "No entries match the current filters."}
+          </div>
+        )}
+        {!loading && visible.length > 0 && visible.map((entry, i) => {
+          const actionColor = actionColors[entry.action] || "#9ca3af";
+          const isDelete    = entry.action === "delete" || entry.action.includes("delete");
+          const isRevertable= (isDelete || (entry.action === "update" && entry.field)) && !entry.action.includes("(");
+          const byPerson    = people.find(p => p.id === entry.byPersonId);
+
+          return (
+            <div key={entry.id} style={{ display:"flex", alignItems:"flex-start", gap:12, padding:"11px 16px",
+              borderBottom: i < visible.length-1 ? "1px solid rgba(0,0,0,0.05)" : "none",
+              background: i % 2 === 0 ? "#fff" : "#fafafa" }}>
+              {/* Action badge */}
+              <span style={{ fontSize:9, fontWeight:800, color:actionColor, background:`${actionColor}18`,
+                borderRadius:4, padding:"3px 7px", whiteSpace:"nowrap", flexShrink:0, marginTop:2, textTransform:"uppercase" }}>
+                {entry.action}
+              </span>
+              {/* Content */}
+              <div style={{ flex:1, minWidth:0 }}>
+                <div style={{ fontSize:12, fontWeight:700, color:"#1f2937" }}>
+                  {entry.entityTitle || entry.entityId}
+                  {entry.field && <span style={{ fontWeight:400, color:"#6b7280" }}> · {entry.field}</span>}
+                </div>
+                {entry.projectName && <div style={{ fontSize:10, color:"#9ca3af", marginTop:1 }}>{entry.projectName}</div>}
+                {entry.action === "update" && entry.field && (
+                  <div style={{ fontSize:10, color:"#6b7280", marginTop:3, display:"flex", gap:8, alignItems:"center" }}>
+                    <span style={{ background:"rgba(239,68,68,0.08)", color:"#ef4444", borderRadius:3, padding:"1px 5px" }}>
+                      {JSON.stringify(entry.oldValue)?.slice(0,40)}
+                    </span>
+                    <span style={{ color:"#9ca3af" }}>→</span>
+                    <span style={{ background:"rgba(52,211,153,0.08)", color:"#059669", borderRadius:3, padding:"1px 5px" }}>
+                      {JSON.stringify(entry.newValue)?.slice(0,40)}
+                    </span>
+                  </div>
+                )}
+              </div>
+              {/* Meta */}
+              <div style={{ textAlign:"right", flexShrink:0 }}>
+                <div style={{ fontSize:10, color:"#6b7280" }}>{byPerson?.name || entry.byName || "—"}</div>
+                <div style={{ fontSize:10, color:"#9ca3af", marginTop:1 }}>{fmt(entry.at)}</div>
+              </div>
+              {/* Restore button */}
+              {isRevertable && (
+                <button
+                  onClick={() => setConfirmDel(entry)}
+                  disabled={!!restoring}
+                  style={{ fontSize:10, fontWeight:700, color:isDelete?"#34d399":"#38bdf8",
+                    background:isDelete?"rgba(52,211,153,0.1)":"rgba(56,189,248,0.1)",
+                    border:`1px solid ${isDelete?"rgba(52,211,153,0.3)":"rgba(56,189,248,0.3)"}`,
+                    borderRadius:5, padding:"4px 10px", cursor:"pointer", fontFamily:"inherit",
+                    flexShrink:0, whiteSpace:"nowrap" }}>
+                  {restoring === entry.id ? "…" : isDelete ? "↩ Restore" : "↩ Revert"}
+                </button>
+              )}
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Confirm dialog */}
+      {confirmDel && (
+        <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.5)", zIndex:9999, display:"flex", alignItems:"center", justifyContent:"center" }}>
+          <div style={{ background:"#fff", borderRadius:12, padding:"28px 32px", maxWidth:400, width:"90vw", boxShadow:"0 8px 40px rgba(0,0,0,0.25)" }}>
+            <div style={{ fontSize:15, fontWeight:800, color:"#1f2937", marginBottom:10 }}>
+              {confirmDel.action === "delete" ? "Restore this item?" : "Revert this change?"}
+            </div>
+            <div style={{ fontSize:12, color:"#6b7280", marginBottom:20, lineHeight:1.6 }}>
+              {confirmDel.action === "delete"
+                ? `This will un-delete "${confirmDel.entityTitle || confirmDel.entityId}" and make it visible again.`
+                : `This will revert the "${confirmDel.field}" field from "${JSON.stringify(confirmDel.newValue)}" back to "${JSON.stringify(confirmDel.oldValue)}".`}
+            </div>
+            <div style={{ display:"flex", gap:10, justifyContent:"flex-end" }}>
+              <button onClick={()=>setConfirmDel(null)}
+                style={{ fontSize:12, color:"#6b7280", background:"none", border:"1px solid rgba(0,0,0,0.12)", borderRadius:6, padding:"8px 16px", cursor:"pointer", fontFamily:"inherit" }}>
+                Cancel
+              </button>
+              <button onClick={()=>{ handleRestore(confirmDel); setConfirmDel(null); }}
+                style={{ fontSize:12, fontWeight:700, color:"#fff", background:"#34d399", border:"none", borderRadius:6, padding:"8px 18px", cursor:"pointer", fontFamily:"inherit" }}>
+                {confirmDel.action === "delete" ? "Yes, Restore" : "Yes, Revert"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+
 export default function App() {
   // ── SUPABASE CONFIG — read after main.jsx has set window vars ────────────
   // Reading inside App() guarantees main.jsx has already run and set these.
@@ -7212,6 +7427,9 @@ export default function App() {
     updateWhere: (table, col, val, body) => sbFetch(`${table}?${col}=eq.${encodeURIComponent(val)}`, { method: "PATCH",  prefer: "return=minimal", body: JSON.stringify(body) }),
     delete:      (table, id)             => sbFetch(`${table}?id=eq.${encodeURIComponent(id)}`, { method: "DELETE", prefer: "return=minimal" }),
     deleteWhere: (table, col, val)       => sbFetch(`${table}?${col}=eq.${encodeURIComponent(val)}`, { method: "DELETE", prefer: "return=minimal" }),
+    // Soft delete: set deleted_at / deleted_by via PATCH instead of DELETE
+    softDelete:  (table, id, byPersonId) => sbFetch(`${table}?id=eq.${encodeURIComponent(id)}`, { method: "PATCH", prefer: "return=minimal", body: JSON.stringify({ deleted_at: new Date().toISOString(), deleted_by: byPersonId || "" }) }),
+    restore:     (table, id, byPersonId) => sbFetch(`${table}?id=eq.${encodeURIComponent(id)}`, { method: "PATCH", prefer: "return=minimal", body: JSON.stringify({ deleted_at: null, deleted_by: null, restored_at: new Date().toISOString(), restored_by: byPersonId || "" }) }),
   }), [sbFetch]);
 
   // ── UI-only state (never persisted) ───────────────────────────────────────
@@ -7325,6 +7543,7 @@ export default function App() {
   const [editingItem, setEditingItem] = useState(null);
   const [showNewProject, setShowNewProject] = useState(false);
   const [showImport, setShowImport] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(null);
   const [showTeamSettings, setShowTeamSettings] = useState(false);
   const [showSettingsMenu, setShowSettingsMenu] = useState(false);
   const [showTemplates, setShowTemplates] = useState(false);
@@ -7394,13 +7613,13 @@ export default function App() {
     try {
       const [pR, dR, sR, mR, hR, nR, tR, ptR] = await Promise.all([
         sb.select("projects",       "order=position.asc,created_at.asc"),
-        sb.select("deliverables",   "order=position.asc,created_at.asc"),
-        sb.select("subtasks",       "order=position.asc,created_at.asc"),
+        sb.select("deliverables",   "deleted_at=is.null&order=position.asc,created_at.asc"),
+        sb.select("subtasks",       "deleted_at=is.null&order=position.asc,created_at.asc"),
         sb.select("team_members",   "order=position.asc,created_at.asc"),
         sb.select("holidays",       "order=date.asc"),
         sb.select("status_notes",   ""),
         sb.select("templates",      "order=created_at.asc"),
-        sb.select("pto",            "order=start_date.asc"),
+        sb.select("pto",            "deleted_at=is.null&order=start_date.asc"),
 
       ]);
       for (const r of [pR, dR, sR, mR, hR, nR, tR, ptR]) {
@@ -7457,7 +7676,7 @@ export default function App() {
     // [security] auth session structure log removed
     if (!SB_READY || !authUUID) return;
     // Load deliverable templates
-    sb.select("deliverable_templates", "order=created_at.asc")
+    sb.select("deliverable_templates", "deleted_at=is.null&order=created_at.asc")
       .then(r => {
         if (!r?.error && r?.data) {
           // Load tasks for each template
@@ -7484,7 +7703,7 @@ export default function App() {
         }
       }).catch(() => {});
     // Load admin-assigned tasks — graceful if table doesn't exist yet
-    sb.select("admin_tasks", "order=created_at.desc")
+    sb.select("admin_tasks", "order=created_at.desc")  // deleted_at filter added after SQL migration
       .then(r => {
         if (r?.error) {
           console.warn("[PulseX] admin_tasks not available — run the setup SQL:", r.error);
@@ -7499,7 +7718,7 @@ export default function App() {
           })));
         }
       }).catch(() => {});
-    sb.select("personal_tasks", `person_id=eq.${authUUID}&order=created_at.asc`)
+    sb.select("personal_tasks", `person_id=eq.${authUUID}&deleted_at=is.null&order=created_at.asc`)
       .then(result => {
         console.log("[PT] load result:", JSON.stringify(result).slice(0,200));
         if (!result?.error && result?.data) {
@@ -7553,6 +7772,24 @@ export default function App() {
     // Log dependency changes explicitly
     if (updated.dependencies) {
       console.log("[PulseX] saveItem — id:", updated.id, "deps:", updated.dependencies);
+    }
+
+    // ── Log changes to change_history ────────────────────────────────────────
+    const allItemsForLog = projects.flatMap(p => [...p.deliverables, ...p.deliverables.flatMap(d => d.subtasks)]);
+    const prevItem = allItemsForLog.find(x => x.id === updated.id);
+    if (prevItem) {
+      const trackedFields = ["status", "title", "assignees", "effort", "start", "end", "department", "priority"];
+      trackedFields.forEach(field => {
+        const oldV = prevItem[field], newV = updated[field];
+        if (JSON.stringify(oldV) !== JSON.stringify(newV)) {
+          const proj = projects.find(p => p.deliverables.some(d => d.id === updated.id || d.subtasks.some(s => s.id === updated.id)));
+          logChange(updated.deliverableId || updated.isSubtask ? "subtask" : "deliverable",
+            updated.id, "update", {
+              projectId: updated.projectId || proj?.id,
+              field, oldValue: oldV, newValue: newV,
+            });
+        }
+      });
     }
 
     // ── Detect newly added assignees and fire notifications immediately ────────
@@ -7798,9 +8035,10 @@ export default function App() {
 
   const deleteDeliverableTemplate = async (id) => {
     setDeliverableTemplates(prev => prev.filter(t => t.id !== id));
+    logChange("template", id, "delete", {});
     if (SB_READY) {
-      await sb.deleteWhere("deliverable_template_tasks", "template_id", id);
-      await sb.delete("deliverable_templates", id);
+      // Soft delete the template; tasks remain but hidden
+      await sb.softDelete("deliverable_templates", id, currentUserId);
     }
   };
 
@@ -7904,7 +8142,8 @@ export default function App() {
 
   const deleteAdminTask = async (id) => {
     setAdminTasks(prev => prev.filter(t => t.id !== id));
-    if (SB_READY) await sb.delete("admin_tasks", id);
+    logChange("admin_task", id, "delete", {});
+    if (SB_READY) await sb.softDelete("admin_tasks", id, currentUserId);
   };
 
   // Auto-dismiss toast after 8s using useEffect (not in render)
@@ -7947,7 +8186,7 @@ export default function App() {
   const deletePersonalTask = async (id) => {
     setPersonalTasks(prev => prev.filter(t => t.id !== id));
     if (SB_READY) {
-      const result = await sb.delete("personal_tasks", id);
+      const result = await sb.softDelete("personal_tasks", id, authUUID);
       if (result?.error) console.error("[PulseX] deletePersonalTask error:", result.error);
     }
   };
@@ -7964,7 +8203,7 @@ export default function App() {
   const deletePto = async (id) => {
     setPto(prev => prev.filter(p => p.id !== id));
     if (SB_READY) {
-      const { error } = await sb.delete("pto", id);
+      const { error } = await sb.softDelete("pto", id, currentUserId);
       if (error) { console.error("[PulseX] deletePto:", error); loadAll(); }
     }
   };
@@ -7993,14 +8232,28 @@ export default function App() {
     }
   );
 
-  const handleDeleteDeliverable = (projectId, deliverableId) => optimistic(
+  const handleDeleteDeliverableConfirmed = (projectId, deliverableId) => optimistic(
     () => setProjects(projs => projs.map(p => p.id !== projectId ? p : { ...p, deliverables: p.deliverables.filter(d => d.id !== deliverableId) })),
-    async () => { const { error } = await sb.delete("deliverables", deliverableId); return error; }
+    async () => {
+      logChange("deliverable", deliverableId, "delete", { projectId, newValue: { deliverableId } });
+      const { error } = await sb.softDelete("deliverables", deliverableId, currentUserId);
+      return error;
+    }
   );
+  const handleDeleteDeliverable = (projectId, deliverableId) => {
+    const proj = projects.find(p => p.id === projectId);
+    const del  = proj?.deliverables?.find(d => d.id === deliverableId);
+    setConfirmDelete({ type: "deliverable", id: deliverableId, name: del?.title || deliverableId,
+      action: () => handleDeleteDeliverableConfirmed(projectId, deliverableId) });
+  };
 
   const handleDeleteSubtask = (projectId, deliverableId, subtaskId) => optimistic(
     () => setProjects(projs => projs.map(p => p.id !== projectId ? p : { ...p, deliverables: p.deliverables.map(d => d.id !== deliverableId ? d : { ...d, subtasks: d.subtasks.filter(s => s.id !== subtaskId) }) })),
-    async () => { const { error } = await sb.delete("subtasks", subtaskId); return error; }
+    async () => {
+      logChange("subtask", subtaskId, "delete", { projectId, deliverableId: deliverableId, newValue: { subtaskId } });
+      const { error } = await sb.softDelete("subtasks", subtaskId, currentUserId);
+      return error;
+    }
   );
 
   // ── Copy/Paste handlers ──────────────────────────────────────────────────
@@ -8155,6 +8408,7 @@ export default function App() {
     { id: "status",    label: "Status",    icon: "◉" },
     { id: "workload",  label: "Workload",  icon: "▦" },
     { id: "reporting", label: "Reporting", icon: "◈" },
+    ...(currentRole === "admin" ? [{ id: "history", label: "History", icon: "⟳" }] : []),
   ];
 
   // Auth gate — must be in App() so setting authSession=null triggers re-render
@@ -8464,6 +8718,16 @@ export default function App() {
         {view === "workload" && (
           <WorkloadView projects={projects} people={people} onEditItem={handleEditItem} pto={pto} holidays={holidays} />
         )}
+        {view === "history" && currentRole === "admin" && (
+          <ChangeHistoryView
+            people={people}
+            projects={projects}
+            currentUserId={currentUserId}
+            sb={sb}
+            SB_READY={SB_READY}
+          />
+        )}
+
         {view === "reporting" && (
           <ReportingDashboardView
             projects={projects} people={people} holidays={holidays} pto={pto}
@@ -8642,6 +8906,31 @@ export default function App() {
       )}
 
       {/* ── Completion toast — auto-dismisses after 8s ── */}
+      {/* ── Confirm Delete dialog ── */}
+      {confirmDelete && (
+        <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.5)", zIndex:9999,
+          display:"flex", alignItems:"center", justifyContent:"center" }}>
+          <div style={{ background:"#fff", borderRadius:12, padding:"28px 32px", maxWidth:400,
+            width:"90vw", boxShadow:"0 8px 40px rgba(0,0,0,0.25)", fontFamily:"inherit" }}>
+            <div style={{ fontSize:15, fontWeight:800, color:"#1f2937", marginBottom:8 }}>Delete {confirmDelete.type}?</div>
+            <div style={{ fontSize:13, color:"#6b7280", marginBottom:20, lineHeight:1.6 }}>
+              <strong>"{confirmDelete.name}"</strong> will be soft-deleted and hidden from the timeline.
+              Admins can restore it from Change History.
+            </div>
+            <div style={{ display:"flex", gap:10, justifyContent:"flex-end" }}>
+              <button onClick={() => setConfirmDelete(null)}
+                style={{ fontSize:12, color:"#6b7280", background:"none", border:"1px solid rgba(0,0,0,0.12)", borderRadius:6, padding:"8px 16px", cursor:"pointer", fontFamily:"inherit" }}>
+                Cancel
+              </button>
+              <button onClick={() => { confirmDelete.action(); setConfirmDelete(null); }}
+                style={{ fontSize:12, fontWeight:700, color:"#fff", background:"#ef4444", border:"none", borderRadius:6, padding:"8px 18px", cursor:"pointer", fontFamily:"inherit" }}>
+                Delete
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {toastNotif && (
         <div style={{ position:"fixed", bottom:24, right:24, zIndex:9999, maxWidth:360, width:"calc(100vw - 48px)",
           background:"#1e293b", color:"#f8fafc", borderRadius:12, padding:"14px 16px",
