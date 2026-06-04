@@ -3201,7 +3201,7 @@ function PeopleView({ projects, people, onEditItem, onMarkDone, onSaveItem, holi
 
 
 // --- WORKLOAD VIEW ────────────────────────────────────────────────────────────
-function WorkloadView({ projects, people, onEditItem, pto = [], holidays = [] }) {
+function WorkloadView({ projects, people, onEditItem, pto = [], holidays = [], adminTasks = [] }) {
   const [filterPerson,  setFilterPerson]  = useState("all");
   const [filterProject, setFilterProject] = useState("all");
   const [filterStatus,  setFilterStatus]  = useState("active"); // all | active | done
@@ -3312,13 +3312,7 @@ function WorkloadView({ projects, people, onEditItem, pto = [], holidays = [] })
   // ── render ────────────────────────────────────────────────────────────────
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-      <ReportExportCenter
-        projects={projects}
-        people={people}
-        pto={pto}
-        adminTasks={adminTasks}
-        holidays={holidays}
-      />
+      
 
       {/* ── Header ── */}
       <div style={{ background: "#fff", border: "1px solid rgba(0,0,0,0.07)", borderRadius: 10, padding: "16px 20px" }}>
@@ -3728,7 +3722,7 @@ function AssignTaskModal({ people, onClose, onSave, editing = null }) {
 }
 
 
-function MyHubView({ projects, people, holidays, pto = [], currentUserId, onSetCurrentUser, onEditItem, onMarkDone, onSaveItem, savePto, deletePto, personalTasks = [], onSavePersonalTask, onDeletePersonalTask, currentRole = "member", authMemberId = "", authUUID = "", adminTasks = [], onSaveAdminTask, onUpdateAdminTaskStatus, onDeleteAdminTask, notifications = [], onDismissNotification, onOpenNotifTask, setToastNotif }) {
+function MyHubView({ projects, people, holidays, pto = [], currentUserId, onSetCurrentUser, onEditItem, onMarkDone, onSaveItem, savePto, deletePto, personalTasks = [], onSavePersonalTask, onDeletePersonalTask, currentRole = "member", authMemberId = "", authUUID = "", adminTasks = [], onSaveAdminTask, onUpdateAdminTaskStatus, onDeleteAdminTask, notifications = [], onDismissNotification, onOpenNotifTask, setToastNotif, onSetWaiting }) {
   const TODAY = new Date(); TODAY.setHours(0,0,0,0);
 
   // Week bounds (Mon–Sun)
@@ -3855,7 +3849,7 @@ function MyHubView({ projects, people, holidays, pto = [], currentUserId, onSetC
   const overdueTasks  = claim(allMyTasks.filter(isOverdue).sort((a,b) => daysDiff(a.end) - daysDiff(b.end)));
   const blockedTasks  = claim(unclaimed(allMyTasks.filter(t => t.status === "Blocked" || (t.status !== "Done" && blockedBy(t).length > 0))));
   const dueSoonTasks  = claim(unclaimed(allMyTasks.filter(t => !isOverdue(t) && isDueSoon(t)).sort((a,b) => daysDiff(a.end) - daysDiff(b.end))));
-  const readyTasks    = claim(unclaimed(allMyTasks.filter(t => t.status !== "Done" && t.status !== "Blocked" && isDependencyClear(t))));
+  const readyTasks    = claim(unclaimed(allMyTasks.filter(t => t.status !== "Done" && t.status !== "Blocked" && !t.isWaiting && isDependencyClear(t))));
   const waitingTasks  = claim(unclaimed(allMyTasks.filter(t =>
     t.status !== "Done" && (t.dependencies || []).some(depId => {
       const dep = taskById[depId];
@@ -4237,6 +4231,7 @@ function MyHubView({ projects, people, holidays, pto = [], currentUserId, onSetC
       {/* ── Assigned to Me — combined project + admin tasks, temporal buckets ── */}
       {(() => {
         const todayD = new Date(); todayD.setHours(0,0,0,0);
+        const [waitingOpen, setWaitingOpen] = React.useState(false);
         const todayISO = todayD.toISOString().slice(0,10);
         const in14  = new Date(todayD); in14.setDate(todayD.getDate()+14);
         const in28  = new Date(todayD); in28.setDate(todayD.getDate()+28);
@@ -4282,7 +4277,10 @@ function MyHubView({ projects, people, holidays, pto = [], currentUserId, onSetC
             };
           });
 
-        const all = [...projItems, ...adminItems].sort((a,b)=>{
+        // Split into actionable vs waiting-on-someone
+        const allCombined = [...projItems, ...adminItems];
+        const waitingItems  = allCombined.filter(t => t.isWaiting);
+        const all = allCombined.filter(t => !t.isWaiting).sort((a,b)=>{
           const ad=a._due, bd=b._due;
           if(!ad&&!bd) return 0; if(!ad) return 1; if(!bd) return -1;
           return ad<bd?-1:ad>bd?1:0;
@@ -4344,13 +4342,23 @@ function MyHubView({ projects, people, holidays, pto = [], currentUserId, onSetC
                   {hrs && item.effort !== "M" && <span style={{ fontSize:9, color:"#9ca3af" }}>{hrs}h</span>}
                 </div>
               </div>
-              <div style={{ display:"flex", alignItems:"center", justifyContent:"center", padding:"0 8px", borderLeft:"1px solid rgba(0,0,0,0.05)", background:"rgba(0,0,0,0.01)", flexShrink:0 }}>
+              <div style={{ display:"flex", flexDirection:"column", alignItems:"stretch", justifyContent:"center", padding:"0 6px", borderLeft:"1px solid rgba(0,0,0,0.05)", background:"rgba(0,0,0,0.01)", flexShrink:0, gap:4 }}>
                 <button onClick={e=>{e.stopPropagation();handleAction();}}
                   style={{ fontSize:9, fontWeight:700, padding:"4px 8px", borderRadius:5,
                     border:`1px solid ${statusC[item.status]}40`,
                     background:`${statusC[item.status]}12`,
                     color:statusC[item.status], cursor:"pointer", fontFamily:"inherit", whiteSpace:"nowrap" }}>
                   {nextLabel}
+                </button>
+                {/* Waiting toggle */}
+                <button
+                  type="button"
+                  onClick={e => { e.stopPropagation(); onSetWaiting && onSetWaiting(item, true); }}
+                  title="Waiting on someone — removes from Focus until resolved"
+                  style={{ fontSize:8, fontWeight:600, padding:"3px 6px", borderRadius:5,
+                    border:"1px solid rgba(251,191,36,0.4)", background:"rgba(251,191,36,0.08)",
+                    color:"#b45309", cursor:"pointer", fontFamily:"inherit", whiteSpace:"nowrap" }}>
+                  ⏳ Waiting
                 </button>
               </div>
             </div>
@@ -4439,6 +4447,43 @@ function MyHubView({ projects, people, holidays, pto = [], currentUserId, onSetC
                 {/* Collapsed future buckets */}
                 <CollapsibleBucket label="Weeks 3–4 (Coming up)" items={week4Items} accent="#6366f1" />
                 <CollapsibleBucket label="Beyond 4 weeks (On the horizon)" items={[...futureItems,...nodateItems]} accent="#9ca3af" />
+
+                {/* Waiting on someone — collapsed by default, easy to un-wait */}
+                {waitingItems.length > 0 && (
+                  <div style={{ marginTop:8 }}>
+                    <button onClick={()=>setWaitingOpen(o=>!o)}
+                      style={{ width:"100%", display:"flex", alignItems:"center", gap:8, background:"rgba(251,191,36,0.05)", border:"1px solid rgba(251,191,36,0.2)", borderRadius:7, padding:"7px 12px", cursor:"pointer", fontFamily:"inherit", textAlign:"left" }}>
+                      <span style={{ fontSize:10, color:"#b45309", transition:"transform 0.15s", display:"inline-block", transform:waitingOpen?"rotate(90deg)":"rotate(0deg)" }}>▶</span>
+                      <span style={{ fontSize:11, fontWeight:700, color:"#92400e" }}>⏳ Waiting on someone</span>
+                      <span style={{ fontSize:10, color:"#b45309", background:"rgba(251,191,36,0.15)", borderRadius:10, padding:"1px 7px", marginLeft:"auto" }}>{waitingItems.length}</span>
+                    </button>
+                    {waitingOpen && (
+                      <div style={{ display:"grid", gridTemplateColumns:"repeat(2,1fr)", gap:8, marginTop:8 }}>
+                        {waitingItems.map(item => {
+                          const urg = urgency(item._due);
+                          return (
+                            <div key={item._key} style={{ display:"flex", alignItems:"stretch", background:"rgba(251,191,36,0.04)", border:"1px solid rgba(251,191,36,0.2)", borderLeft:"3px solid #fbbf24", borderRadius:8, overflow:"hidden", opacity:0.8 }}>
+                              <div style={{ flex:1, padding:"9px 10px", minWidth:0 }}>
+                                <div style={{ fontSize:12, fontWeight:700, color:"#92400e", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{item.title}</div>
+                                <div style={{ fontSize:10, color:"#b45309", marginTop:1 }}>{item._label}</div>
+                                {urg && <span style={{ fontSize:9, fontWeight:600, color:urg.color, marginTop:4, display:"block" }}>{urg.text}</span>}
+                              </div>
+                              <div style={{ display:"flex", alignItems:"center", padding:"0 8px", borderLeft:"1px solid rgba(251,191,36,0.15)", flexShrink:0 }}>
+                                <button
+                                  type="button"
+                                  onClick={() => onSetWaiting && onSetWaiting(item, false)}
+                                  title="Mark as active — move back to your task list"
+                                  style={{ fontSize:9, fontWeight:700, color:BRAND_TEAL, background:"rgba(80,192,192,0.1)", border:"1px solid rgba(80,192,192,0.3)", borderRadius:5, padding:"4px 8px", cursor:"pointer", fontFamily:"inherit", whiteSpace:"nowrap" }}>
+                                  ↩ Active
+                                </button>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
             )}
 
@@ -8192,6 +8237,29 @@ export default function App() {
     );
   };
 
+  // Toggle "Waiting on someone" state — removes task from Focus card
+  const handleSetWaiting = (item, isWaiting) => {
+    // Optimistic update in project state
+    setProjects(projs => projs.map(proj =>
+      proj.id !== (item.projectId || item.projId) ? proj : {
+        ...proj,
+        deliverables: proj.deliverables.map(del => {
+          if (item.isSubtask || item.deliverableId) {
+            return del.id !== (item.deliverableId || item.delId) ? del : {
+              ...del, subtasks: del.subtasks.map(s => s.id === item.id ? { ...s, isWaiting } : s),
+            };
+          }
+          return del.id === item.id ? { ...del, isWaiting } : del;
+        }),
+      }
+    ));
+    // Persist to Supabase
+    if (SB_READY) {
+      const table = (item.isSubtask || item.deliverableId) ? "subtasks" : "deliverables";
+      sb.update(table, item.id, { is_waiting: isWaiting }).catch(() => {});
+    }
+  };
+
   const handleBackfillDepartments = () => {
     const updates = [];
     projects.forEach(proj => {
@@ -8937,6 +9005,7 @@ export default function App() {
             onSaveAdminTask={saveAdminTask}
             onUpdateAdminTaskStatus={updateAdminTaskStatus}
             onDeleteAdminTask={deleteAdminTask}
+            onSetWaiting={handleSetWaiting}
             notifications={notifications}
             onDismissNotification={dismissNotification}
             setToastNotif={setToastNotif}
@@ -8969,7 +9038,7 @@ export default function App() {
         )}
         {view === "people"  && <PeopleView projects={projects} people={people} onEditItem={handleEditItem} onMarkDone={handleMarkDone} onSaveItem={handleSaveItem} holidays={holidays} pto={pto} />}
         {view === "workload" && (
-          <WorkloadView projects={projects} people={people} onEditItem={handleEditItem} pto={pto} holidays={holidays} />
+          <WorkloadView projects={projects} people={people} onEditItem={handleEditItem} pto={pto} holidays={holidays} adminTasks={adminTasks} />
         )}
         {view === "history" && currentRole === "admin" && (
           <ChangeHistoryView
