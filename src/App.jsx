@@ -1,3 +1,4 @@
+// @ts-nocheck
 import React, { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { BRAND_TEAL, BRAND_NAVY, BRAND_TEAL_D, BRAND_TEAL_L } from "./constants/brand.js";
 import { STATUSES, statusMeta } from "./constants/statuses.js";
@@ -82,7 +83,7 @@ const initialProjects = [
     deliverables: [
       {
         id: "d_2", title: "Kickoff", status: "Not Started", priority: "Medium",
-        assignees: [], start: "2026-05-19", end: "2026-05-19", progress: 0, dependencies: [], department: "",
+        assignees: ["p1"], start: "2026-05-19", end: "2026-06-30", progress: 0, dependencies: [], department: "",
         subtasks: [],
       },
       {
@@ -95,12 +96,12 @@ const initialProjects = [
         assignees: [], start: "2026-05-20", end: "2026-06-05", progress: 0, dependencies: [], department: "",
         subtasks: [
           {
-            id: "s_5", title: "Copy Development", status: "Not Started", priority: "Medium",
-            assignees: [], start: "2026-05-20", end: "2026-05-22", progress: 0, dependencies: [], department: "",
+            id: "s_5", title: "Copy Development", status: "In Progress", priority: "Medium",
+            assignees: ["p1"], start: "2026-05-20", end: "2026-05-22", progress: 0, dependencies: [], department: "",
           },
           {
             id: "s_6", title: "Internal Review/Proof", status: "Not Started", priority: "Medium",
-            assignees: [], start: "2026-05-25", end: "2026-05-26", progress: 0, dependencies: [], department: "",
+            assignees: ["p1"], start: "2026-05-25", end: "2026-06-20", progress: 0, dependencies: [], department: "",
           },
           {
             id: "s_7", title: "Revisions", status: "Not Started", priority: "Medium",
@@ -3722,7 +3723,82 @@ function AssignTaskModal({ people, onClose, onSave, editing = null }) {
 }
 
 
-function MyHubView({ projects, people, holidays, pto = [], currentUserId, onSetCurrentUser, onEditItem, onMarkDone, onSaveItem, savePto, deletePto, personalTasks = [], onSavePersonalTask, onDeletePersonalTask, currentRole = "member", authMemberId = "", authUUID = "", adminTasks = [], onSaveAdminTask, onUpdateAdminTaskStatus, onDeleteAdminTask, notifications = [], onDismissNotification, onOpenNotifTask, setToastNotif, onSetWaiting }) {
+// ── Collapsible bucket for hub sections — module-level so no re-creation ───
+function CollapsibleBucket({ label, items, renderItem, accent }) {
+  const [open, setOpen] = React.useState(false);
+  const ac = accent || "#6b7280";
+  if (!items || !items.length) return null;
+  return (
+    <div style={{ marginTop:8 }}>
+      <button type="button" onClick={() => setOpen(o => !o)}
+        style={{ width:"100%", display:"flex", alignItems:"center", gap:8,
+          background:"rgba(0,0,0,0.02)", border:"1px solid rgba(0,0,0,0.07)",
+          borderRadius:7, padding:"7px 12px", cursor:"pointer",
+          fontFamily:"inherit", textAlign:"left" }}>
+        <span style={{ fontSize:10, color:ac, transition:"transform 0.15s",
+          display:"inline-block", transform:open?"rotate(90deg)":"rotate(0deg)" }}>▶</span>
+        <span style={{ fontSize:11, fontWeight:700, color:"#374151" }}>{label}</span>
+        <span style={{ fontSize:10, color:"#9ca3af", background:"rgba(0,0,0,0.06)",
+          borderRadius:10, padding:"1px 7px", marginLeft:"auto" }}>{items.length}</span>
+      </button>
+      {open && (
+        <div style={{ display:"grid", gridTemplateColumns:"repeat(2,1fr)", gap:8, marginTop:8 }}>
+          {items.map(item => renderItem(item))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+
+// ── HubTaskTile — module-level component for My Hub task cards ───────────────
+function HubTaskTile({ item, onSaveStatus, onOpenItem, statusC }) {
+  const statusColors = statusC || {"Not Started":"#6b7280","In Progress":"#38bdf8","Blocked":"#f87171","Done":"#34d399"};
+  const urg = (() => {
+    if (!item._due) return null;
+    const today = new Date(); today.setHours(0,0,0,0);
+    const d = Math.ceil((new Date(item._due + "T00:00:00") - today) / 86400000);
+    if (d < 0)  return { text: Math.abs(d)+"d overdue", color:"#f87171", bg:"rgba(248,113,113,0.1)", w:700 };
+    if (d === 0) return { text:"Due today",             color:"#f97316", bg:"rgba(249,115,22,0.1)",  w:700 };
+    if (d === 1) return { text:"Due tomorrow",          color:"#fbbf24", bg:"rgba(251,191,36,0.1)",  w:600 };
+    if (d <= 7)  return { text:"Due in "+d+"d",         color:"#9ca3af", bg:"rgba(0,0,0,0.05)",      w:500 };
+    return null;
+  })();
+  const nextLabel = item.status === "Not Started" ? "▶ Start"
+    : item.status === "In Progress" ? "✓ Done"
+    : item.status === "Blocked" ? "▶ Go" : "↩";
+  const sc = statusColors[item.status] || "#6b7280";
+  return (
+    <div style={{ display:"flex", alignItems:"stretch", background:"#fff",
+      border:"1px solid rgba(0,0,0,0.07)", borderLeft:"3px solid "+item._color,
+      borderRadius:8, overflow:"hidden" }}
+      onMouseEnter={e => e.currentTarget.style.boxShadow="0 2px 8px rgba(0,0,0,0.08)"}
+      onMouseLeave={e => e.currentTarget.style.boxShadow="none"}>
+      <div style={{ flex:1, padding:"9px 10px", minWidth:0, cursor:"pointer" }}
+        onClick={() => onOpenItem && onOpenItem(item)}>
+        <div style={{ fontSize:12, fontWeight:700, color:"#1f2937", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{item.title}</div>
+        <div style={{ fontSize:10, color:item._color, fontWeight:600, marginTop:1, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{item._label}</div>
+        <div style={{ display:"flex", gap:5, flexWrap:"wrap", alignItems:"center", marginTop:4 }}>
+          {urg && <span style={{ fontSize:9, fontWeight:urg.w, color:urg.color, background:urg.bg, borderRadius:4, padding:"2px 6px" }}>{urg.text}</span>}
+          {item.status === "Blocked" && <span style={{ fontSize:9, fontWeight:700, color:"#f87171", background:"rgba(248,113,113,0.1)", borderRadius:4, padding:"2px 6px" }}>Blocked</span>}
+          <span style={{ fontSize:9, color:"#9ca3af" }}>{item.status}</span>
+        </div>
+      </div>
+      <div style={{ display:"flex", alignItems:"center", padding:"0 8px", borderLeft:"1px solid rgba(0,0,0,0.05)", background:"rgba(0,0,0,0.01)", flexShrink:0 }}>
+        <button type="button"
+          onClick={e => { e.stopPropagation(); onSaveStatus && onSaveStatus(item); }}
+          style={{ fontSize:9, fontWeight:700, padding:"4px 8px", borderRadius:5,
+            border:"1px solid "+sc+"40", background:sc+"12",
+            color:sc, cursor:"pointer", fontFamily:"inherit", whiteSpace:"nowrap" }}>
+          {nextLabel}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+
+function MyHubView({ projects, people, holidays, pto = [], currentUserId, onSetCurrentUser, onEditItem, onMarkDone, onSaveItem, savePto, deletePto, personalTasks = [], onSavePersonalTask, onDeletePersonalTask, currentRole = "member", authMemberId = "", authUUID = "", adminTasks = [], onSaveAdminTask, onUpdateAdminTaskStatus, onDeleteAdminTask, notifications = [], onDismissNotification, onOpenNotifTask, setToastNotif }) {
   const TODAY = new Date(); TODAY.setHours(0,0,0,0);
 
   // Week bounds (Mon–Sun)
@@ -3736,12 +3812,13 @@ function MyHubView({ projects, people, holidays, pto = [], currentUserId, onSetC
 
   const efv = (e) => EFFORT_VAL[e] || 2;
 
-  const [showPtoForm, setShowPtoForm] = useState(false);
+  const [showPtoForm,   setShowPtoForm]   = useState(false);
   const [showAssignModal, setShowAssignModal] = useState(false);
   const [editingAdminTask, setEditingAdminTask] = useState(null);
   const [ptoForm, setPtoForm] = useState({ start: todayStr, end: todayStr, note: "" });
   const [showTaskForm, setShowTaskForm] = useState(false);
   const [editingTask, setEditingTask] = useState(null);
+  const [waitingIds, setWaitingIds] = useState(new Set()); // tasks parked from Focus strip
   const [taskForm, setTaskForm] = useState({ title: "", status: "Not Started", priority: "Medium", dueDate: "", notes: "" });
   const hubHolidaySet = new Set((holidays||[]).map(h => h.date));
 
@@ -3751,7 +3828,7 @@ function MyHubView({ projects, people, holidays, pto = [], currentUserId, onSetC
     ? (currentUserId || authMemberId || people[0]?.id || "")
     : (authMemberId || currentUserId || people[0]?.id || "");
   const me   = people.find(p => p.id === effectiveUserId) || people[0];
-  const meId = me?.id || "";
+  const meId = me?.id || authMemberId || people[0]?.id || "";
 
   // ── Flatten executable tasks assigned to me ──────────────────────────────
   // Subtasks always included. Leaf deliverables (no subtasks) also included if assigned.
@@ -3849,15 +3926,15 @@ function MyHubView({ projects, people, holidays, pto = [], currentUserId, onSetC
   const overdueTasks  = claim(allMyTasks.filter(isOverdue).sort((a,b) => daysDiff(a.end) - daysDiff(b.end)));
   const blockedTasks  = claim(unclaimed(allMyTasks.filter(t => t.status === "Blocked" || (t.status !== "Done" && blockedBy(t).length > 0))));
   const dueSoonTasks  = claim(unclaimed(allMyTasks.filter(t => !isOverdue(t) && isDueSoon(t)).sort((a,b) => daysDiff(a.end) - daysDiff(b.end))));
-  const readyTasks    = claim(unclaimed(allMyTasks.filter(t => t.status !== "Done" && t.status !== "Blocked" && !t.isWaiting && isDependencyClear(t))));
+  const readyTasks    = claim(unclaimed(allMyTasks.filter(t => t.status !== "Done" && t.status !== "Blocked" && isDependencyClear(t))));
   const waitingTasks  = claim(unclaimed(allMyTasks.filter(t =>
     t.status !== "Done" && (t.dependencies || []).some(depId => {
       const dep = taskById[depId];
       return dep && dep.status !== "Done" && !(dep.assignees || []).includes(meId);
     })
   )));
-  const recommended   = [...readyTasks].sort((a,b) => score(b) - score(a)).slice(0, 8);
-  const topFocusTask  = recommended[0] || [...activeTasks].sort((a,b) => score(b) - score(a))[0] || null;
+  const recommended   = [...readyTasks].filter(t => !waitingIds.has(t.id)).sort((a,b) => score(b) - score(a)).slice(0, 8);
+  const topFocusTask  = recommended[0] || [...activeTasks].filter(t => !waitingIds.has(t.id)).sort((a,b) => score(b) - score(a))[0] || null;
   const weekTasks     = allMyTasks.filter(t => t.status !== "Done" && isDueThisWk(t));
   const highEffort    = allMyTasks.filter(t => t.status !== "Done" && efv(t.effort) >= 3 && isDueThisWk(t));
 
@@ -3891,68 +3968,90 @@ function MyHubView({ projects, people, holidays, pto = [], currentUserId, onSetC
     }
   };
 
-  const TaskCard = ({ task, badge, badgeColor }) => {
-    const d       = daysDiff(task.end);
-    const overdue = isOverdue(task);
-    const cleared = isDependencyClear(task);
-    const blkd    = blockedBy(task);
-    const hrs     = EFFORT_HOURS[task.effort] || (task.customHours ? parseFloat(task.customHours) : 4);
-    const dateTxt = !task.end ? null
-      : overdue      ? `${Math.abs(d)}d overdue`
-      : d === 0      ? "Due today"
-      : d === 1      ? "Due tomorrow"
-      :                `Due in ${d}d`;
-    const dateColor = overdue ? "#f87171" : d <= 1 ? "#f97316" : d <= 3 ? "#fbbf24" : "#9ca3af";
-    const statusColors = { "Done":"#34d399","In Progress":"#38bdf8","Blocked":"#f87171","Not Started":"#d1d5db" };
-    const nextStatus = cycleStatus(task.status);
-    const nextLabel  = { "Not Started":"→ Start", "In Progress":"→ Done", "Done":"↩ Reopen", "Blocked":"→ Unblock" }[task.status] || "→ Next";
-    return (
-      <div style={{ display:"flex", alignItems:"center", gap:8, padding:"9px 12px", background:"#fff",
-          border:`1px solid ${overdue?"rgba(248,113,113,0.25)":"rgba(0,0,0,0.07)"}`,
-          borderLeft:`3px solid ${task.projColor}`, borderRadius:8, minWidth:0,
-          transition:"box-shadow 0.12s" }}
-        onMouseEnter={e => e.currentTarget.style.boxShadow = "0 2px 10px rgba(0,0,0,0.08)"}
-        onMouseLeave={e => e.currentTarget.style.boxShadow = "none"}
-      >
-        {/* Title + context — clicking title opens edit modal */}
-        <div style={{ flex:1, minWidth:0, cursor:"pointer" }}
-          onClick={() => onEditItem({ ...task, projectId:task.projId, projectName:task.projName, projectColor:task.projColor, deliverableId:task.isSubtask?(task.deliverableId||task.delId):null, delTitle:task.isSubtask?task.delTitle:null })}>
-          <div style={{ fontSize:12, fontWeight:700, color:"#1f2937", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{task.title}</div>
-          <div style={{ fontSize:10, color:task.projColor, fontWeight:600, marginTop:1, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>
-            {task.projName}{task.isSubtask && task.delTitle ? ` · ${task.delTitle}` : ""}{task.effort && task.effort !== "M" ? ` · ${hrs}h` : ""}
-          </div>
-        </div>
-        {/* Badges */}
-        <div style={{ display:"flex", alignItems:"center", gap:5, flexShrink:0 }}>
-          {badge && <span style={{ fontSize:9, fontWeight:700, background:badgeColor+"18", color:badgeColor, borderRadius:4, padding:"2px 6px", whiteSpace:"nowrap" }}>{badge}</span>}
-          {!cleared && blkd.length > 0 && <span style={{ fontSize:9, color:"#f87171", background:"rgba(248,113,113,0.1)", borderRadius:4, padding:"2px 6px", whiteSpace:"nowrap" }}>Blocked</span>}
-          {dateTxt && (
-            <span style={{ fontSize:10, fontWeight:overdue?700:600, color:dateColor, background:`${dateColor}18`, borderRadius:5, padding:"2px 7px", whiteSpace:"nowrap" }}>
-              {dateTxt}
-            </span>
-          )}
-        </div>
-        {/* Inline status cycle button */}
-        <button onClick={e => { e.stopPropagation(); saveStatus(task, nextStatus); }}
-          title={`${nextLabel} (${nextStatus})`}
-          style={{ flexShrink:0, fontSize:9, fontWeight:700, padding:"3px 8px", borderRadius:5,
-            border:`1px solid ${statusColors[task.status]}50`,
-            background:`${statusColors[task.status]}12`,
-            color:statusColors[task.status], cursor:"pointer", fontFamily:"inherit", whiteSpace:"nowrap",
-            transition:"all 0.12s" }}
-          onMouseEnter={e => { e.currentTarget.style.background = `${statusColors[task.status]}25`; }}
-          onMouseLeave={e => { e.currentTarget.style.background = `${statusColors[task.status]}12`; }}
-        >{task.status === "Not Started" ? "▶ Start" : task.status === "In Progress" ? "✓ Done" : task.status === "Blocked" ? "▶ Unblock" : "↩"}</button>
-      </div>
-    );
+
+
+
+
+
+
+  if (!me) return React.createElement("div", {style:{background:"#fff",border:"1px solid rgba(0,0,0,0.07)",borderRadius:10,padding:40,textAlign:"center"}}, React.createElement("div", {style:{fontSize:14,color:"#6b7280"}}, "No team members yet. Add people in ⚙ Settings → Team Members."));  const todayD = new Date(); todayD.setHours(0,0,0,0);
+  const todayISO = todayD.toISOString().slice(0,10);
+  const statusC = {"Not Started":"#6b7280","In Progress":"#38bdf8","Blocked":"#f87171","Done":"#34d399"};
+  const handleSaveStatus = (item) => {
+  const order = ["Not Started","In Progress","Done","Blocked"];
+  const cur = item.status || "Not Started";
+  const next = cur === "Not Started" ? "In Progress" : cur === "In Progress" ? "Done" : cur === "Done" ? "Not Started" : "Not Started";
+  if (item._type === "admin") { onUpdateAdminTaskStatus && onUpdateAdminTaskStatus(item._key, next); }
+  else { onSaveItem && onSaveItem({ ...item, status: next, projectId: item.projId, projectName: item.projName, deliverableId: item.isSubtask ? (item.deliverableId || item.delId) : null }); }
+  };
+  const handleOpenItem = (item) => {
+  if (item._type === "admin") { setEditingAdminTask(adminTasks.find(t=>t.id===item._key)||null); setShowAssignModal(true); }
+  else { onEditItem({ ...item, projectId: item.projId, projectName: item.projName, projectColor: item.projColor, deliverableId: item.isSubtask ? (item.deliverableId || item.delId) : null }); }
+  };
+  const in14  = new Date(todayD); in14.setDate(todayD.getDate()+14);
+  const in28  = new Date(todayD); in28.setDate(todayD.getDate()+28);
+  const in14s = in14.toISOString().slice(0,10);
+  const in28s = in28.toISOString().slice(0,10);
+
+  const diffD = (ds) => {
+  if (!ds) return null;
+  return Math.ceil((new Date(ds+"T00:00:00") - todayD) / 86400000);
+  };
+  const urgency = (ds) => {
+  const d = diffD(ds);
+  if (d === null) return null;
+  if (d < 0)  return { text: Math.abs(d)+"d overdue", color:"#f87171", bg:"rgba(248,113,113,0.1)", w:700 };
+  if (d === 0) return { text:"Due today",              color:"#f97316", bg:"rgba(249,115,22,0.1)",  w:700 };
+  if (d === 1) return { text:"Due tomorrow",           color:"#fbbf24", bg:"rgba(251,191,36,0.1)",  w:600 };
+  if (d <= 7)  return { text:"Due in "+d+"d",          color:"#9ca3af", bg:"rgba(0,0,0,0.05)",      w:500 };
+  return null;
   };
 
 
-  if (!me) return (
-    <div style={{ background: "#fff", border: "1px solid rgba(0,0,0,0.07)", borderRadius: 10, padding: 40, textAlign: "center" }}>
-      <div style={{ fontSize: 14, color: "#6b7280" }}>No team members yet. Add people in ⚙ Settings → Team Members.</div>
-    </div>
-  );
+  // Merge project tasks + admin tasks
+  const projItems = allMyTasks
+  .filter(t => t.status !== "Done")
+  .map(t => ({
+    ...t, _type:"project", _key:t.id,
+    _label: t.projName + (t.isSubtask && t.delTitle ? " · "+t.delTitle : ""),
+    _color: t.projColor, _due: t.end||"",
+  }));
+
+  const adminItems = adminTasks
+  .filter(t => t.assignedTo === meId && t.status !== "Done")
+  .map(t => {
+    const by = people.find(p=>p.id===t.assignedBy);
+    return {
+      ...t, status:t.status||"Not Started", effort:t.effort||"M",
+      dependencies:[], assignees:[meId],
+      projId:null, delId:null, projName:"", projColor:BRAND_TEAL,
+      _type:"admin", _key:t.id,
+      _label: by ? "Assigned by "+by.name : "One-off task",
+      _color: BRAND_TEAL, _due: t.dueDate||"",
+    };
+  });
+
+  const allCombined = [...projItems, ...adminItems];
+  const all = allCombined.sort((a,b)=>{
+  const ad=a._due, bd=b._due;
+  if(!ad&&!bd) return 0; if(!ad) return 1; if(!bd) return -1;
+  return ad<bd?-1:ad>bd?1:0;
+  });
+
+  // Bucket by time horizon
+  const overdueItems = all.filter(t => t._due && t._due < todayISO);
+  const todayItems   = all.filter(t => t._due === todayISO);
+  const week2Items   = all.filter(t => t._due && t._due > todayISO && t._due <= in14s);
+  const week4Items   = all.filter(t => t._due && t._due > in14s  && t._due <= in28s);
+  const futureItems  = all.filter(t => t._due && t._due > in28s);
+  const nodateItems  = all.filter(t => !t._due);
+
+  const activeNow = [...overdueItems, ...todayItems, ...week2Items];
+  const totalActive = all.length;
+  const overdueCount = overdueItems.length + todayItems.length;
+
+
+  // CollapsibleBucket defined at MyHubView level
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
@@ -3998,6 +4097,13 @@ function MyHubView({ projects, people, holidays, pto = [], currentUserId, onSetC
             if (top._type === "admin") { onUpdateAdminTaskStatus && onUpdateAdminTaskStatus(top.id, "In Progress"); }
             else { saveStatus(top, "In Progress"); }
           };
+          const handleDone = () => {
+            if (top._type === "admin") { onUpdateAdminTaskStatus && onUpdateAdminTaskStatus(top.id, "Done"); }
+            else { saveStatus(top, "Done"); }
+          };
+          const handleWaiting = () => {
+            setWaitingIds && setWaitingIds(prev => new Set([...(prev||[]), top.id]));
+          };
           const handleOpen = () => onEditItem({
             ...top, projectId: top.projId, projectName: top.projName,
             projectColor: top.projColor,
@@ -4027,6 +4133,20 @@ function MyHubView({ projects, people, holidays, pto = [], currentUserId, onSetC
                   style={{ fontSize:10, fontWeight:700, color:"rgba(255,255,255,0.7)", background:"rgba(255,255,255,0.1)", border:"1px solid rgba(255,255,255,0.2)", borderRadius:6, padding:"6px 12px", cursor:"pointer", fontFamily:"inherit" }}>
                   Open
                 </button>
+                <button
+                  type="button"
+                  onClick={handleWaiting}
+                  title="Park this task and surface the next one"
+                  style={{ fontSize:10, fontWeight:700, color:"#fbbf24", background:"rgba(251,191,36,0.12)", border:"1px solid rgba(251,191,36,0.35)", borderRadius:6, padding:"6px 12px", cursor:"pointer", fontFamily:"inherit" }}>
+                  Waiting
+                </button>
+                <button
+                  type="button"
+                  onClick={handleDone}
+                  style={{ fontSize:10, fontWeight:700, color:"#34d399", background:"rgba(52,211,153,0.12)", border:"1px solid rgba(52,211,153,0.35)", borderRadius:6, padding:"6px 12px", cursor:"pointer", fontFamily:"inherit" }}>
+                  ✓ Done
+                </button>
+
               </div>
             </div>
           );
@@ -4087,7 +4207,6 @@ function MyHubView({ projects, people, holidays, pto = [], currentUserId, onSetC
                 </div>
               </div>
             )}
-          </div>
 
       </div>
 
@@ -4157,7 +4276,23 @@ function MyHubView({ projects, people, holidays, pto = [], currentUserId, onSetC
                     </div>
                     <div style={{ display:"flex", flexDirection:"column", gap:4, flexShrink:0 }}>
                       {n.type === "task_assigned" && (
-                        <button onClick={e => { e.stopPropagation(); setEditingAdminTask(adminTasks.find(t=>t.id===n.taskId)||null); setShowAssignModal(true); }}
+                        <button onClick={e => {
+                          e.stopPropagation();
+                          const tid = n.taskId || n.task_id;
+                          if (!tid) return;
+                          const admin = adminTasks.find(t => t.id === tid);
+                          if (admin) { setEditingAdminTask(admin); setShowAssignModal(true); return; }
+                          let found = null;
+                          for (let pi = 0; pi < projects.length && !found; pi++) {
+                            const p = projects[pi];
+                            for (let di = 0; di < (p.deliverables||[]).length && !found; di++) {
+                              const d = p.deliverables[di];
+                              if (d.id === tid) { found = { ...d, projectId:p.id, projectName:p.name, projectColor:p.color, deliverableId:null }; }
+                              else { const s = (d.subtasks||[]).find(x => x.id === tid); if (s) found = { ...s, projectId:p.id, projectName:p.name, projectColor:p.color, deliverableId:d.id }; }
+                            }
+                          }
+                          if (found) onEditItem(found);
+                        }}
                           style={{ fontSize:10, fontWeight:700, color:BRAND_TEAL, background:"rgba(80,192,192,0.1)", border:"1px solid rgba(80,192,192,0.25)", borderRadius:5, padding:"4px 9px", cursor:"pointer", fontFamily:"inherit" }}>
                           View Task
                         </button>
@@ -4176,326 +4311,141 @@ function MyHubView({ projects, people, holidays, pto = [], currentUserId, onSetC
       })()}
 
       {/* ── My Tasks (personal, private) ── */}
-      {meId === authMemberId && (() => {
-        const myTasks = personalTasks;
-        return (
-          <div style={{ background:"#fff", border:"1px solid rgba(0,0,0,0.08)", borderRadius:10, overflow:"hidden" }}>
-            <div style={{ padding:"12px 16px", borderBottom:"1px solid rgba(0,0,0,0.07)", display:"flex", alignItems:"center", justifyContent:"space-between" }}>
-              <div style={{ display:"flex", alignItems:"center", gap:8 }}>
-                <span style={{ fontSize:13 }}>☑</span>
-                <span style={{ fontSize:12, fontWeight:800, color:"#1f2937" }}>My Tasks</span>
-                <span style={{ fontSize:9, color:"#9ca3af", background:"rgba(0,0,0,0.04)", borderRadius:4, padding:"1px 6px" }}>🔒 Only you</span>
-                <span style={{ fontSize:10, color:"#6b7280", background:"rgba(0,0,0,0.05)", borderRadius:10, padding:"1px 7px" }}>{myTasks.filter(t=>t.status!=="Done").length} active</span>
-              </div>
-              <button onClick={() => { setEditingTask(null); setTaskForm({ title:"", priority:"Medium", dueDate:"", notes:"" }); setShowTaskForm(true); }}
-                style={{ fontSize:11, fontWeight:700, color:BRAND_TEAL, background:"rgba(80,192,192,0.08)", border:"1px solid rgba(80,192,192,0.25)", borderRadius:6, padding:"5px 12px", cursor:"pointer", fontFamily:"inherit" }}>
-                + Add Task
-              </button>
-            </div>
-            <div style={{ padding:"8px 0" }}>
-              {myTasks.filter(t=>t.status!=="Done").length === 0 && (
-                <div style={{ fontSize:12, color:"#9ca3af", textAlign:"center", padding:"16px 0" }}>No active tasks. Add one above.</div>
-              )}
-              {myTasks.filter(t=>t.status!=="Done").map(task => {
-                const isOverdueT = task.dueDate && task.dueDate < todayStr;
-                const isDueTodayT = task.dueDate === todayStr;
-                return (
-                  <div key={task.id} style={{ display:"flex", alignItems:"flex-start", gap:10, padding:"9px 16px", borderBottom:"1px solid rgba(0,0,0,0.04)" }}>
-                    <label style={{ display:"flex", alignItems:"center", cursor:"pointer", flexShrink:0, marginTop:1 }}>
-                      <input type="checkbox" checked={task.status==="Done"}
-                        onChange={() => onSavePersonalTask({...task, status: task.status==="Done"?"Not Started":"Done"})}
-                        style={{ width:15, height:15, accentColor:BRAND_TEAL, cursor:"pointer" }} />
-                    </label>
-                    <div style={{ flex:1, minWidth:0 }}>
-                      <div style={{ fontSize:12, fontWeight:600, color:"#1f2937" }}>{task.title}</div>
-                      {task.dueDate && <div style={{ fontSize:10, color:isOverdueT?"#f87171":isDueTodayT?"#f97316":"#9ca3af", fontWeight:isOverdueT||isDueTodayT?700:400, marginTop:1 }}>{isOverdueT?"Overdue · ":isDueTodayT?"Due today · ":""}{task.dueDate}</div>}
-                    </div>
-                    <button onClick={() => { setEditingTask(task); setTaskForm({ title:task.title, priority:task.priority||"Medium", dueDate:task.dueDate||"", notes:task.notes||"" }); setShowTaskForm(true); }}
-                      style={{ background:"none", border:"none", color:"#9ca3af", cursor:"pointer", fontSize:12, padding:"0 2px" }}>✎</button>
-                    <button onClick={() => onDeletePersonalTask(task.id)}
-                      style={{ background:"none", border:"none", color:"#fca5a5", cursor:"pointer", fontSize:15, padding:"0 2px" }}>×</button>
-                  </div>
-                );
-              })}
-            </div>
-            <DoneTasksDropdown
-              tasks={myTasks.filter(t=>t.status==="Done")}
-              onReopen={task => onSavePersonalTask({...task, status:"Not Started"})}
-              onDelete={onDeletePersonalTask}
-            />
+      {meId === authMemberId && (
+      <div style={{ background:"#fff", border:"1px solid rgba(0,0,0,0.08)", borderRadius:10, overflow:"hidden" }}>
+        <div style={{ padding:"12px 16px", borderBottom:"1px solid rgba(0,0,0,0.07)", display:"flex", alignItems:"center", justifyContent:"space-between" }}>
+          <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+            <span style={{ fontSize:13 }}>☑</span>
+            <span style={{ fontSize:12, fontWeight:800, color:"#1f2937" }}>My Tasks</span>
+            <span style={{ fontSize:9, color:"#9ca3af", background:"rgba(0,0,0,0.04)", borderRadius:4, padding:"1px 6px" }}>🔒 Only you</span>
+            <span style={{ fontSize:10, color:"#6b7280", background:"rgba(0,0,0,0.05)", borderRadius:10, padding:"1px 7px" }}>
+              {personalTasks.filter(t=>t.status!=="Done").length} active
+            </span>
           </div>
-        );
-      })()}
-
-
-      {/* ── Assigned to Me — combined project + admin tasks, temporal buckets ── */}
-      {(() => {
-        const todayD = new Date(); todayD.setHours(0,0,0,0);
-        const [waitingOpen, setWaitingOpen] = React.useState(false);
-        const todayISO = todayD.toISOString().slice(0,10);
-        const in14  = new Date(todayD); in14.setDate(todayD.getDate()+14);
-        const in28  = new Date(todayD); in28.setDate(todayD.getDate()+28);
-        const in14s = in14.toISOString().slice(0,10);
-        const in28s = in28.toISOString().slice(0,10);
-
-        const diffD = (ds) => {
-          if (!ds) return null;
-          return Math.ceil((new Date(ds+"T00:00:00") - todayD) / 86400000);
-        };
-        const urgency = (ds) => {
-          const d = diffD(ds);
-          if (d === null) return null;
-          if (d < 0)  return { text: Math.abs(d)+"d overdue", color:"#f87171", bg:"rgba(248,113,113,0.1)", w:700 };
-          if (d === 0) return { text:"Due today",              color:"#f97316", bg:"rgba(249,115,22,0.1)",  w:700 };
-          if (d === 1) return { text:"Due tomorrow",           color:"#fbbf24", bg:"rgba(251,191,36,0.1)",  w:600 };
-          if (d <= 7)  return { text:"Due in "+d+"d",          color:"#9ca3af", bg:"rgba(0,0,0,0.05)",      w:500 };
-          return null;
-        };
-
-        const statusC = {"Done":"#34d399","In Progress":"#38bdf8","Blocked":"#f87171","Not Started":"#d1d5db"};
-
-        // Merge project tasks + admin tasks
-        const projItems = allMyTasks
-          .filter(t => t.status !== "Done")
-          .map(t => ({
-            ...t, _type:"project", _key:t.id,
-            _label: t.projName + (t.isSubtask && t.delTitle ? " · "+t.delTitle : ""),
-            _color: t.projColor, _due: t.end||"",
-          }));
-
-        const adminItems = adminTasks
-          .filter(t => t.assignedTo === meId && t.status !== "Done")
-          .map(t => {
-            const by = people.find(p=>p.id===t.assignedBy);
-            return {
-              ...t, status:t.status||"Not Started", effort:t.effort||"M",
-              dependencies:[], assignees:[meId],
-              projId:null, delId:null, projName:"", projColor:BRAND_TEAL,
-              _type:"admin", _key:t.id,
-              _label: by ? "Assigned by "+by.name : "One-off task",
-              _color: BRAND_TEAL, _due: t.dueDate||"",
-            };
-          });
-
-        // Split into actionable vs waiting-on-someone
-        const allCombined = [...projItems, ...adminItems];
-        const waitingItems  = allCombined.filter(t => t.isWaiting);
-        const all = allCombined.filter(t => !t.isWaiting).sort((a,b)=>{
-          const ad=a._due, bd=b._due;
-          if(!ad&&!bd) return 0; if(!ad) return 1; if(!bd) return -1;
-          return ad<bd?-1:ad>bd?1:0;
-        });
-
-        // Bucket by time horizon
-        const overdueItems = all.filter(t => t._due && t._due < todayISO);
-        const todayItems   = all.filter(t => t._due === todayISO);
-        const week2Items   = all.filter(t => t._due && t._due > todayISO && t._due <= in14s);
-        const week4Items   = all.filter(t => t._due && t._due > in14s  && t._due <= in28s);
-        const futureItems  = all.filter(t => t._due && t._due > in28s);
-        const nodateItems  = all.filter(t => !t._due);
-
-        const activeNow = [...overdueItems, ...todayItems, ...week2Items];
-        const totalActive = all.length;
-        const overdueCount = overdueItems.length + todayItems.length;
-
-        const TaskTile = ({ item }) => {
-          const urg = urgency(item._due);
-          const hrs = EFFORT_HOURS[item.effort] || (item.customHours ? parseFloat(item.customHours) : null);
-          const isBlk = item.status === "Blocked";
-          const next = cycleStatus(item.status);
-          const nextLabel = {
-            "Not Started":"▶ Start", "In Progress":"✓ Done",
-            "Blocked":"▶ Go", "Done":"↩"
-          }[item.status] || "▶";
-          const handleAction = () => {
-            if (item._type === "admin") onUpdateAdminTaskStatus(item._key, next);
-            else saveStatus(item, next);
-          };
-          const handleOpen = () => {
-            if (item._type === "admin") {
-              setEditingAdminTask(adminTasks.find(t=>t.id===item._key)||null);
-              setShowAssignModal(true);
-            } else {
-              onEditItem({...item, projectId:item.projId, projectName:item.projName,
-                projectColor:item.projColor,
-                deliverableId:item.isSubtask?(item.deliverableId||item.delId):null,
-                delTitle:item.isSubtask?item.delTitle:null});
-            }
-          };
-          return (
-            <div style={{ display:"flex", alignItems:"stretch", background:"#fff",
-              border:`1px solid ${urg?.color==="f87171"?"rgba(248,113,113,0.2)":isBlk?"rgba(248,113,113,0.15)":"rgba(0,0,0,0.07)"}`,
-              borderLeft:`3px solid ${item._color}`, borderRadius:8, overflow:"hidden",
-              transition:"box-shadow 0.12s" }}
-              onMouseEnter={e=>e.currentTarget.style.boxShadow="0 2px 8px rgba(0,0,0,0.08)"}
-              onMouseLeave={e=>e.currentTarget.style.boxShadow="none"}>
-              <div style={{ flex:1, padding:"9px 10px", minWidth:0, cursor:"pointer" }} onClick={handleOpen}>
-                <div style={{ fontSize:12, fontWeight:700, color:"#1f2937", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{item.title}</div>
-                <div style={{ fontSize:10, color:item._color, fontWeight:600, marginTop:1, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{item._label}</div>
-                <div style={{ display:"flex", gap:5, flexWrap:"wrap", alignItems:"center", marginTop:4 }}>
-                  {urg && <span style={{ fontSize:9, fontWeight:urg.w, color:urg.color, background:urg.bg, borderRadius:4, padding:"2px 6px", whiteSpace:"nowrap" }}>{urg.text}</span>}
-                  {isBlk && <span style={{ fontSize:9, fontWeight:700, color:"#f87171", background:"rgba(248,113,113,0.1)", borderRadius:4, padding:"2px 6px" }}>Blocked</span>}
-                  <div style={{ display:"flex", alignItems:"center", gap:3 }}>
-                    <div style={{ width:5, height:5, borderRadius:"50%", background:statusC[item.status]||"#d1d5db" }} />
-                    <span style={{ fontSize:9, color:"#9ca3af" }}>{item.status}</span>
-                  </div>
-                  {hrs && item.effort !== "M" && <span style={{ fontSize:9, color:"#9ca3af" }}>{hrs}h</span>}
+          <button onClick={() => { setEditingTask(null); setTaskForm({ title:"", priority:"Medium", dueDate:"", notes:"" }); setShowTaskForm(true); }}
+            style={{ fontSize:11, fontWeight:700, color:BRAND_TEAL, background:"rgba(80,192,192,0.08)", border:"1px solid rgba(80,192,192,0.25)", borderRadius:6, padding:"5px 12px", cursor:"pointer", fontFamily:"inherit" }}>
+            + Add Task
+          </button>
+        </div>
+        <div style={{ padding:"8px 0" }}>
+          {personalTasks.filter(t=>t.status!=="Done").length === 0 && (
+            <div style={{ fontSize:12, color:"#9ca3af", textAlign:"center", padding:"16px 0" }}>No active tasks. Add one above.</div>
+          )}
+          {personalTasks.filter(t=>t.status!=="Done").map(task => {
+            const isOD = task.dueDate && task.dueDate < todayStr;
+            const isDT = task.dueDate === todayStr;
+            return (
+              <div key={task.id} style={{ display:"flex", alignItems:"flex-start", gap:10, padding:"9px 16px", borderBottom:"1px solid rgba(0,0,0,0.04)" }}>
+                <label style={{ display:"flex", alignItems:"center", cursor:"pointer", flexShrink:0, marginTop:1 }}>
+                  <input type="checkbox" checked={task.status==="Done"}
+                    onChange={() => onSavePersonalTask({...task, status: task.status==="Done"?"Not Started":"Done"})}
+                    style={{ width:15, height:15, accentColor:BRAND_TEAL, cursor:"pointer" }} />
+                </label>
+                <div style={{ flex:1, minWidth:0 }}>
+                  <div style={{ fontSize:12, fontWeight:600, color:"#1f2937" }}>{task.title}</div>
+                  {task.dueDate && <div style={{ fontSize:10, color:isOD?"#f87171":isDT?"#f97316":"#9ca3af", fontWeight:isOD||isDT?700:400, marginTop:1 }}>
+                    {isOD?"Overdue · ":isDT?"Due today · ":""}{task.dueDate}
+                  </div>}
                 </div>
+                <button onClick={() => { setEditingTask(task); setTaskForm({ title:task.title, priority:task.priority||"Medium", dueDate:task.dueDate||"", notes:task.notes||"" }); setShowTaskForm(true); }}
+                  style={{ background:"none", border:"none", color:"#9ca3af", cursor:"pointer", fontSize:12, padding:"0 2px" }}>✎</button>
+                <button onClick={() => onDeletePersonalTask(task.id)}
+                  style={{ background:"none", border:"none", color:"#fca5a5", cursor:"pointer", fontSize:15, padding:"0 2px" }}>×</button>
               </div>
-              <div style={{ display:"flex", flexDirection:"column", alignItems:"stretch", justifyContent:"center", padding:"0 6px", borderLeft:"1px solid rgba(0,0,0,0.05)", background:"rgba(0,0,0,0.01)", flexShrink:0, gap:4 }}>
-                <button onClick={e=>{e.stopPropagation();handleAction();}}
-                  style={{ fontSize:9, fontWeight:700, padding:"4px 8px", borderRadius:5,
-                    border:`1px solid ${statusC[item.status]}40`,
-                    background:`${statusC[item.status]}12`,
-                    color:statusC[item.status], cursor:"pointer", fontFamily:"inherit", whiteSpace:"nowrap" }}>
-                  {nextLabel}
-                </button>
-                {/* Waiting toggle */}
-                <button
-                  type="button"
-                  onClick={e => { e.stopPropagation(); onSetWaiting && onSetWaiting(item, true); }}
-                  title="Waiting on someone — removes from Focus until resolved"
-                  style={{ fontSize:8, fontWeight:600, padding:"3px 6px", borderRadius:5,
-                    border:"1px solid rgba(251,191,36,0.4)", background:"rgba(251,191,36,0.08)",
-                    color:"#b45309", cursor:"pointer", fontFamily:"inherit", whiteSpace:"nowrap" }}>
-                  ⏳ Waiting
-                </button>
-              </div>
-            </div>
-          );
-        };
+            );
+          })}
+        </div>
+      </div>
+    )}
 
-        const CollapsibleBucket = ({ label, items, defaultOpen=false, accent="#6b7280" }) => {
-          const [open, setOpen] = React.useState(defaultOpen);
-          if (!items.length) return null;
-          return (
-            <div style={{ marginTop:8 }}>
-              <button onClick={()=>setOpen(o=>!o)}
-                style={{ width:"100%", display:"flex", alignItems:"center", gap:8, background:"rgba(0,0,0,0.02)", border:"1px solid rgba(0,0,0,0.07)", borderRadius:7, padding:"7px 12px", cursor:"pointer", fontFamily:"inherit", textAlign:"left" }}>
-                <span style={{ fontSize:10, color:accent, transition:"transform 0.15s", display:"inline-block", transform:open?"rotate(90deg)":"rotate(0deg)" }}>▶</span>
-                <span style={{ fontSize:11, fontWeight:700, color:"#374151" }}>{label}</span>
-                <span style={{ fontSize:10, color:"#9ca3af", background:"rgba(0,0,0,0.06)", borderRadius:10, padding:"1px 7px", marginLeft:"auto" }}>{items.length}</span>
-              </button>
-              {open && (
-                <div style={{ display:"grid", gridTemplateColumns:"repeat(2,1fr)", gap:8, marginTop:8 }}>
-                  {items.map(item => <TaskTile key={item._key} item={item} />)}
-                </div>
-              )}
-            </div>
-          );
-        };
 
-        return (
-          <div style={{ background:"#fff", border:"1px solid rgba(0,0,0,0.08)", borderRadius:10, overflow:"hidden" }}>
-            {/* Header */}
-            <div style={{ padding:"12px 16px", background:"#f8fafc", borderBottom:"1px solid rgba(0,0,0,0.07)", display:"flex", alignItems:"center", justifyContent:"space-between" }}>
-              <div style={{ display:"flex", alignItems:"center", gap:8 }}>
-                <span style={{ fontSize:13 }}>◎</span>
-                <span style={{ fontSize:13, fontWeight:800, color:"#1f2937" }}>
-                  Assigned to {meId === authMemberId ? "Me" : (people.find(p=>p.id===meId)?.name||"Them")}
-                </span>
-                <span style={{ fontSize:10, color:"#6b7280", background:"rgba(0,0,0,0.05)", borderRadius:10, padding:"1px 8px", fontWeight:600 }}>
-                  {totalActive} active
-                </span>
-                {overdueCount > 0 && (
-                  <span style={{ fontSize:10, color:"#f87171", background:"rgba(248,113,113,0.1)", borderRadius:10, padding:"1px 8px", fontWeight:700 }}>
-                    {overdueCount} urgent
-                  </span>
-                )}
-              </div>
-              {currentRole === "admin" && (
-                <button onClick={() => { setEditingAdminTask(null); setShowAssignModal(true); }}
-                  style={{ fontSize:11, fontWeight:700, color:"#fff", background:BRAND_TEAL, border:"none", borderRadius:6, padding:"6px 14px", cursor:"pointer", fontFamily:"inherit" }}>
-                  + Assign Task
-                </button>
-              )}
-            </div>
-
-            {/* Dependency awareness */}
-            {(tasksBlockedByMe.length > 0 || waitingTasks.length > 0) && (
-              <div style={{ padding:"7px 16px", background:"rgba(251,191,36,0.05)", borderBottom:"1px solid rgba(251,191,36,0.15)", display:"flex", gap:16, flexWrap:"wrap" }}>
-                {tasksBlockedByMe.length > 0 && (
-                  <span style={{ fontSize:10, color:"#f97316", fontWeight:600 }}>⚠ You are blocking {tasksBlockedByMe.length} downstream task{tasksBlockedByMe.length!==1?"s":""}</span>
-                )}
-                {waitingTasks.length > 0 && (
-                  <span style={{ fontSize:10, color:"#9ca3af", fontWeight:600 }}>⏳ Waiting on {waitingTasks.length} task{waitingTasks.length!==1?"s":""} from others before you can proceed</span>
-                )}
-              </div>
+      {/* ── Assigned to Me ── */}
+      <div style={{ background:"#fff", border:"1px solid rgba(0,0,0,0.08)", borderRadius:10, overflow:"hidden" }}>
+        {/* Header */}
+        <div style={{ padding:"12px 16px", background:"#f8fafc", borderBottom:"1px solid rgba(0,0,0,0.07)", display:"flex", alignItems:"center", justifyContent:"space-between" }}>
+          <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+            <span style={{ fontSize:13 }}>◎</span>
+            <span style={{ fontSize:13, fontWeight:800, color:"#1f2937" }}>
+              Assigned to {meId === authMemberId ? "Me" : (people.find(p=>p.id===meId)?.name||"Them")}
+            </span>
+            <span style={{ fontSize:10, color:"#6b7280", background:"rgba(0,0,0,0.05)", borderRadius:10, padding:"1px 8px", fontWeight:600 }}>
+              {totalActive} active
+            </span>
+            {overdueCount > 0 && (
+              <span style={{ fontSize:10, color:"#f87171", background:"rgba(248,113,113,0.1)", borderRadius:10, padding:"1px 8px", fontWeight:700 }}>
+                {overdueCount} urgent
+              </span>
             )}
-
-            {all.length === 0 && (
-              <div style={{ padding:"28px 16px", textAlign:"center", color:"#9ca3af", fontSize:12 }}>
-                No active tasks assigned to you.
-                {currentRole === "admin" && <span style={{ display:"block", fontSize:11, marginTop:4, color:"#d1d5db" }}>Use + Assign Task to add a one-off task for any team member.</span>}
-              </div>
-            )}
-
-            {all.length > 0 && (
-              <div style={{ padding:"10px 12px 14px" }}>
-                {/* Active zone: overdue + today + next 2 weeks */}
-                <div style={{ fontSize:10, fontWeight:700, color:"#9ca3af", textTransform:"uppercase", letterSpacing:"0.07em", marginBottom:8 }}>
-                  Now &amp; Next 2 Weeks
-                  {activeNow.length > 0 && <span style={{ color:"#6b7280", fontWeight:500, textTransform:"none", letterSpacing:0, marginLeft:6 }}>{activeNow.length} task{activeNow.length!==1?"s":""}</span>}
-                </div>
-                {activeNow.length === 0 && (
-                  <div style={{ fontSize:11, color:"#9ca3af", padding:"8px 0", marginBottom:8 }}>All clear for the next two weeks.</div>
-                )}
-                <div style={{ display:"grid", gridTemplateColumns:"repeat(2,1fr)", gap:8, marginBottom:8 }}>
-                  {activeNow.map(item => <TaskTile key={item._key} item={item} />)}
-                </div>
-
-                {/* Collapsed future buckets */}
-                <CollapsibleBucket label="Weeks 3–4 (Coming up)" items={week4Items} accent="#6366f1" />
-                <CollapsibleBucket label="Beyond 4 weeks (On the horizon)" items={[...futureItems,...nodateItems]} accent="#9ca3af" />
-
-                {/* Waiting on someone — collapsed by default, easy to un-wait */}
-                {waitingItems.length > 0 && (
-                  <div style={{ marginTop:8 }}>
-                    <button onClick={()=>setWaitingOpen(o=>!o)}
-                      style={{ width:"100%", display:"flex", alignItems:"center", gap:8, background:"rgba(251,191,36,0.05)", border:"1px solid rgba(251,191,36,0.2)", borderRadius:7, padding:"7px 12px", cursor:"pointer", fontFamily:"inherit", textAlign:"left" }}>
-                      <span style={{ fontSize:10, color:"#b45309", transition:"transform 0.15s", display:"inline-block", transform:waitingOpen?"rotate(90deg)":"rotate(0deg)" }}>▶</span>
-                      <span style={{ fontSize:11, fontWeight:700, color:"#92400e" }}>⏳ Waiting on someone</span>
-                      <span style={{ fontSize:10, color:"#b45309", background:"rgba(251,191,36,0.15)", borderRadius:10, padding:"1px 7px", marginLeft:"auto" }}>{waitingItems.length}</span>
-                    </button>
-                    {waitingOpen && (
-                      <div style={{ display:"grid", gridTemplateColumns:"repeat(2,1fr)", gap:8, marginTop:8 }}>
-                        {waitingItems.map(item => {
-                          const urg = urgency(item._due);
-                          return (
-                            <div key={item._key} style={{ display:"flex", alignItems:"stretch", background:"rgba(251,191,36,0.04)", border:"1px solid rgba(251,191,36,0.2)", borderLeft:"3px solid #fbbf24", borderRadius:8, overflow:"hidden", opacity:0.8 }}>
-                              <div style={{ flex:1, padding:"9px 10px", minWidth:0 }}>
-                                <div style={{ fontSize:12, fontWeight:700, color:"#92400e", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{item.title}</div>
-                                <div style={{ fontSize:10, color:"#b45309", marginTop:1 }}>{item._label}</div>
-                                {urg && <span style={{ fontSize:9, fontWeight:600, color:urg.color, marginTop:4, display:"block" }}>{urg.text}</span>}
-                              </div>
-                              <div style={{ display:"flex", alignItems:"center", padding:"0 8px", borderLeft:"1px solid rgba(251,191,36,0.15)", flexShrink:0 }}>
-                                <button
-                                  type="button"
-                                  onClick={() => onSetWaiting && onSetWaiting(item, false)}
-                                  title="Mark as active — move back to your task list"
-                                  style={{ fontSize:9, fontWeight:700, color:BRAND_TEAL, background:"rgba(80,192,192,0.1)", border:"1px solid rgba(80,192,192,0.3)", borderRadius:5, padding:"4px 8px", cursor:"pointer", fontFamily:"inherit", whiteSpace:"nowrap" }}>
-                                  ↩ Active
-                                </button>
-                              </div>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    )}
-                  </div>
-                )}
-              </div>
-            )}
-
-            {/* Done tasks */}
-            <DoneTasksDropdown
-              tasks={allMyTasks.filter(t=>t.status==="Done")}
-              onReopen={task => onSaveItem && onSaveItem({...task, status:"Not Started", projectId:task.projId, projectName:task.projName, deliverableId:task.isSubtask?(task.deliverableId||task.delId):null})}
-              onDelete={()=>{}}
-            />
           </div>
-        );
-      })()}
+          {currentRole === "admin" && (
+            <button onClick={() => { setEditingAdminTask(null); setShowAssignModal(true); }}
+              style={{ fontSize:11, fontWeight:700, color:"#fff", background:BRAND_TEAL, border:"none", borderRadius:6, padding:"6px 14px", cursor:"pointer", fontFamily:"inherit" }}>
+              + Assign Task
+            </button>
+          )}
+        </div>
+
+        {/* Dependency awareness */}
+        {(tasksBlockedByMe.length > 0 || waitingTasks.length > 0) && (
+          <div style={{ padding:"7px 16px", background:"rgba(251,191,36,0.05)", borderBottom:"1px solid rgba(251,191,36,0.15)", display:"flex", gap:16, flexWrap:"wrap" }}>
+            {tasksBlockedByMe.length > 0 && (
+              <span style={{ fontSize:10, color:"#f97316", fontWeight:600 }}>⚠ You are blocking {tasksBlockedByMe.length} downstream task{tasksBlockedByMe.length!==1?"s":""}</span>
+            )}
+            {waitingTasks.length > 0 && (
+              <span style={{ fontSize:10, color:"#9ca3af", fontWeight:600 }}>⏳ Waiting on {waitingTasks.length} task{waitingTasks.length!==1?"s":""} from others before you can proceed</span>
+            )}
+          </div>
+        )}
+
+        {all.length === 0 && (
+          <div style={{ padding:"28px 16px", textAlign:"center", color:"#9ca3af", fontSize:12 }}>
+            No active tasks assigned to you.
+            {currentRole === "admin" && <span style={{ display:"block", fontSize:11, marginTop:4, color:"#d1d5db" }}>Use + Assign Task to add a one-off task for any team member.</span>}
+          </div>
+        )}
+
+        {all.length > 0 && (
+          <>
+            {/* Active zone: overdue + today + next 2 weeks */}
+            <div style={{ fontSize:10, fontWeight:700, color:"#9ca3af", textTransform:"uppercase", letterSpacing:"0.07em", marginBottom:8 }}>
+              Now &amp; Next 2 Weeks
+              {activeNow.length > 0 && <span style={{ color:"#6b7280", fontWeight:500, textTransform:"none", letterSpacing:0, marginLeft:6 }}>{activeNow.length} task{activeNow.length!==1?"s":""}</span>}
+            </div>
+            {activeNow.length === 0 && (
+              <div style={{ fontSize:11, color:"#9ca3af", padding:"8px 0", marginBottom:8 }}>All clear for the next two weeks.</div>
+            )}
+            <div style={{ display:"grid", gridTemplateColumns:"repeat(2,1fr)", gap:8, marginBottom:8 }}>
+              {activeNow.map(item => <HubTaskTile key={item._key} item={item}
+                statusC={statusC}
+                onOpenItem={handleOpenItem}
+                onSaveStatus={handleSaveStatus}
+              />)}
+            </div>
+
+            {/* Collapsed future buckets */}
+            <CollapsibleBucket label="Weeks 3–4 (Coming up)" items={week4Items} accent="#6366f1" renderItem={item => <HubTaskTile key={item._key} item={item}
+                  statusC={statusC}
+                  onOpenItem={handleOpenItem}
+                  onSaveStatus={handleSaveStatus}
+                />} />
+            <CollapsibleBucket label="Beyond 4 weeks (On the horizon)" items={[...futureItems,...nodateItems]} accent="#9ca3af" renderItem={item => <HubTaskTile key={item._key} item={item}
+                  statusC={statusC}
+                  onOpenItem={handleOpenItem}
+                  onSaveStatus={handleSaveStatus}
+                />} />
+          </>
+        )}
+
+        {/* Done tasks */}
+        <DoneTasksDropdown
+          tasks={allMyTasks.filter(t=>t.status==="Done")}
+          onReopen={task => onSaveItem && onSaveItem({...task, status:"Not Started", projectId:task.projId, projectName:task.projName, deliverableId:task.isSubtask?(task.deliverableId||task.delId):null})}
+          onDelete={()=>{}}
+        />
+
+        </div>
+      </div>
+
 
 
       {showAssignModal && (
@@ -7837,7 +7787,10 @@ export default function App() {
   const [notifications, setNotifications] = useState([]);
   const [adminTasks, setAdminTasks] = useState([]); // tasks assigned by admin to team members
   const [toastNotif, setToastNotif] = useState(null); // { id, message, taskInfo }
-  const [personalTasks, setPersonalTasks] = useState([]);
+  const [personalTasks, setPersonalTasks] = useState(typeof window !== "undefined" && !window.__SB_URL__ ? [
+    { id:"pt_demo1", person_id:"", title:"Follow up on client feedback", status:"Not Started", priority:"Medium", due_date:new Date(Date.now()+86400000*3).toISOString().slice(0,10), notes:"", created_at:new Date().toISOString() },
+    { id:"pt_demo2", person_id:"", title:"Update project tracker", status:"In Progress", priority:"High", due_date:new Date(Date.now()+86400000).toISOString().slice(0,10), notes:"", created_at:new Date().toISOString() },
+  ] : []);
   const [currentUserId, setCurrentUserId] = useState(() => {
     try { return localStorage.getItem("planr_current_user") || ""; } catch { return ""; }
   });
@@ -8090,6 +8043,7 @@ export default function App() {
         const notif = {
           id: notifId, type: "task_assigned", message: msg,
           assignedToPersonId: personId, completedByPersonId: null,
+          taskId: updated.id,
           isRead: false, reviewedAt: null, createdAt: new Date().toISOString(),
         };
         setNotifications(prev => [notif, ...prev]);
@@ -8191,20 +8145,49 @@ export default function App() {
         const trueProj = newProjs.find(p => p.id === trueProjectId);
         const isDeliverable = !trueParentDel && trueProj?.deliverables.some(d => d.id === updated.id);
 
+        // Save the directly-edited item
+        let primaryError = null;
         if (trueParentDel) {
           const pos = trueParentDel.subtasks.findIndex(s => s.id === updated.id);
           console.log("[PulseX] saving as SUBTASK — del:", trueParentDel.id, "pos:", pos);
-          const { error } = await sb.upsert("subtasks", subToRow(item, trueParentDel.id, trueProjectId, Math.max(0, pos)));
-          return error;
+          const { error } = await sb.upsert("subtasks", subToRow(item, trueParentDel.id, trueProjectId, Math.max(0, pos)), { onConflict: "id" });
+          primaryError = error;
         } else if (isDeliverable) {
           const pos = trueProj.deliverables.findIndex(d => d.id === updated.id);
           console.log("[PulseX] saving as DELIVERABLE — proj:", trueProjectId, "pos:", pos);
-          const { error } = await sb.upsert("deliverables", delToRow(item, trueProjectId, Math.max(0, pos)));
-          return error;
+          const { error } = await sb.upsert("deliverables", delToRow(item, trueProjectId, Math.max(0, pos)), { onConflict: "id" });
+          primaryError = error;
         } else {
-          console.error("[PulseX] handleSaveItem: could not classify item", updated.id, "— skipping DB write");
+          console.error("[PulseX] handleSaveItem: could not classify item", updated.id, "— skipping save");
           return null;
         }
+
+        // Persist cascaded date changes to Supabase
+        // cascadeDates shifts downstream items in-memory only — without saving them
+        // the cascade is lost on next reload.
+        if (!primaryError) {
+          const beforeFlat = projects.flatMap(p => [
+            ...p.deliverables.map(d => ({ id:d.id, start:d.start, end:d.end, isSub:false })),
+            ...p.deliverables.flatMap(d => d.subtasks.map(s => ({ id:s.id, start:s.start, end:s.end, isSub:true })))
+          ]);
+          const afterFlat = newProjs.flatMap(p => [
+            ...p.deliverables.map(d => ({ id:d.id, start:d.start, end:d.end, isSub:false })),
+            ...p.deliverables.flatMap(d => d.subtasks.map(s => ({ id:s.id, start:s.start, end:s.end, isSub:true })))
+          ]);
+          const cascaded = afterFlat.filter(a => {
+            if (a.id === updated.id) return false;
+            const b = beforeFlat.find(x => x.id === a.id);
+            return b && (b.start !== a.start || b.end !== a.end);
+          });
+          if (cascaded.length > 0) {
+            console.log("[PulseX] cascade — persisting", cascaded.length, "downstream shifts");
+            await Promise.all(cascaded.map(c =>
+              sb.update(c.isSub ? "subtasks" : "deliverables", c.id,
+                { start_date: c.start, end_date: c.end }).catch(() => {})
+            ));
+          }
+        }
+        return primaryError;
       }
     );
   };
@@ -8235,29 +8218,6 @@ export default function App() {
       () => { setArchivedProjects(a => a.filter(p => p.id !== id)); setProjects(ps => [...ps, { ...rest, archived: false }]); },
       async () => { const { error } = await sb.update("projects", id, { archived: false, archived_at: null }); return error; }
     );
-  };
-
-  // Toggle "Waiting on someone" state — removes task from Focus card
-  const handleSetWaiting = (item, isWaiting) => {
-    // Optimistic update in project state
-    setProjects(projs => projs.map(proj =>
-      proj.id !== (item.projectId || item.projId) ? proj : {
-        ...proj,
-        deliverables: proj.deliverables.map(del => {
-          if (item.isSubtask || item.deliverableId) {
-            return del.id !== (item.deliverableId || item.delId) ? del : {
-              ...del, subtasks: del.subtasks.map(s => s.id === item.id ? { ...s, isWaiting } : s),
-            };
-          }
-          return del.id === item.id ? { ...del, isWaiting } : del;
-        }),
-      }
-    ));
-    // Persist to Supabase
-    if (SB_READY) {
-      const table = (item.isSubtask || item.deliverableId) ? "subtasks" : "deliverables";
-      sb.update(table, item.id, { is_waiting: isWaiting }).catch(() => {});
-    }
   };
 
   const handleBackfillDepartments = () => {
@@ -8423,7 +8383,7 @@ export default function App() {
       const notifId = "notif_" + Date.now();
       const msg = `"${entry.title}" assigned to ${assigneeName} by ${assigner}`;
       const notif = { id:notifId, type:"task_assigned", message:msg, assignedToPersonId:entry.assignedTo,
-        isRead:false, reviewedAt:null, createdAt:new Date().toISOString() };
+        taskId:id, isRead:false, reviewedAt:null, createdAt:new Date().toISOString() };
       setNotifications(prev => [notif, ...prev]);
       setToastNotif({ id:notifId, message:msg, type:"task_assigned" });
       if (SB_READY) {
@@ -8790,7 +8750,7 @@ export default function App() {
       `}</style>
 
       {/* Nav */}
-      <header style={{ borderBottom: `1px solid rgba(255,255,255,0.08)`, padding: "0 8px 0 10px", display: "flex", alignItems: "center", height: 52, flexShrink: 0, background: BRAND_NAVY, width: "100%", boxSizing: "border-box", overflow: "hidden", gap: 6, position: "relative" }}>
+      <header style={{ borderBottom: `1px solid rgba(255,255,255,0.08)`, padding: "0 8px 0 10px", display: "flex", alignItems: "center", height: 62, flexShrink: 0, background: BRAND_NAVY, width: "100%", boxSizing: "border-box", overflow: "visible", gap: 6, position: "relative" }}>
         {/* Logo — compact, no wide margin */}
         <div style={{ display: "flex", alignItems: "center", gap: 5, flexShrink: 0 }} title="PulseX">
           <div style={{ width: 28, height: 28, background: BRAND_TEAL, borderRadius: 6, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
@@ -8820,18 +8780,21 @@ export default function App() {
                 padding: "5px 8px", borderRadius: 5, cursor: "pointer", fontSize: 14,
                 fontFamily: "inherit", display: "flex", alignItems: "center", justifyContent: "center",
                 flexDirection: "column", gap: 1, transition: "all 0.12s", flexShrink: 0,
-                minWidth: 36, position: "relative",
+                minWidth: 36,
               }}>
-                <span>{n.icon}</span>
+                <span style={{ fontSize:14, position:"relative" }}>
+                  {n.icon}
+                </span>
                 <span style={{ fontSize: 8, fontWeight: 700, letterSpacing: "0.04em", opacity: 0.8, whiteSpace: "nowrap" }}>{n.label}</span>
                 {unreadCount > 0 && (
-                  <span
-                    title={unreadCount > 0 ? `${unreadCount} unread notification${unreadCount !== 1 ? "s" : ""} — go to My Hub` : "My Hub"}
-                    style={{ position:"absolute", top:2, right:2, minWidth:14, height:14, borderRadius:7,
-                      background:"#f97316", color:"#fff", fontSize:8, fontWeight:900,
-                      display:"flex", alignItems:"center", justifyContent:"center", lineHeight:1, padding:"0 3px",
-                      cursor:"help" }}>
-                    {unreadCount > 9 ? "9+" : unreadCount}
+                  <span style={{
+                    background:"#f97316", color:"#fff",
+                    borderRadius:10, fontSize:10, fontWeight:900,
+                    padding:"2px 6px", lineHeight:"16px",
+                    minWidth:18, textAlign:"center",
+                    display:"block", width:"fit-content", margin:"0 auto",
+                  }}>
+                    {unreadCount}
                   </span>
                 )}
               </button>
@@ -9005,7 +8968,6 @@ export default function App() {
             onSaveAdminTask={saveAdminTask}
             onUpdateAdminTaskStatus={updateAdminTaskStatus}
             onDeleteAdminTask={deleteAdminTask}
-            onSetWaiting={handleSetWaiting}
             notifications={notifications}
             onDismissNotification={dismissNotification}
             setToastNotif={setToastNotif}
