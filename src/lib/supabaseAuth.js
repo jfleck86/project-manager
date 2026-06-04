@@ -64,6 +64,29 @@ export async function signInWithPassword(email, password) {
 // We exchange the token from the hash to get a usable session.
 export async function exchangeHashToken() {
   try {
+    // Check for PKCE flow first: Supabase sends ?code= in query string
+    const searchParams = new URLSearchParams(window.location.search);
+    const code = searchParams.get("code");
+    if (code) {
+      // Exchange the PKCE code for a session via Supabase token endpoint
+      const res = await fetch(`${getBase()}/auth/v1/token?grant_type=pkce`, {
+        method: "POST",
+        headers: authHeaders(),
+        body: JSON.stringify({ auth_code: code }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        const type = searchParams.get("type") || "recovery";
+        return { session: null, user: null, type, error: friendlyAuthError(data.error_description || data.msg || "Link expired") };
+      }
+      const session = storeSession(data);
+      const type = searchParams.get("type") || data.type || "recovery";
+      // Clear code from URL
+      window.history.replaceState(null, "", window.location.pathname);
+      return { session, user: session.user, type, error: null };
+    }
+
+    // Legacy hash-based flow: #access_token=...&type=...
     const hash = window.location.hash.slice(1); // remove leading #
     if (!hash) return null;
     const params = new URLSearchParams(hash);
@@ -196,6 +219,12 @@ export function friendlyAuthError(raw) {
     return "No account found with that email address.";
   if (r.includes("token has expired") || r.includes("jwt expired") || r.includes("invalid token"))
     return "This link has expired. Please request a new one.";
+  if (r.includes("session from session_id") || r.includes("session_id claim") || r.includes("does not exist"))
+    return "This password reset link has already been used or has expired. Please request a new one.";
+  if (r.includes("pkce") || r.includes("code verifier") || r.includes("flow state"))
+    return "This link is no longer valid. Please request a new password reset email.";
+  if (r.includes("otp") || r.includes("one-time"))
+    return "This link has already been used. Please request a new one.";
   if (r.includes("email link is invalid") || r.includes("403"))
     return "This invitation link is invalid or has already been used. Please request a new invitation.";
   if (r.includes("rate limit") || r.includes("429") || r.includes("too many"))

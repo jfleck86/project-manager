@@ -3841,6 +3841,7 @@ function MyHubView({ projects, people, holidays, pto = [], currentUserId, onSetC
     })
   )));
   const recommended   = [...readyTasks].sort((a,b) => score(b) - score(a)).slice(0, 8);
+  const topFocusTask  = recommended[0] || [...activeTasks].sort((a,b) => score(b) - score(a))[0] || null;
   const weekTasks     = allMyTasks.filter(t => t.status !== "Done" && isDueThisWk(t));
   const highEffort    = allMyTasks.filter(t => t.status !== "Done" && efv(t.effort) >= 3 && isDueThisWk(t));
 
@@ -3971,11 +3972,21 @@ function MyHubView({ projects, people, holidays, pto = [], currentUserId, onSetC
         </div>
 
         {/* Focus strip — top recommended task */}
-        {recommended[0] && (() => {
-          const top = recommended[0];
+        {topFocusTask && (() => {
+          const top = topFocusTask;
           const d = daysDiff(top.end);
           const urgency = d < 0 ? "Overdue" : d === 0 ? "Due today" : d <= 2 ? `Due in ${d}d` : "Next up";
           const urgColor = d < 0 ? "#f87171" : d === 0 ? "#fb923c" : d <= 2 ? "#fbbf24" : BRAND_TEAL;
+          const handleStart = () => {
+            if (top.status === "In Progress") return;
+            if (top._type === "admin") { onUpdateAdminTaskStatus && onUpdateAdminTaskStatus(top.id, "In Progress"); }
+            else { saveStatus(top, "In Progress"); }
+          };
+          const handleOpen = () => onEditItem({
+            ...top, projectId: top.projId, projectName: top.projName,
+            projectColor: top.projColor,
+            deliverableId: top.isSubtask ? (top.deliverableId || top.delId) : null,
+          });
           return (
             <div style={{ marginTop:14, background:"rgba(255,255,255,0.08)", borderRadius:8, padding:"10px 14px", display:"flex", alignItems:"center", gap:12 }}>
               <div style={{ flex:1, minWidth:0 }}>
@@ -3983,15 +3994,21 @@ function MyHubView({ projects, people, holidays, pto = [], currentUserId, onSetC
                   {urgency} · Focus
                 </div>
                 <div style={{ fontSize:13, fontWeight:700, color:"#fff", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{top.title}</div>
-                <div style={{ fontSize:10, color:"rgba(255,255,255,0.5)", marginTop:1 }}>{top.projName}{top.delTitle ? ` · ${top.delTitle}` : ""}</div>
+                <div style={{ fontSize:10, color:"rgba(255,255,255,0.5)", marginTop:1 }}>{top.projName || top._label || ""}{top.delTitle ? ` · ${top.delTitle}` : ""}</div>
               </div>
               <div style={{ display:"flex", gap:6, flexShrink:0 }}>
-                <button onClick={() => saveStatus(top, "In Progress")}
-                  style={{ fontSize:10, fontWeight:700, color:BRAND_TEAL, background:"rgba(80,192,192,0.15)", border:"1px solid rgba(80,192,192,0.3)", borderRadius:6, padding:"5px 10px", cursor:"pointer", fontFamily:"inherit" }}>
-                  ▶ Start
-                </button>
-                <button onClick={() => onEditItem({ ...top, projectId:top.projId, projectName:top.projName, projectColor:top.projColor, deliverableId:top.isSubtask?(top.deliverableId||top.delId):null })}
-                  style={{ fontSize:10, fontWeight:700, color:"rgba(255,255,255,0.6)", background:"rgba(255,255,255,0.08)", border:"1px solid rgba(255,255,255,0.15)", borderRadius:6, padding:"5px 10px", cursor:"pointer", fontFamily:"inherit" }}>
+                {top.status !== "In Progress" && (
+                  <button
+                    type="button"
+                    onClick={handleStart}
+                    style={{ fontSize:10, fontWeight:700, color:BRAND_TEAL, background:"rgba(80,192,192,0.15)", border:"1px solid rgba(80,192,192,0.3)", borderRadius:6, padding:"6px 12px", cursor:"pointer", fontFamily:"inherit" }}>
+                    ▶ Start
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={handleOpen}
+                  style={{ fontSize:10, fontWeight:700, color:"rgba(255,255,255,0.7)", background:"rgba(255,255,255,0.1)", border:"1px solid rgba(255,255,255,0.2)", borderRadius:6, padding:"6px 12px", cursor:"pointer", fontFamily:"inherit" }}>
                   Open
                 </button>
               </div>
@@ -5668,84 +5685,41 @@ function TeamSettingsModal({ people, onClose, onSave, sbUrl = "", sbKey = "" }) 
   const [invMember,setInvMember]    = useState(people[0]?.id || "");
   const [invStatus,setInvStatus]    = useState(null); // null | "sending" | "done" | "sql" | "error"
   const [invResult,setInvResult]    = useState(null); // { sql, message } or error string
-  const serviceKey = (typeof window !== "undefined" && window.__SB_SERVICE_KEY__) || "";
+  // Service role key removed — invite flow now uses anon key + admin UI
+  // Admin invites should be handled via Supabase Dashboard or a server-side Edge Function
 
   const handleInvite = async () => {
     if (!invEmail.trim()) return;
     setInvStatus("sending");
+    // ── Security note ─────────────────────────────────────────────────────
+    // Sending admin invites requires the Supabase service role key,
+    // which must NEVER be exposed in frontend code.
+    // Two safe options:
+    //   A. Send invites from Supabase Dashboard → Authentication → Users → Invite user
+    //   B. Build a Supabase Edge Function that accepts { email } and sends the invite server-side
+    // For now we insert the app_users row manually and show setup instructions.
+    // ─────────────────────────────────────────────────────────────────────
     const linkedPerson = people.find(p => p.id === invMember);
+    if (!linkedPerson) { setInvStatus("error"); setInvMsg("Select a team member first."); return; }
 
-    // Try Supabase Admin invite if service key is available
-    if (serviceKey && sbUrl) {
-      try {
-        const res = await fetch(`${sbUrl}/auth/v1/admin/invite`, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "apikey": serviceKey,
-            "Authorization": `Bearer ${serviceKey}`,
-          },
-          body: JSON.stringify({ email: invEmail.trim() }),
-        });
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.message || data.error || "Invite failed");
-
-        // Insert app_users row
-        const authUid = data.id;
-        if (authUid && sbUrl && sbKey) {
-          await fetch(`${sbUrl}/rest/v1/app_users`, {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              "apikey": serviceKey,
-              "Authorization": `Bearer ${serviceKey}`,
-              "Prefer": "return=minimal",
-            },
-            body: JSON.stringify({
-              id: authUid,
-              email: invEmail.trim(),
-              display_name: invName.trim() || linkedPerson?.name || invEmail.split("@")[0],
-              role: invRole,
-              team_member_id: invMember || null,
-            }),
-          });
-        }
-        setInvStatus("done");
-        setInvResult({ message: `Invite sent to ${invEmail}. They'll receive an email to set their password.` });
-        setInvEmail(""); setInvName(""); setInvRole("member"); setInvMember(people[0]?.id || "");
+    // Insert the app_users row via RLS (requires admin role in Supabase)
+    if (SB_READY) {
+      const r = await sb.upsert("app_users", {
+        id: "pending-" + Date.now(), // placeholder until real auth UUID is known
+        email: invEmail.trim(),
+        display_name: linkedPerson.name,
+        role: invRole || "member",
+        team_member_id: invMember,
+      });
+      if (r?.error) {
+        setInvStatus("error");
+        setInvMsg("Could not create user record: " + (r.error?.message || r.error));
         return;
-      } catch (err) {
-        // Fall through to SQL mode
-        console.warn("[PulseX] Admin invite failed, showing SQL:", err.message);
       }
     }
-
-    // No service key or invite failed — show copy-paste SQL
-    const placeholder = "PASTE-AUTH-UUID-HERE";
-    const displayName = invName.trim() || linkedPerson?.name || invEmail.split("@")[0];
-    const sql = `-- Step 1: In Supabase → Authentication → Users → Invite User
--- Enter email: ${invEmail.trim()}
--- After they accept and their UUID appears, run Step 2:
-
--- Step 2: Link them to PulseX (replace the UUID below)
-insert into app_users (id, email, display_name, role, team_member_id)
-values (
-  '${placeholder}',
-  '${invEmail.trim()}',
-  '${displayName}',
-  '${invRole}',
-  '${invMember || "null"}'
-)
-on conflict (id) do update set
-  email        = excluded.email,
-  display_name = excluded.display_name,
-  role         = excluded.role,
-  team_member_id = excluded.team_member_id;`;
-
-    setInvStatus("sql");
-    setInvResult({ sql, displayName, email: invEmail.trim() });
+    setInvStatus("manual");
+    setInvMsg(`Ready. Now go to Supabase Dashboard → Authentication → Users → Invite user, enter ${invEmail.trim()}.`);
   };
-
   const tabStyle = (t) => ({
     flex: 1, padding: "10px 0", textAlign: "center", fontSize: 11, fontWeight: 700,
     letterSpacing: "0.06em", cursor: "pointer", userSelect: "none",
@@ -5850,9 +5824,11 @@ on conflict (id) do update set
                 <div style={{ marginBottom: 12 }}>
                   <div style={{ background: "rgba(251,191,36,0.1)", border: "1px solid rgba(251,191,36,0.3)", borderRadius: 8, padding: "12px 14px", marginBottom: 10 }}>
                     <div style={{ fontSize: 12, fontWeight: 700, color: "#92400e" }}>Two-step manual setup required</div>
-                    <div style={{ fontSize: 11, color: "#78350f", marginTop: 4, lineHeight: 1.5 }}>
-                      To send automatic invites, add <code style={{ background: "rgba(0,0,0,0.07)", borderRadius: 3, padding: "1px 4px" }}>window.__SB_SERVICE_KEY__</code> to your <code style={{ background: "rgba(0,0,0,0.07)", borderRadius: 3, padding: "1px 4px" }}>main.jsx</code> (Supabase service role key). Until then, follow the steps below.
-                    </div>
+                    <div style={{ fontSize:11, color:"#6b7280", lineHeight:1.6, marginTop:8 }}>
+                    To invite users, go to your{" "}
+                    <strong>Supabase Dashboard → Authentication → Users → Invite user</strong>.
+                    After accepting, the user's auth ID will appear in Supabase and you can link it here.
+                  </div>
                   </div>
                   <div style={{ fontSize: 11, fontWeight: 700, color: "#374151", marginBottom: 6 }}>
                     Copy this SQL and run it in Supabase → SQL Editor after inviting the user:
@@ -7166,10 +7142,10 @@ export default function App() {
 
   // Debug: log on every mount so you can confirm env vars are present
   useEffect(() => {
-    console.log("[PulseX] App mounted");
-    console.log("[PulseX] SB_URL:", SB_URL ? SB_URL.slice(0, 40) + "..." : "NOT SET — check main.jsx / .env.local");
-    console.log("[PulseX] SB_KEY:", SB_KEY ? SB_KEY.slice(0, 8) + "..." : "NOT SET — check main.jsx / .env.local");
-    console.log("[PulseX] SB_READY:", SB_READY);
+    
+    
+    // [SB_KEY configured]
+    
   }, []); // eslint-disable-line
 
   // ── Supabase fetch helper — closes over in-App SB_URL / SB_KEY ───────────
@@ -7198,17 +7174,27 @@ export default function App() {
       });
       if (!res.ok) {
         const text = await res.text();
-        console.error("[PulseX] HTTP", res.status, path.split("?")[0], "→", text.slice(0, 200));
-        // Auto-clear expired/invalid session — avoid scary "Could not connect" message
+        // Never log raw HTTP response — may contain sensitive data
         try {
           const errBody = JSON.parse(text);
-          if (res.status === 401 || errBody?.code === "PGRST303" || /jwt expired/i.test(errBody?.message || "")) {
+          const code = errBody?.code || "";
+          const msg  = errBody?.message || errBody?.error_description || "";
+
+          if (res.status === 401 || code === "PGRST303" || /jwt expired/i.test(msg)) {
             try { localStorage.removeItem("sb_session"); } catch {}
             window.__pulsex_session_expired__ = true;
             window.__pulsex_session_expired_flag__ = true;
+            return { data: null, error: "session_expired" };
           }
+
+          if (res.status === 403 || code === "42501") {
+            console.warn("[PulseX] Permission denied:", path.split("?")[0]);
+            return { data: null, error: "permission_denied" };
+          }
+
+          console.error("[PulseX] HTTP", res.status, path.split("?")[0]);
         } catch {}
-        return { data: null, error: text };
+        return { data: null, error: "request_failed" };
       }
       const text = await res.text();
       return { data: text ? JSON.parse(text) : null, error: null };
@@ -7230,7 +7216,22 @@ export default function App() {
 
   // ── UI-only state (never persisted) ───────────────────────────────────────
   // ── Auth — declared first so early returns are safe ─────────────────────────
-  const [authSession, setAuthSession] = useState(() => getStoredSession());
+  const [authSession, setAuthSession] = useState(() => {
+    // If this is a recovery or invite flow, ALWAYS clear the stored session
+    // so the user is shown the LoginScreen → SetPassword flow, not the app.
+    if (typeof window !== "undefined") {
+      const hash = window.location.hash;
+      const search = window.location.search;
+      // PKCE flow (query string) or legacy hash flow — both require SetPassword screen
+      const isAuthCallback = hash.includes("type=recovery") || hash.includes("type=invite")
+        || hash.includes("type=signup") || search.includes("code=");
+      if (isAuthCallback) {
+        try { localStorage.removeItem("sb_session"); } catch {}
+        return null;
+      }
+    }
+    return getStoredSession();
+  });
   const [authUser,    setAuthUser]    = useState(null);
   const [currentRole, setCurrentRole] = useState("member");
   const [authLoading, setAuthLoading] = useState(true);
@@ -7452,8 +7453,8 @@ export default function App() {
 
   // Load personal tasks separately — needs authUser.id which isn't available during loadAll
   useEffect(() => {
-    console.log("[PT] load effect — SB_READY:", SB_READY, "authUUID:", authUUID, "access_token:", authSession?.access_token?.slice(0,20));
-    console.log("[PT] authSession structure:", authSession ? Object.keys(authSession) : "NULL", "user:", authSession?.user);
+    // [PT] load effect
+    // [security] auth session structure log removed
     if (!SB_READY || !authUUID) return;
     // Load deliverable templates
     sb.select("deliverable_templates", "order=created_at.asc")
@@ -7817,12 +7818,35 @@ export default function App() {
     await saveDeliverableTemplate(dup);
   };
 
+  // ── Audit logger — fire-and-forget, never blocks UI ───────────────────────
+  const logChange = (entityType, entityId, action, fields = {}) => {
+    if (!SB_READY || !authUUID) return;
+    sb.upsert("change_history", {
+      id: crypto.randomUUID ? crypto.randomUUID() : ("ch_" + Date.now()),
+      entity_type: entityType,
+      entity_id: entityId,
+      action,
+      parent_project_id: fields.projectId || null,
+      parent_deliverable_id: fields.deliverableId || null,
+      field_name: fields.field || null,
+      old_value: fields.oldValue != null ? JSON.stringify(fields.oldValue) : null,
+      new_value: fields.newValue != null ? JSON.stringify(fields.newValue) : null,
+      changed_by_auth_id: authUUID,
+      changed_by_person_id: currentUserId || null,
+      changed_at: new Date().toISOString(),
+      metadata: fields.meta ? JSON.stringify(fields.meta) : null,
+    }).catch(() => {}); // never block on audit failure
+  };
+
   const saveAdminTask = async (task) => {
     const id = task.id || ("at_" + Date.now());
     const entry = { ...task, id };
     setAdminTasks(prev => {
       const idx = prev.findIndex(t => t.id === id);
       return idx >= 0 ? prev.map(t => t.id === id ? entry : t) : [entry, ...prev];
+    });
+    logChange("admin_task", id, task.id ? "update" : "create", {
+      field: "assigned_to", newValue: entry.assignedTo,
     });
     if (SB_READY) {
       await sb.upsert("admin_tasks", {
@@ -7897,7 +7921,7 @@ export default function App() {
   };
 
   const savePersonalTask = async (task) => {
-    console.log("[PT] save — authUUID:", authUUID, "access_token:", authSession?.access_token?.slice(0,20), "title:", task.title);
+    // [security] auth token log removed
     const id = task.id && task.id.startsWith("pt_") ? task.id : ("pt_" + Date.now());
     const entry = { ...task, id, personId: authUUID, updated_at: new Date().toISOString() };
     setPersonalTasks(prev => {
@@ -7918,8 +7942,7 @@ export default function App() {
       console.log("[PT] upsert result:", JSON.stringify(result).slice(0,200));
       if (result?.error) console.error("[PulseX] savePersonalTask error:", result.error);
     } else {
-      console.warn("[PT] skipping upsert — SB_READY:", SB_READY, "authUUID:", authUUID);
-    }
+          }
   };
   const deletePersonalTask = async (id) => {
     setPersonalTasks(prev => prev.filter(t => t.id !== id));
@@ -8037,6 +8060,10 @@ export default function App() {
 
 
   const handleMarkDone = (projectId, deliverableId, subtaskId) => {
+    logChange("task", subtaskId || deliverableId, "status_change", {
+      projectId, deliverableId, field: "status",
+      oldValue: "In Progress", newValue: "Done",
+    });
     const proj = projects.find(p => p.id === projectId);
     const del  = proj?.deliverables.find(d => d.id === deliverableId);
 

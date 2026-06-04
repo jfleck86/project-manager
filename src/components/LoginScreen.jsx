@@ -191,7 +191,26 @@ function ForgotPasswordView({ onBack }) {
       <div style={{ fontSize: 12, color: "#6b7280", marginBottom: 24 }}>
         Enter your email and we'll send a reset link.
       </div>
-      {error && <div style={errorBoxStyle}>{error}</div>}
+      {error && (
+        <div style={errorBoxStyle}>
+          {error}
+          {(error.toLowerCase().includes("expired") || error.toLowerCase().includes("already been used") || error.toLowerCase().includes("no longer valid")) && (
+            <div style={{ marginTop:8, paddingTop:8, borderTop:"1px solid rgba(239,68,68,0.2)" }}>
+              {isInvite
+                ? "Ask your administrator to send a new invitation."
+                : <span>
+                    <button type="button" onClick={onBack}
+                      style={{ background:"none", border:"none", color:"#ef4444", fontWeight:700,
+                        textDecoration:"underline", cursor:"pointer", fontFamily:"inherit", fontSize:12, padding:0 }}>
+                      Go to sign in
+                    </button>
+                    {" "}and use "Forgot password" to get a new reset link.
+                  </span>
+              }
+            </div>
+          )}
+        </div>
+      )}
       <form onSubmit={handleSubmit}>
         <div style={{ marginBottom: 20 }}>
           <label style={labelStyle}>EMAIL</label>
