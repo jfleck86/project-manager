@@ -790,8 +790,19 @@ function TaskModal({ item, projectColor, allItems, onClose, onSave, allPeople, o
   const labelStyle  = { fontSize: 10, fontWeight: 700, color: "#6b7280", letterSpacing: "0.07em", textTransform: "uppercase", marginBottom: 5, display: "block" };
   const inputStyle  = { width: "100%", fontSize: 12, border: "1px solid rgba(0,0,0,0.12)", borderRadius: 7, padding: "7px 10px", fontFamily: "inherit", background: "#fff", outline: "none", boxSizing: "border-box" };
   const selectStyle = { width: "100%", background: "#f7f8fa", border: "1px solid rgba(0,0,0,0.08)", borderRadius: 6, color: "#111827", padding: "7px 10px", fontFamily: "inherit", fontSize: 12, boxSizing: "border-box" };
-  const togglePerson = (id) => set("assignees", form.assignees.includes(id)
-    ? form.assignees.filter(x => x !== id) : [...form.assignees, id]);
+  const togglePerson = (id) => {
+    const adding = !form.assignees.includes(id);
+    const newAssignees = adding
+      ? [...form.assignees, id]
+      : form.assignees.filter(x => x !== id);
+    set("assignees", newAssignees);
+    // Auto-populate department from first-added assignee (if not already set)
+    if (adding && !form.department && !form._deptManualOverride) {
+      const person = (allPeople || people || []).find(p => p.id === id);
+      // Account role spans multiple work types — don't auto-populate dept for them
+      if (person?.department && person.department !== "Account") set("department", person.department);
+    }
+  };
   const toggleDep = (id) => set("dependencies", (form.dependencies || []).includes(id)
     ? (form.dependencies || []).filter(x => x !== id) : [...(form.dependencies || []), id]);
 
@@ -892,7 +903,7 @@ function TaskModal({ item, projectColor, allItems, onClose, onSave, allPeople, o
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
             <div>
               <div style={labelStyle}>Department</div>
-              <select value={form.department || ""} onChange={e => set("department", e.target.value)} style={selectStyle}>
+              <select value={form.department || ""} onChange={e => { set("department", e.target.value); set("_deptManualOverride", true); }} style={selectStyle}>
                 <option value="">— None —</option>
                 {DEPARTMENTS.map(d => <option key={d}>{d}</option>)}
               </select>
@@ -1090,7 +1101,11 @@ function TaskModal({ item, projectColor, allItems, onClose, onSave, allPeople, o
           ) : <div />}
           <div style={{ display: "flex", gap: 10 }}>
             <button onClick={onClose} style={cancelBtnStyle}>Cancel</button>
-            <button onClick={() => { onSave(form); onClose(); }} style={{ ...cancelBtnStyle, background: projectColor, color: "#000", border: "none", fontWeight: 700 }}>Save Changes</button>
+            <button onClick={() => {
+            // Strip internal tracking flag before saving
+            const { _deptManualOverride, ...saveForm } = form;
+            onSave(saveForm); onClose();
+          }} style={{ ...cancelBtnStyle, background: projectColor, color: "#000", border: "none", fontWeight: 700 }}>Save Changes</button>
           </div>
         </div>
       </div>
@@ -3297,6 +3312,13 @@ function WorkloadView({ projects, people, onEditItem, pto = [], holidays = [] })
   // ── render ────────────────────────────────────────────────────────────────
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+      <ReportExportCenter
+        projects={projects}
+        people={people}
+        pto={pto}
+        adminTasks={adminTasks}
+        holidays={holidays}
+      />
 
       {/* ── Header ── */}
       <div style={{ background: "#fff", border: "1px solid rgba(0,0,0,0.07)", borderRadius: 10, padding: "16px 20px" }}>
@@ -4623,7 +4645,183 @@ function AtRiskProjRow({ p, activeDels, offTrackDels, atRiskDels, projHealth }) 
 }
 
 // ─── REPORTING DASHBOARD v2 ───────────────────────────────────────────────────
+// ── ReportExportCenter — embedded in Reporting tab ───────────────────────────
+function ReportExportCenter({ projects, people, pto, adminTasks, holidays }) {
+  const [reportType,   setReportType]   = React.useState("dashboard");
+  const [format,       setFormat]       = React.useState("excel");
+  const [rangeKey,     setRangeKey]     = React.useState("30d");
+  const [customStart,  setCustomStart]  = React.useState("");
+  const [customEnd,    setCustomEnd]    = React.useState("");
+  const [personId,     setPersonId]     = React.useState(people[0]?.id || "");
+  const [projectId,    setProjectId]    = React.useState(projects[0]?.id || "");
+  const [department,   setDepartment]   = React.useState("");
+  const [generating,   setGenerating]   = React.useState(false);
+  const [progress,     setProgress]     = React.useState("");
+  const [error,        setError]        = React.useState("");
+  const [success,      setSuccess]      = React.useState(false);
+
+  const DEPARTMENTS = ["Editorial","Design","Proof","Strategy","Account","Production","Client Review"];
+
+  const REPORT_TYPES = [
+    { value:"person",     label:"Person Report",              icon:"◎", desc:"Individual workload & forecast for 1:1s" },
+    { value:"department", label:"Department Report",          icon:"◈", desc:"Work type breakdown & resource view" },
+    { value:"team",       label:"Team Report",                icon:"▦", desc:"Full team capacity & workload overview" },
+    { value:"project",    label:"Project Report",             icon:"▬", desc:"Deliverables, tasks & health for one project" },
+    { value:"capacity",   label:"Capacity Report",            icon:"⊙", desc:"Hours, targets & utilization by person" },
+    { value:"health",     label:"Project Health Report",      icon:"◉", desc:"On track, at risk & off track breakdown" },
+    { value:"forecast",   label:"Forecasting Report",         icon:"◈", desc:"Annual hour forecasts vs targets" },
+    { value:"dashboard",  label:"Dashboard Summary",          icon:"⊞", desc:"Executive summary of all reporting" },
+    { value:"all",        label:"Export All Reporting Data",  icon:"↓", desc:"Full multi-tab Excel workbook" },
+  ];
+
+  const needsPerson     = reportType === "person";
+  const needsProject    = reportType === "project";
+  const needsDepartment = reportType === "department";
+  const needsRange      = !["capacity","health","forecast","all"].includes(reportType);
+  const onlyExcel       = reportType === "all";
+
+  const handleGenerate = async () => {
+    setError(""); setSuccess(false); setGenerating(true);
+    try {
+      const { generateReport } = await import("./lib/reportExport.js");
+      await generateReport({
+        type: reportType,
+        format: onlyExcel ? "excel" : format,
+        data: { projects, people, pto, adminTasks, holidays },
+        filters: { personId, projectId, department, rangeKey, customStart, customEnd },
+        onProgress: setProgress,
+      });
+      setSuccess(true);
+      setTimeout(() => setSuccess(false), 4000);
+    } catch (e) {
+      setError(e.message || "Export failed. Check your filters and try again.");
+    } finally {
+      setGenerating(false); setProgress("");
+    }
+  };
+
+  const sel = { fontSize:12, border:"1px solid rgba(0,0,0,0.12)", borderRadius:7, padding:"7px 10px", fontFamily:"inherit", background:"#fff", color:"#1f2937", cursor:"pointer" };
+  const lbl = { fontSize:10, fontWeight:700, color:"#6b7280", letterSpacing:"0.07em", textTransform:"uppercase", marginBottom:4, display:"block" };
+
+  return (
+    <div style={{ background:"#fff", border:"1px solid rgba(0,0,0,0.08)", borderRadius:12, overflow:"hidden", marginBottom:4 }}>
+      {/* Header */}
+      <div style={{ padding:"14px 20px", background:"linear-gradient(135deg,#002A4E 0%,#004080 100%)", display:"flex", alignItems:"center", gap:12 }}>
+        <span style={{ fontSize:18, color:"#50C0C0" }}>↓</span>
+        <div>
+          <div style={{ fontSize:14, fontWeight:800, color:"#fff" }}>Export Reports</div>
+          <div style={{ fontSize:11, color:"rgba(255,255,255,0.55)" }}>Generate professional reports for leadership, planning, and 1:1s</div>
+        </div>
+      </div>
+
+      <div style={{ padding:"16px 20px", display:"flex", flexDirection:"column", gap:14 }}>
+        {/* Report type selector */}
+        <div>
+          <span style={lbl}>Report Type</span>
+          <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(200px,1fr))", gap:8 }}>
+            {REPORT_TYPES.map(r => (
+              <button key={r.value} type="button" onClick={() => { setReportType(r.value); if(r.value==="all") setFormat("excel"); }}
+                style={{ display:"flex", alignItems:"flex-start", gap:8, padding:"9px 12px", borderRadius:8, border:`2px solid ${reportType===r.value?"#50C0C0":"rgba(0,0,0,0.08)"}`, background:reportType===r.value?"rgba(80,192,192,0.06)":"#fafafa", cursor:"pointer", fontFamily:"inherit", textAlign:"left", transition:"all 0.12s" }}>
+                <span style={{ fontSize:14, color:reportType===r.value?"#50C0C0":"#9ca3af", flexShrink:0, marginTop:1 }}>{r.icon}</span>
+                <div>
+                  <div style={{ fontSize:12, fontWeight:700, color:reportType===r.value?"#002A4E":"#374151" }}>{r.label}</div>
+                  <div style={{ fontSize:10, color:"#9ca3af", marginTop:1 }}>{r.desc}</div>
+                </div>
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Filters row */}
+        <div style={{ display:"flex", gap:12, flexWrap:"wrap", alignItems:"flex-end" }}>
+          {needsPerson && (
+            <div style={{ flex:"1 1 160px" }}>
+              <label style={lbl}>Team Member</label>
+              <select value={personId} onChange={e=>setPersonId(e.target.value)} style={{ ...sel, width:"100%" }}>
+                {people.map(p=><option key={p.id} value={p.id}>{p.name}</option>)}
+              </select>
+            </div>
+          )}
+          {needsProject && (
+            <div style={{ flex:"1 1 200px" }}>
+              <label style={lbl}>Project</label>
+              <select value={projectId} onChange={e=>setProjectId(e.target.value)} style={{ ...sel, width:"100%" }}>
+                {projects.filter(p=>!p.archived).map(p=><option key={p.id} value={p.id}>{p.name}{p.client?" — "+p.client:""}</option>)}
+              </select>
+            </div>
+          )}
+          {needsDepartment && (
+            <div style={{ flex:"1 1 160px" }}>
+              <label style={lbl}>Department</label>
+              <select value={department} onChange={e=>setDepartment(e.target.value)} style={{ ...sel, width:"100%" }}>
+                <option value="">All Departments</option>
+                {DEPARTMENTS.map(d=><option key={d} value={d}>{d}</option>)}
+              </select>
+            </div>
+          )}
+          {needsRange && (
+            <div style={{ flex:"1 1 160px" }}>
+              <label style={lbl}>Date Range</label>
+              <select value={rangeKey} onChange={e=>setRangeKey(e.target.value)} style={{ ...sel, width:"100%" }}>
+                <option value="7d">Next 7 days</option>
+                <option value="30d">Next 30 days</option>
+                <option value="60d">Next 60 days</option>
+                <option value="qtd">Current Quarter</option>
+                <option value="ytd">Full Year</option>
+                <option value="custom">Custom range</option>
+              </select>
+            </div>
+          )}
+          {rangeKey === "custom" && needsRange && (
+            <>
+              <div style={{ flex:"1 1 130px" }}>
+                <label style={lbl}>Start Date</label>
+                <input type="date" value={customStart} onChange={e=>setCustomStart(e.target.value)} style={{ ...sel, width:"100%", boxSizing:"border-box" }} />
+              </div>
+              <div style={{ flex:"1 1 130px" }}>
+                <label style={lbl}>End Date</label>
+                <input type="date" value={customEnd} onChange={e=>setCustomEnd(e.target.value)} style={{ ...sel, width:"100%", boxSizing:"border-box" }} />
+              </div>
+            </>
+          )}
+          {!onlyExcel && (
+            <div style={{ flex:"1 1 140px" }}>
+              <label style={lbl}>Format</label>
+              <div style={{ display:"flex", gap:6 }}>
+                {["excel","pdf","csv"].map(f=>(
+                  <button key={f} type="button" onClick={()=>setFormat(f)}
+                    style={{ flex:1, padding:"7px 0", borderRadius:6, border:`2px solid ${format===f?"#50C0C0":"rgba(0,0,0,0.1)"}`, background:format===f?"rgba(80,192,192,0.08)":"#fff", color:format===f?"#002A4E":"#6b7280", fontSize:11, fontWeight:700, cursor:"pointer", fontFamily:"inherit", textTransform:"uppercase" }}>
+                    {f}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+          {onlyExcel && (
+            <div style={{ flex:"1 1 140px" }}>
+              <label style={lbl}>Format</label>
+              <div style={{ padding:"8px 12px", borderRadius:6, background:"rgba(80,192,192,0.08)", border:"2px solid #50C0C0", fontSize:11, fontWeight:700, color:"#002A4E", textAlign:"center" }}>EXCEL (Multi-tab)</div>
+            </div>
+          )}
+          {/* Generate button */}
+          <div style={{ flex:"0 0 auto", alignSelf:"flex-end" }}>
+            <button type="button" onClick={handleGenerate} disabled={generating}
+              style={{ padding:"8px 24px", borderRadius:7, border:"none", background:generating?"#9ca3af":"#50C0C0", color:"#002A4E", fontSize:13, fontWeight:800, cursor:generating?"not-allowed":"pointer", fontFamily:"inherit", whiteSpace:"nowrap" }}>
+              {generating ? (progress || "Generating…") : "↓ Generate Report"}
+            </button>
+          </div>
+        </div>
+
+        {error   && <div style={{ fontSize:12, color:"#ef4444", background:"rgba(239,68,68,0.08)", borderRadius:6, padding:"8px 12px" }}>{error}</div>}
+        {success && <div style={{ fontSize:12, color:"#059669", background:"rgba(5,150,105,0.08)", borderRadius:6, padding:"8px 12px" }}>✓ Report downloaded successfully.</div>}
+      </div>
+    </div>
+  );
+}
+
+
 function ReportingDashboardView({ projects, people, holidays = [], pto = [], adminTasks = [] }) {
+  // Export center data is passed from parent props
   const [drawer, setDrawer] = useState(null); // { title, subtitle, rows, cols, groupBy }
   const [drillClient, setDrillClient] = useState(null);
   const [sortClientCol, setSortClientCol] = useState("client");
@@ -4904,6 +5102,15 @@ function ReportingDashboardView({ projects, people, holidays = [], pto = [], adm
   return (
     <div style={{ display:"flex", flexDirection:"column", gap:20 }}>
       <ReportingDrawer drawer={drawer} setDrawer={setDrawer} />
+
+      {/* ── Export Center ── */}
+      <ReportExportCenter
+        projects={projects}
+        people={people}
+        pto={pto}
+        adminTasks={adminTasks}
+        holidays={holidays}
+      />
 
       {/* ── Header ── */}
       <div>
@@ -5729,7 +5936,7 @@ function TeamSettingsModal({ people, onClose, onSave, sbUrl = "", sbKey = "" }) 
 
   return (
     <Overlay onClose={onClose}>
-      <ModalShell title="Team Settings" onClose={onClose} accentColor="#38bdf8" width={520}>
+      <ModalShell title="Team Settings" onClose={onClose} accentColor="#38bdf8" width={820}>
         {/* Tabs */}
         <div style={{ display: "flex", borderBottom: "1px solid rgba(0,0,0,0.07)" }}>
           <div style={tabStyle("team")} onClick={() => setTab("team")}>TEAM MEMBERS</div>
@@ -5753,13 +5960,22 @@ function TeamSettingsModal({ people, onClose, onSave, sbUrl = "", sbKey = "" }) 
                   </select>
                 </div>
                 <input value={m.name} onChange={e => updateMember(m.id, "name", e.target.value)}
-                  placeholder="Full name" style={{ ...selectStyle, flex: 1, fontSize: 13 }} />
+                  placeholder="Full name" style={{ ...selectStyle, flex: 1, minWidth: 120, fontSize: 13 }} />
               <div style={{ display:"flex", alignItems:"center", gap:4, flexShrink:0 }}>
                 <input type="number" min="0" max="5000" step="50"
                   value={m.annualTarget ?? 1850}
                   onChange={e => updateMember(m.id, "annualTarget", parseInt(e.target.value) || 1850)}
                   title="Annual client-hour target"
                   style={{ ...selectStyle, width:68, fontSize:11, textAlign:"center" }} />
+                {/* Department for auto-populate */}
+                <select
+                  value={m.department || ""}
+                  onChange={e => updateMember(m.id, "department", e.target.value)}
+                  title="Default work type / department"
+                  style={{ ...selectStyle, fontSize:11, minWidth:110 }}>
+                  <option value="">No dept.</option>
+                  {DEPARTMENTS.map(d => <option key={d} value={d}>{d}</option>)}
+                </select>
                 <span style={{ fontSize:9, color:"#9ca3af", whiteSpace:"nowrap" }}>hrs/yr</span>
               </div>
                 <div style={{ display: "flex", gap: 4, flexShrink: 0 }}>
@@ -6890,7 +7106,15 @@ function NewDeliverableModal({ project, onClose, onAdd, allPeople, savedTemplate
     assignees: [], start: today, end: weekOut, progress: 0, dependencies: [], department: "",
   });
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
-  const togglePerson = (id) => set("assignees", form.assignees.includes(id) ? form.assignees.filter(x => x !== id) : [...form.assignees, id]);
+  const togglePerson = (id) => {
+    const adding = !form.assignees.includes(id);
+    set("assignees", adding ? [...form.assignees, id] : form.assignees.filter(x => x !== id));
+    if (adding && !form.department && !form._deptManualOverride) {
+      const person = (allPeople || []).find(p => p.id === id);
+      // Account role spans multiple work types — skip auto-dept
+      if (person?.department && person.department !== "Account") set("department", person.department);
+    }
+  };
   const [error, setError] = useState("");
   const [keepOpen, setKeepOpen] = useState(false);
 
@@ -6958,7 +7182,7 @@ function NewDeliverableModal({ project, onClose, onAdd, allPeople, savedTemplate
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
             <div>
               <div style={labelStyle}>Department</div>
-              <select value={form.department || ""} onChange={e => set("department", e.target.value)} style={selectStyle}>
+              <select value={form.department || ""} onChange={e => { set("department", e.target.value); set("_deptManualOverride", true); }} style={selectStyle}>
                 <option value="">— None —</option>
                 {DEPARTMENTS.map(d => <option key={d}>{d}</option>)}
               </select>
@@ -7015,7 +7239,15 @@ function NewSubtaskModal({ project, deliverable, onClose, onAdd, allPeople }) {
     assignees: [], start: deliverable.start, end: deliverable.end, progress: 0, dependencies: [], department: "",
   });
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
-  const togglePerson = (id) => set("assignees", form.assignees.includes(id) ? form.assignees.filter(x => x !== id) : [...form.assignees, id]);
+  const togglePerson = (id) => {
+    const adding = !form.assignees.includes(id);
+    set("assignees", adding ? [...form.assignees, id] : form.assignees.filter(x => x !== id));
+    if (adding && !form.department && !form._deptManualOverride) {
+      const person = (allPeople || []).find(p => p.id === id);
+      // Account role spans multiple work types — skip auto-dept
+      if (person?.department && person.department !== "Account") set("department", person.department);
+    }
+  };
   const [error, setError] = useState("");
 
   const [keepOpen, setKeepOpen] = useState(false);
@@ -7054,7 +7286,7 @@ function NewSubtaskModal({ project, deliverable, onClose, onAdd, allPeople }) {
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
             <div>
               <div style={labelStyle}>Department</div>
-              <select value={form.department || ""} onChange={e => set("department", e.target.value)} style={selectStyle}>
+              <select value={form.department || ""} onChange={e => { set("department", e.target.value); set("_deptManualOverride", true); }} style={selectStyle}>
                 <option value="">— None —</option>
                 {DEPARTMENTS.map(d => <option key={d}>{d}</option>)}
               </select>
@@ -7652,7 +7884,7 @@ export default function App() {
       });
       setProjects(active.map(p => rowToProject(p, dR.data, cleanSubtasks)));
       setArchivedProjects(archived.map(p => rowToProject(p, dR.data, cleanSubtasks)));
-      setPeople((mR.data || []).map(p => ({ id: p.id, name: p.name, color: p.color, annualTarget: p.annual_target || 1850 })));
+      setPeople((mR.data || []).map(p => ({ id: p.id, name: p.name, color: p.color, annualTarget: p.annual_target || 1850, department: p.department || "" })));
       setHolidays((hR.data || []).map(h => ({ id: h.id, date: h.date, name: h.name })));
       const notes = {};
       (nR.data || []).forEach(n => { notes[`${n.project_id}::${n.deliverable_id}`] = n.note; });
@@ -7739,7 +7971,7 @@ export default function App() {
 
   async function seedDefaults() {
     for (let i = 0; i < initialPeople.length; i++) {
-      await sb.upsert("team_members", { id: initialPeople[i].id, name: initialPeople[i].name, color: initialPeople[i].color, position: i, annual_target: initialPeople[i].annualTarget || 1850 });
+      await sb.upsert("team_members", { id: initialPeople[i].id, name: initialPeople[i].name, color: initialPeople[i].color, position: i, annual_target: initialPeople[i].annualTarget || 1850, department: initialPeople[i].department || "" });
     }
     for (let pi = 0; pi < initialProjects.length; pi++) {
       const proj = initialProjects[pi];
@@ -7958,6 +8190,26 @@ export default function App() {
       () => { setArchivedProjects(a => a.filter(p => p.id !== id)); setProjects(ps => [...ps, { ...rest, archived: false }]); },
       async () => { const { error } = await sb.update("projects", id, { archived: false, archived_at: null }); return error; }
     );
+  };
+
+  const handleBackfillDepartments = () => {
+    const updates = [];
+    projects.forEach(proj => {
+      proj.deliverables.forEach(del => {
+        const items = del.subtasks.length ? del.subtasks : [del];
+        items.forEach(item => {
+          if (item.department) return;
+          const first = (item.assignees || []).map(id => people.find(p => p.id === id)).find(p => p?.department);
+          if (first) updates.push({ item, projId: proj.id, delId: del.id, dept: first.department });
+        });
+      });
+    });
+    if (!updates.length) { alert("No tasks to backfill — tasks either already have a department, or their assignees have no department set."); return; }
+    if (!window.confirm(`Set department on ${updates.length} task${updates.length !== 1 ? "s" : ""} from their first assignees?`)) return;
+    updates.forEach(({ item, projId, delId, dept }) =>
+      handleSaveItem({ ...item, department: dept, projectId: projId, deliverableId: delId })
+    );
+    alert(`✓ Updated ${updates.length} task${updates.length !== 1 ? "s" : ""}.`);
   };
 
   const handleDeleteProject = (id) => optimistic(
@@ -8543,8 +8795,9 @@ export default function App() {
               }}>
                 {[
                   { icon: "◎", label: "Team Members",   color: "#38bdf8", action: () => { setShowTeamSettings(true); setShowSettingsMenu(false); } },
+                  { icon: "⊙", label: "Backfill Task Depts", color: "#a78bfa", action: () => { handleBackfillDepartments(); setShowSettingsMenu(false); } },
                   { icon: "◧", label: "Templates",       color: "#a78bfa", action: () => { setShowTemplates(true); setShowSettingsMenu(false); } },  // deliverable templates
-                  { icon: "↓", label: "Export to Excel", color: "#34d399", action: () => { exportToExcel(projects); setShowSettingsMenu(false); } },
+
                   { icon: "🗓", label: "Holidays",        color: "#fb923c", action: () => { setShowHolidays(true); setShowSettingsMenu(false); } },
                   { icon: "↑", label: "Import Excel",    color: "#34d399", action: () => { setShowImport(true); setShowSettingsMenu(false); } },
                   { icon: "⊡", label: "Archived Projects",color: BRAND_TEAL, action: () => { setView("archived"); setShowSettingsMenu(false); } },
