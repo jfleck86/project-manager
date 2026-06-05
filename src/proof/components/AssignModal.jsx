@@ -1,33 +1,19 @@
 import React, { useState } from "react";
-import { PROOF_COLORS as C, PROOFREADERS, DEPARTMENTS, PROOFREADER_DEPT } from "../lib/proofTypes";
+import { PROOF_COLORS as C } from "../lib/proofTypes";
 
-export default function AssignModal({ req, currentUser, onAssign, onCancel }) {
-  const [proofreader, setProofreader] = useState(req.assigned_proofreader || "");
-  const [dept, setDept] = useState(
-    req.department || (req.assigned_proofreader ? PROOFREADER_DEPT[req.assigned_proofreader] || "" : "")
-  );
+export default function AssignModal({ req, currentUser, proofreaders, proofreadersErr, onAssign, onCancel }) {
+  // Find pre-selected proofreader if already assigned
+  const initial = proofreaders.find(p => p.name === req.assigned_proofreader) || null;
+  const [selectedId, setSelectedId] = useState(initial?.id || "");
 
-  const fs = {
-    width:        "100%",
-    padding:      "9px 12px",
-    border:       `1px solid ${C.border}`,
-    borderRadius: 7,
-    fontSize:     13,
-    fontFamily:   "inherit",
-    boxSizing:    "border-box",
-    marginBottom: 14,
-    outline:      "none",
-  };
-  const ls = { fontSize: 12, fontWeight: 600, color: C.muted, display: "block", marginBottom: 5 };
-
-  function handleProofreaderChange(p) {
-    setProofreader(p);
-    if (!dept && p) setDept(PROOFREADER_DEPT[p] || "");
-  }
+  const fs = { width:"100%", padding:"9px 12px", border:`1px solid ${C.border}`, borderRadius:7, fontSize:13, fontFamily:"inherit", boxSizing:"border-box", marginBottom:14, outline:"none" };
+  const ls = { fontSize:12, fontWeight:600, color:C.muted, display:"block", marginBottom:5 };
 
   function handleSubmit() {
-    if (!proofreader) { alert("Please select a proofreader."); return; }
-    onAssign(proofreader, dept);
+    if (!selectedId) { alert("Please select a proofreader."); return; }
+    const pr = proofreaders.find(p => p.id === selectedId);
+    if (!pr) { alert("Selected proofreader not found."); return; }
+    onAssign(pr.name, pr.id);
   }
 
   return (
@@ -44,20 +30,31 @@ export default function AssignModal({ req, currentUser, onAssign, onCancel }) {
           <strong>{req.project_name}</strong> · {req.client}
         </p>
 
-        <label style={ls}>Proofreader *</label>
-        <select value={proofreader} onChange={e => handleProofreaderChange(e.target.value)} style={fs} autoFocus>
-          <option value="">— Choose a proofreader —</option>
-          {PROOFREADERS.map(p => <option key={p} value={p}>{p}</option>)}
-        </select>
+        {proofreadersErr && (
+          <div style={{ background:"#fef3c7", border:"1px solid #f59e0b40", borderRadius:7, padding:"10px 14px", marginBottom:16, fontSize:12, color:"#92400e" }}>
+            ⚠ {proofreadersErr}
+          </div>
+        )}
 
-        <label style={ls}>
-          Department{" "}
-          <span style={{ fontWeight:400, color:"#94a3b8" }}>(auto-filled, editable)</span>
-        </label>
-        <select value={dept} onChange={e => setDept(e.target.value)} style={fs}>
-          <option value="">— No department —</option>
-          {DEPARTMENTS.map(d => <option key={d} value={d}>{d}</option>)}
-        </select>
+        <label style={ls}>Proofreader *</label>
+        {proofreaders.length === 0 && !proofreadersErr ? (
+          <div style={{ fontSize:12, color:C.muted, padding:"10px 0", marginBottom:14 }}>Loading proofreaders…</div>
+        ) : (
+          <select
+            value={selectedId}
+            onChange={e => setSelectedId(e.target.value)}
+            style={fs}
+            autoFocus
+            disabled={proofreaders.length === 0}
+          >
+            <option value="">— Choose a proofreader —</option>
+            {proofreaders.map(p => (
+              <option key={p.id} value={p.id}>
+                {p.name}{p.email ? ` (${p.email})` : ""}
+              </option>
+            ))}
+          </select>
+        )}
 
         <div style={{ display:"flex", gap:8, justifyContent:"flex-end", marginTop:6 }}>
           <button
@@ -68,7 +65,8 @@ export default function AssignModal({ req, currentUser, onAssign, onCancel }) {
           </button>
           <button
             onClick={handleSubmit}
-            style={{ padding:"9px 18px", background:C.teal, color:"#fff", border:"none", borderRadius:7, cursor:"pointer", fontSize:13, fontWeight:700, fontFamily:"inherit" }}
+            disabled={proofreaders.length === 0}
+            style={{ padding:"9px 18px", background:proofreaders.length===0?"#94a3b8":C.teal, color:"#fff", border:"none", borderRadius:7, cursor:proofreaders.length===0?"not-allowed":"pointer", fontSize:13, fontWeight:700, fontFamily:"inherit" }}
           >
             Assign &amp; Move to Assigned
           </button>
