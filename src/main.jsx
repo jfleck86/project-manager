@@ -5,12 +5,13 @@
 
 import React from 'react'
 import ReactDOM from 'react-dom/client'
+import { BrowserRouter, Routes, Route } from 'react-router-dom'
+
 import App from './App.jsx'
+import ProofApp from './proof/ProofApp.jsx'
 
 // Set Supabase config on window before App renders.
-// Vite replaces import.meta.env.* at build time with the actual values
-// from .env.local (dev) or Vercel Environment Variables (production).
-window.__SB_URL__ = import.meta.env.VITE_SUPABASE_URL  || "";
+window.__SB_URL__ = import.meta.env.VITE_SUPABASE_URL || "";
 window.__SB_KEY__ = import.meta.env.VITE_SUPABASE_ANON_KEY || "";
 
 console.log("[PLANR] main.jsx — SB_URL:", window.__SB_URL__ ? window.__SB_URL__.slice(0, 40) + "..." : "NOT SET — check .env.local");
@@ -18,6 +19,11 @@ console.log("[PLANR] main.jsx — SB_KEY:", window.__SB_KEY__ ? window.__SB_KEY_
 
 ReactDOM.createRoot(document.getElementById('root')).render(
   <React.StrictMode>
-    <App />
+    <BrowserRouter>
+      <Routes>
+        <Route path="/proof/*" element={<ProofApp />} />
+        <Route path="/*" element={<App />} />
+      </Routes>
+    </BrowserRouter>
   </React.StrictMode>
 )
