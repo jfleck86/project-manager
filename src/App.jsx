@@ -7,7 +7,8 @@ import { EFFORT_OPTS, EFFORT_LABEL, EFFORT_HOURS, EFFORT_VAL, WEEKLY_HOURS, HOUR
 import { TIMELINE_START, TIMELINE_END } from "./constants/timeline.js";
 import { MIN_DAY_W, MAX_DAY_W, D_ROW, S_ROW, COL_DEFAULTS } from "./constants/columns.js";
 import { PROJECT_COLORS } from "./constants/colors.js";
-import { parseDate, fmt, fmtFull, fmtMonth, durDays, dayOffset, busyDays, addWorkingDays } from "./utils/dates.js";
+import { getReadyTasks, buildReadyNotifications } from "./lib/workflowEngine.js";
+import { parseDate, fmt, durDays, dayOffset, busyDays, addWorkingDays } from "./utils/dates.js";
 import { effortHours, classifyLoad, ptoDaysInWeek, availableHours } from "./utils/workload.js";
 import { getInitials } from "./utils/formatting.js";
 import { rowToSubtask, rowToDeliverable, rowToProject, delToRow, subToRow, ptoToRow, rowToPto, isOnPto, ptoOverlap } from "./lib/dataConverters.js";
@@ -2825,7 +2826,7 @@ function InlineAssignees({ assignees, onChange, people }) {
 
 // --- PEOPLE VIEW ──────────────────────────────────────────────────────────────
 
-function PersonPanel({ person, compact = false, allActive, projects, collapsed, loadBadge, GDAY_W, G_ROW, pto, holidays, holidaySet, onEditItem, onSaveItem, toggleCollapse, onTimelineReview }) {
+function PersonPanel({ person, compact = false, allActive, projects, collapsed, loadBadge, GDAY_W, G_ROW, pto, holidays, holidaySet, calStart, onEditItem, onSaveItem, toggleCollapse, onTimelineReview }) {
   const [sortMode, setSortMode] = useState("default"); // "default" | "duedate"
   const myItemsRaw = allActive.filter(t => (t.assignees||[]).includes(person.id)).map(t => {
     if (t.deliverableId) {
@@ -2845,12 +2846,21 @@ function PersonPanel({ person, compact = false, allActive, projects, collapsed, 
   const isCollapsed = collapsed[person.id];
   const load = loadBadge(myItems);
 
-  // Gantt date range
-  const myDates  = myItems.flatMap(t => [t.start, t.end]).filter(Boolean).sort();
-  const gStart   = myDates.length ? new Date(myDates[0]+"T00:00:00") : TIMELINE_START;
-  const gEnd     = myDates.length ? new Date(myDates[myDates.length-1]+"T00:00:00") : TIMELINE_END;
-  const ganttDays = Math.max(14, Math.ceil((gEnd - gStart)/86400000) + 14);
+  // Gantt date range — gStart is ALWAYS calAnchor so every panel starts on the same Sunday.
+  // Tasks that started before calAnchor render with a clamped left edge (bar truncated at 0).
+  const myDates   = myItems.flatMap(t => [t.start, t.end]).filter(Boolean).sort();
+  const calAnchor = calStart instanceof Date ? calStart : (() => { const d = new Date(); d.setHours(0,0,0,0); d.setDate(d.getDate()-d.getDay()); return d; })();
+  const gStart    = calAnchor; // all panels locked to the same Sunday
+  const latestDate = myDates.length ? new Date(myDates[myDates.length-1]+"T00:00:00") : new Date(calAnchor.getTime()+84*86400000);
+  const gEnd       = new Date(Math.max(latestDate.getTime(), calAnchor.getTime() + 56*86400000));
+  const ganttDays  = Math.ceil((gEnd - gStart)/86400000) + 7;
   const gOff = (ds) => Math.ceil((parseDate(ds) - gStart) / 86400000);
+
+  // scrollRef: no longer needed for auto-scroll (gStart IS calAnchor so offset is always 0)
+  const scrollRef = React.useRef(null);
+  React.useLayoutEffect(() => {
+    if (scrollRef.current) scrollRef.current.scrollLeft = 0;
+  }, [calAnchor.toISOString().slice(0,10), person.id]);
 
   // Drag-to-reschedule
   const startDrag = (item, e) => {
@@ -2929,55 +2939,71 @@ function PersonPanel({ person, compact = false, allActive, projects, collapsed, 
                   ))}
                 </div>
               </div>
-              <div style={{ overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
-                <div style={{ minWidth: (ganttDays + 2) * GDAY_W + 420, position: "relative" }}>
+              {/* ── Split gantt: frozen labels | scrollable dates ── */}
+              <div style={{ display:"flex", overflow:"hidden" }}>
+
+                {/* Frozen left columns — CLIENT / DELIVERABLE / TASK */}
+                <div style={{ flexShrink:0, width:420, borderRight:"2px solid rgba(0,0,0,0.07)", zIndex:2, background:"#fff" }}>
                   {/* Header */}
-                  <div style={{ display: "flex", background: "#f7f8fa", borderBottom: "1px solid rgba(0,0,0,0.05)" }}>
-                    <div style={{ width: 80, flexShrink: 0, borderRight: "1px solid rgba(0,0,0,0.05)", padding: "5px 10px", fontSize: 9, fontWeight: 700, color: "#9ca3af", letterSpacing: "0.07em" }}>CLIENT</div>
-                    <div style={{ width: 180, flexShrink: 0, borderRight: "1px solid rgba(0,0,0,0.05)", padding: "5px 10px", fontSize: 9, fontWeight: 700, color: "#9ca3af", letterSpacing: "0.07em" }}>DELIVERABLE</div>
-                    <div style={{ width: 160, flexShrink: 0, borderRight: "1px solid rgba(0,0,0,0.05)", padding: "5px 10px", fontSize: 9, fontWeight: 700, color: "#9ca3af", letterSpacing: "0.07em" }}>TASK</div>
-                    <div style={{ flex: 1, position: "relative", height: 24 }}>
-                      {/* PTO header bands */}
-                      {pto.filter(p => p.personId === person.id).map(p => {
-                        const ps = gOff(p.start), pe = gOff(p.end);
-                        if (pe < 0 || ps > ganttDays+2) return null;
-                        const l = Math.max(0,ps)*GDAY_W, r = Math.min(ganttDays+2,pe+1)*GDAY_W;
-                        return <div key={p.id} title={`PTO${p.note?" · "+p.note:""}`} style={{ position:"absolute", left:l, top:0, bottom:0, width:r-l, background:"rgba(0,0,0,0.07)", display:"flex", alignItems:"center", justifyContent:"center", pointerEvents:"none" }}><span style={{ fontSize:7, fontWeight:700, color:"rgba(0,0,0,0.35)" }}>🌴</span></div>;
-                      })}
-                      {/* Week markers */}
-                      {Array.from({ length: Math.ceil(ganttDays/7) }, (_,wi) => {
-                        const d = new Date(gStart.getTime() + wi*7*86400000);
-                        return <div key={wi} style={{ position:"absolute", left:wi*7*GDAY_W, height:"100%", display:"flex", alignItems:"center", paddingLeft:4, fontSize:8, color:"#9ca3af", fontWeight:600, borderLeft:"1px solid rgba(0,0,0,0.06)", whiteSpace:"nowrap" }}>{d.toLocaleDateString("en-US",{month:"short",day:"numeric"})}</div>;
-                      })}
-                    </div>
+                  <div style={{ display:"flex", height:26, background:"#f7f8fa", borderBottom:"1px solid rgba(0,0,0,0.06)" }}>
+                    <div style={{ width:80, padding:"0 10px", fontSize:9, fontWeight:700, color:"#9ca3af", letterSpacing:"0.07em", display:"flex", alignItems:"center", borderRight:"1px solid rgba(0,0,0,0.05)" }}>CLIENT</div>
+                    <div style={{ width:180, padding:"0 10px", fontSize:9, fontWeight:700, color:"#9ca3af", letterSpacing:"0.07em", display:"flex", alignItems:"center", borderRight:"1px solid rgba(0,0,0,0.05)" }}>DELIVERABLE</div>
+                    <div style={{ width:160, padding:"0 10px", fontSize:9, fontWeight:700, color:"#9ca3af", letterSpacing:"0.07em", display:"flex", alignItems:"center" }}>TASK</div>
                   </div>
-                  {/* Rows */}
+                  {/* Label rows */}
                   {myItems.map(item => {
-                    const sOff = gOff(item.start), eOff = gOff(item.end);
-                    const bw = Math.max((eOff-sOff)*GDAY_W+GDAY_W, 8);
                     const proj = projects.find(p => p.id === item.projectId);
                     const del  = proj?.deliverables.find(d => d.id === item.deliverableId);
                     return (
-                      <div key={item.id} style={{ display:"flex", height:G_ROW, borderBottom:"1px solid rgba(0,0,0,0.04)", alignItems:"center" }}
-                        onMouseEnter={e=>e.currentTarget.style.background="rgba(0,0,0,0.02)"}
-                        onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
+                      <div key={item.id} style={{ display:"flex", height:G_ROW, borderBottom:"1px solid rgba(0,0,0,0.04)", alignItems:"center" }}>
                         <div style={{ width:80, flexShrink:0, padding:"0 8px", borderRight:"1px solid rgba(0,0,0,0.04)", overflow:"hidden", display:"flex", alignItems:"center" }}>
                           <span style={{ fontSize:10, fontWeight:700, color:"#374151", whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>{proj?.client||"—"}</span>
                         </div>
                         <div style={{ width:180, flexShrink:0, padding:"0 8px", borderRight:"1px solid rgba(0,0,0,0.04)", overflow:"hidden", display:"flex", alignItems:"center" }}>
                           <span style={{ fontSize:10, fontWeight:600, color:proj?.color||"#374151", whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }} title={del?.title||item.title}>{del?.title||item.title}</span>
                         </div>
-                        <div onClick={() => onEditItem(item)} style={{ width:160, flexShrink:0, padding:"0 8px", borderRight:"1px solid rgba(0,0,0,0.04)", overflow:"hidden", display:"flex", alignItems:"center", cursor:"pointer" }}>
+                        <div onClick={() => onEditItem(item)} style={{ width:160, flexShrink:0, padding:"0 8px", overflow:"hidden", display:"flex", alignItems:"center", cursor:"pointer" }}>
                           <span style={{ fontSize:10, fontWeight:600, color:del?"#374151":"#9ca3af", whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }} title={del ? item.title : ""}>{del ? item.title : "—"}</span>
                         </div>
-                        <div style={{ flex:1, height:"100%", position:"relative", overflow:"visible" }}>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                {/* Scrollable date area */}
+                <div ref={scrollRef} style={{ flex:1, overflowX:"auto", WebkitOverflowScrolling:"touch", minWidth:0 }}>
+                  <div style={{ minWidth: ganttDays * GDAY_W, position:"relative" }}>
+                    {/* Date header */}
+                    <div style={{ height:26, position:"relative", background:"#f7f8fa", borderBottom:"1px solid rgba(0,0,0,0.06)" }}>
+                      {pto.filter(p => p.personId === person.id).map(p => {
+                        const ps = gOff(p.start), pe = gOff(p.end);
+                        if (pe < 0 || ps > ganttDays+2) return null;
+                        const l = Math.max(0,ps)*GDAY_W, r = Math.min(ganttDays+2,pe+1)*GDAY_W;
+                        return <div key={p.id} title={`PTO${p.note?" · "+p.note:""}`} style={{ position:"absolute", left:l, top:0, bottom:0, width:r-l, background:"rgba(0,0,0,0.07)", display:"flex", alignItems:"center", justifyContent:"center", pointerEvents:"none" }}><span style={{ fontSize:7, fontWeight:700, color:"rgba(0,0,0,0.35)" }}>🌴</span></div>;
+                      })}
+                      {Array.from({ length: Math.ceil(ganttDays/7) }, (_,wi) => {
+                        const d = new Date(gStart.getTime() + wi*7*86400000);
+                        return <div key={wi} style={{ position:"absolute", left:wi*7*GDAY_W, height:"100%", display:"flex", alignItems:"center", paddingLeft:4, fontSize:8, color:"#9ca3af", fontWeight:600, borderLeft:"1px solid rgba(0,0,0,0.06)", whiteSpace:"nowrap" }}>{d.toLocaleDateString("en-US",{month:"short",day:"numeric"})}</div>;
+                      })}
+                    </div>
+                    {/* Bar rows */}
+                    {myItems.map(item => {
+                      const rawOff = gOff(item.start);
+                      const eOff   = gOff(item.end);
+                      const sOff   = Math.max(0, rawOff);             // clamp bars that started before window
+                      const bw     = Math.max((eOff - sOff)*GDAY_W + GDAY_W, 8);
+                      const proj   = projects.find(p => p.id === item.projectId);
+                      return (
+                        <div key={item.id} style={{ height:G_ROW, position:"relative", borderBottom:"1px solid rgba(0,0,0,0.04)", overflow:"hidden" }}
+                          onMouseEnter={e=>e.currentTarget.style.background="rgba(0,0,0,0.02)"}
+                          onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
                           {/* Holiday shading */}
                           {holidays.map(h => { const ho=gOff(h.date); if(ho<0||ho>ganttDays+2) return null; return <div key={h.date} style={{ position:"absolute", left:ho*GDAY_W, top:0, bottom:0, width:GDAY_W, background:"rgba(251,146,60,0.1)", pointerEvents:"none" }} />; })}
                           {/* PTO shading */}
                           {pto.filter(p=>p.personId===person.id).map(p => {
                             const ps=gOff(p.start), pe=gOff(p.end); if(pe<0||ps>ganttDays+2) return null;
                             const l=Math.max(0,ps)*GDAY_W, r=Math.min(ganttDays+2,pe+1)*GDAY_W;
-                            return <div key={p.id} style={{ position:"absolute", left:l, top:0, bottom:0, width:r-l, background:"repeating-linear-gradient(45deg,rgba(0,0,0,0.04) 0px,rgba(0,0,0,0.04) 4px,rgba(0,0,0,0.08) 4px,rgba(0,0,0,0.08) 8px)", borderLeft:"1px solid rgba(0,0,0,0.1)", borderRight:"1px solid rgba(0,0,0,0.1)", pointerEvents:"none", zIndex:1 }} />;
+                            return <div key={p.id} style={{ position:"absolute", left:l, top:0, bottom:0, width:r-l, background:"repeating-linear-gradient(45deg,rgba(0,0,0,0.04) 0px,rgba(0,0,0,0.04) 4px,rgba(0,0,0,0.08) 4px,rgba(0,0,0,0.08) 8px)", pointerEvents:"none", zIndex:1 }} />;
                           })}
                           {/* Week grid */}
                           {Array.from({length:Math.ceil(ganttDays/7)},(_,wi)=>(<div key={wi} style={{ position:"absolute", left:wi*7*GDAY_W, top:0, bottom:0, width:1, background:"rgba(0,0,0,0.04)" }} />))}
@@ -2988,10 +3014,11 @@ function PersonPanel({ person, compact = false, allActive, projects, collapsed, 
                             <div style={{ position:"relative", padding:"0 4px", fontSize:8, fontWeight:600, color:"#fff", lineHeight:"16px", whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>{item.title}</div>
                           </div>
                         </div>
-                      </div>
-                    );
-                  })}
+                      );
+                    })}
+                  </div>
                 </div>
+
               </div>
             </div>
           )}
@@ -3067,6 +3094,21 @@ function PeopleView({ projects, people, onEditItem, onMarkDone, onSaveItem, holi
   const [selected, setSelected]     = useState(people[0]?.id || "");
   const [compared, setCompared]     = useState([]); // IDs for compare mode
   const [collapsed, setCollapsed]   = useState({});  // personId → bool
+
+  // ── Shared calendar window — always starts on Sunday, shared across all panels ──
+  const sundayOfCurrentWeek = (() => {
+    const d = new Date(); d.setHours(0,0,0,0);
+    d.setDate(d.getDate() - d.getDay()); // getDay()==0 → stays; 1–6 → back to Sunday
+    return d;
+  })();
+  const [calStart, setCalStart] = useState(sundayOfCurrentWeek);
+
+  const prevWeek = () => setCalStart(d => { const n = new Date(d); n.setDate(n.getDate()-7); return n; });
+  const nextWeek = () => setCalStart(d => { const n = new Date(d); n.setDate(n.getDate()+7); return n; });
+  const goToday  = () => setCalStart(sundayOfCurrentWeek);
+
+  const calStartStr = calStart.toLocaleDateString("en-US", { month:"short", day:"numeric", year:"numeric" });
+  const isCurrentWeek = calStart.toDateString() === sundayOfCurrentWeek.toDateString();
 
   const toggleCollapse = (id) => setCollapsed(c => ({ ...c, [id]: !c[id] }));
   const toggleCompare  = (id) => setCompared(prev =>
@@ -3182,6 +3224,29 @@ function PeopleView({ projects, people, onEditItem, onMarkDone, onSaveItem, holi
 
       {/* ── Main panels ── */}
       <div style={{ flex:1, display:"flex", flexDirection:"column", gap:14, minWidth:0 }}>
+
+        {/* Shared week navigation — one control drives all panels in both single and compare mode */}
+        <div style={{ display:"flex", alignItems:"center", gap:8, padding:"8px 14px", background:"#fff", border:"1px solid rgba(0,0,0,0.07)", borderRadius:8 }}>
+          <button onClick={prevWeek}
+            style={{ fontSize:11, fontWeight:700, padding:"4px 11px", borderRadius:6, border:"1px solid rgba(0,0,0,0.1)", background:"none", cursor:"pointer", fontFamily:"inherit", color:"#6b7280" }}>
+            ← Prev
+          </button>
+          <div style={{ flex:1, textAlign:"center" }}>
+            <span style={{ fontSize:12, fontWeight:700, color:"#1f2937" }}>Week of {calStartStr}</span>
+            {isCurrentWeek && <span style={{ fontSize:10, color:"#10b981", background:"rgba(16,185,129,0.1)", borderRadius:4, padding:"1px 6px", marginLeft:8, fontWeight:600 }}>Current week</span>}
+          </div>
+          <button onClick={nextWeek}
+            style={{ fontSize:11, fontWeight:700, padding:"4px 11px", borderRadius:6, border:"1px solid rgba(0,0,0,0.1)", background:"none", cursor:"pointer", fontFamily:"inherit", color:"#6b7280" }}>
+            Next →
+          </button>
+          {!isCurrentWeek && (
+            <button onClick={goToday}
+              style={{ fontSize:10, fontWeight:700, padding:"4px 10px", borderRadius:6, border:"1px solid rgba(80,192,192,0.4)", background:"rgba(80,192,192,0.08)", cursor:"pointer", fontFamily:"inherit", color:"#50C0C0" }}>
+              ↩ Today
+            </button>
+          )}
+        </div>
+
         {viewMode==="compare" && compared.length===0 && (
           <div style={{ background:"#fff", border:"1px solid rgba(0,0,0,0.07)", borderRadius:10, padding:"32px 20px", textAlign:"center", color:"#9ca3af", fontSize:12 }}>
             Select team members from the sidebar to compare their schedules side by side.
@@ -3191,6 +3256,7 @@ function PeopleView({ projects, people, onEditItem, onMarkDone, onSaveItem, holi
           <PersonPanel key={person.id} person={person} compact={viewMode==="compare"}
             allActive={allActive} projects={projects} collapsed={collapsed} loadBadge={loadBadge}
             GDAY_W={GDAY_W} G_ROW={G_ROW} pto={pto} holidays={holidays} holidaySet={holidaySet}
+            calStart={calStart}
             onEditItem={onEditItem} onSaveItem={onSaveItem} toggleCollapse={toggleCollapse}
             onTimelineReview={onTimelineReview}
           />
@@ -3762,8 +3828,11 @@ function HubTaskTile({ item, onSaveStatus, onOpenItem, statusC }) {
     if (d === 0) return { text:"Due today",             color:"#f97316", bg:"rgba(249,115,22,0.1)",  w:700 };
     if (d === 1) return { text:"Due tomorrow",          color:"#fbbf24", bg:"rgba(251,191,36,0.1)",  w:600 };
     if (d <= 7)  return { text:"Due in "+d+"d",         color:"#9ca3af", bg:"rgba(0,0,0,0.05)",      w:500 };
-    return null;
+    return { text:"Due in "+d+"d", color:"#9ca3af", bg:"rgba(0,0,0,0.04)", w:400 };
   })();
+  const fmtDue = item._due
+    ? new Date(item._due + "T00:00:00").toLocaleDateString("en-US", { month:"short", day:"numeric" })
+    : null;
   const nextLabel = item.status === "Not Started" ? "▶ Start"
     : item.status === "In Progress" ? "✓ Done"
     : item.status === "Blocked" ? "▶ Go" : "↩";
@@ -3780,6 +3849,7 @@ function HubTaskTile({ item, onSaveStatus, onOpenItem, statusC }) {
         <div style={{ fontSize:10, color:item._color, fontWeight:600, marginTop:1, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{item._label}</div>
         <div style={{ display:"flex", gap:5, flexWrap:"wrap", alignItems:"center", marginTop:4 }}>
           {urg && <span style={{ fontSize:9, fontWeight:urg.w, color:urg.color, background:urg.bg, borderRadius:4, padding:"2px 6px" }}>{urg.text}</span>}
+          {fmtDue && <span style={{ fontSize:9, color:"#9ca3af", background:"rgba(0,0,0,0.04)", borderRadius:4, padding:"2px 5px" }}>{fmtDue}</span>}
           {item.status === "Blocked" && <span style={{ fontSize:9, fontWeight:700, color:"#f87171", background:"rgba(248,113,113,0.1)", borderRadius:4, padding:"2px 6px" }}>Blocked</span>}
           <span style={{ fontSize:9, color:"#9ca3af" }}>{item.status}</span>
         </div>
@@ -4006,7 +4076,7 @@ function MyHubView({ projects, people, holidays, pto = [], currentUserId, onSetC
 
   // Week bounds (Mon–Sun)
   const weekStart = new Date(TODAY);
-  const day = weekStart.getDay(); weekStart.setDate(weekStart.getDate() - (day === 0 ? 6 : day - 1));
+  const day = weekStart.getDay(); weekStart.setDate(weekStart.getDate() - day); // Sunday = 0, so subtract getDay()
   const weekEnd = new Date(weekStart); weekEnd.setDate(weekEnd.getDate() + 6);
   const weekStartStr = weekStart.toISOString().slice(0,10);
   const weekEndStr   = weekEnd.toISOString().slice(0,10);
@@ -4023,6 +4093,8 @@ function MyHubView({ projects, people, holidays, pto = [], currentUserId, onSetC
   const [editingTask, setEditingTask] = useState(null);
   const [showWorkReport, setShowWorkReport] = useState(false);
   const [waitingIds, setWaitingIds] = useState(new Set()); // tasks parked from Focus strip
+  const [sortBy, setSortBy] = useState("date"); // "date" | "project"
+  const [filterProject, setFilterProject] = useState(""); // "" = all, or projId
   const [taskForm, setTaskForm] = useState({ title: "", status: "Not Started", priority: "Medium", dueDate: "", notes: "" });
   const hubHolidaySet = new Set((holidays||[]).map(h => h.date));
 
@@ -4243,16 +4315,40 @@ function MyHubView({ projects, people, holidays, pto = [], currentUserId, onSetC
   });
 
   // Bucket by time horizon
-  const overdueItems = all.filter(t => t._due && t._due < todayISO);
-  const todayItems   = all.filter(t => t._due === todayISO);
-  const week2Items   = all.filter(t => t._due && t._due > todayISO && t._due <= in14s);
-  const week4Items   = all.filter(t => t._due && t._due > in14s  && t._due <= in28s);
-  const futureItems  = all.filter(t => t._due && t._due > in28s);
-  const nodateItems  = all.filter(t => !t._due);
+  // "This Week"   = overdue + today + rest of current week (Mon-Sun)
+  // "Next 2-4 Wks" = after this week end up to 28 days out
+  // "4 Weeks+"    = beyond 28 days
+  const overdueItems  = all.filter(t => t._due && t._due < todayISO);
+  const thisWeekItems = all.filter(t => t._due && t._due >= todayISO && t._due <= weekEndStr);
+  const week4Items    = all.filter(t => t._due && t._due > weekEndStr && t._due <= in28s);
+  const futureItems   = all.filter(t => t._due && t._due > in28s);
+  const nodateItems   = all.filter(t => !t._due);
 
-  const activeNow = [...overdueItems, ...todayItems, ...week2Items];
+  // Apply sort within each bucket
+  // Distinct projects the current user has active tasks in (for filter dropdown)
+  const myProjectOptions = [...new Map(
+    all.map(t => [t.projId, { id: t.projId, name: t.projName }])
+  ).values()].sort((a, b) => (a.name||"").localeCompare(b.name||""));
+
+  const sortItems = (items) => {
+    // 1. Apply project filter
+    const filtered = filterProject ? items.filter(t => t.projId === filterProject) : items;
+    // 2. Apply sort
+    if (sortBy === "project") {
+      return [...filtered].sort((a, b) => {
+        const pCmp = (a.projName||"").localeCompare(b.projName||"");
+        if (pCmp !== 0) return pCmp;
+        const ad = a._due, bd = b._due;
+        if (!ad && !bd) return 0; if (!ad) return 1; if (!bd) return -1;
+        return ad < bd ? -1 : ad > bd ? 1 : 0;
+      });
+    }
+    return filtered; // already date-sorted from `all`
+  };
+
+  const activeNow   = [...overdueItems, ...thisWeekItems]; // for the "urgent" count badge
   const totalActive = all.length;
-  const overdueCount = overdueItems.length + todayItems.length;
+  const overdueCount = overdueItems.length;
 
 
   // CollapsibleBucket defined at MyHubView level
@@ -4421,18 +4517,18 @@ function MyHubView({ projects, people, holidays, pto = [], currentUserId, onSetC
       {/* ── Notification Center ── */}
       {(() => {
         const allUnread = notifications.filter(n => !n.isRead);
-        const completions = allUnread.filter(n => n.type === "task_completed");
-        // task_assigned: always filter to whoever's hub we're viewing
-        const assignments = allUnread.filter(n => n.type === "task_assigned" && n.assignedToPersonId === meId);
-        // Admin sees: completions (all) + assignments for the person they're viewing
-        // Member sees: their own assignments only
+        const completions  = allUnread.filter(n => n.type === "task_completed");
+        const assignments  = allUnread.filter(n => n.type === "task_assigned"  && n.assignedToPersonId === meId);
+        const readyToStart = allUnread.filter(n => n.type === "task_ready"     && n.assignedToPersonId === meId);
+        // Admin: completions + assignments + ready-to-start for viewed person
+        // Member: own assignments + own ready-to-start
         const visibleNotifs = currentRole === "admin"
-          ? [...completions, ...assignments]
-          : assignments;
+          ? [...completions, ...assignments, ...readyToStart]
+          : [...assignments, ...readyToStart];
         if (!visibleNotifs.length) return null;
-        const typeIcon  = { task_completed:"✓", task_assigned:"+" };
-        const typeColor = { task_completed:"#f97316", task_assigned:BRAND_TEAL };
-        const typeLabel = { task_completed:"Task Completed", task_assigned:"Assigned to You" };
+        const typeIcon  = { task_completed:"✓", task_assigned:"+", task_ready:"▶" };
+        const typeColor = { task_completed:"#f97316", task_assigned:BRAND_TEAL, task_ready:"#6366f1" };
+        const typeLabel = { task_completed:"Task Completed", task_assigned:"Assigned to You", task_ready:"Ready to Start" };
         return (
           <div style={{ background:"#fff", border:"1px solid rgba(0,0,0,0.08)", borderRadius:10, overflow:"hidden" }}>
             <div style={{ padding:"12px 16px", background:"#f8fafc", borderBottom:"1px solid rgba(0,0,0,0.07)", display:"flex", alignItems:"center", justifyContent:"space-between", gap:10 }}>
@@ -4505,9 +4601,44 @@ function MyHubView({ projects, people, holidays, pto = [], currentUserId, onSetC
                           View Task
                         </button>
                       )}
+                      {n.type === "task_ready" && (() => {
+                        // Reuse same task-lookup logic as "View Task"
+                        function findAndOpen(andStart) {
+                          const tid = n.taskId;
+                          if (!tid) return;
+                          let found = null;
+                          for (let pi = 0; pi < projects.length && !found; pi++) {
+                            const p = projects[pi];
+                            for (let di = 0; di < (p.deliverables||[]).length && !found; di++) {
+                              const d = p.deliverables[di];
+                              if (d.id === tid) { found = { ...d, projectId:p.id, projectName:p.name, projectColor:p.color, deliverableId:null }; }
+                              else { const s = (d.subtasks||[]).find(x => x.id === tid); if (s) found = { ...s, projectId:p.id, projectName:p.name, projectColor:p.color, deliverableId:d.id }; }
+                            }
+                          }
+                          if (!found) return;
+                          if (andStart) {
+                            onSaveItem && onSaveItem({ ...found, status:"In Progress" });
+                            onDismissNotification?.(n.id);
+                          } else {
+                            onEditItem(found);
+                          }
+                        }
+                        return (
+                          <>
+                            <button onClick={e => { e.stopPropagation(); findAndOpen(true); }}
+                              style={{ fontSize:10, fontWeight:700, color:"#fff", background:"#6366f1", border:"none", borderRadius:5, padding:"4px 9px", cursor:"pointer", fontFamily:"inherit", whiteSpace:"nowrap" }}>
+                              ▶ Start
+                            </button>
+                            <button onClick={e => { e.stopPropagation(); findAndOpen(false); }}
+                              style={{ fontSize:10, fontWeight:700, color:"#6366f1", background:"rgba(99,102,241,0.1)", border:"1px solid rgba(99,102,241,0.25)", borderRadius:5, padding:"4px 9px", cursor:"pointer", fontFamily:"inherit" }}>
+                              View
+                            </button>
+                          </>
+                        );
+                      })()}
                       <button onClick={e => { e.stopPropagation(); onDismissNotification?.(n.id); }}
                         style={{ fontSize:10, color:"#9ca3af", background:"rgba(0,0,0,0.04)", border:"none", borderRadius:5, padding:"4px 8px", cursor:"pointer", fontFamily:"inherit" }}>
-                        {n.type==="task_completed" ? "✓ Reviewed" : "✓ Clear"}
+                        {n.type==="task_completed" ? "✓ Reviewed" : n.type==="task_ready" ? "✓ Done" : "✓ Clear"}
                       </button>
                     </div>
                   </div>
@@ -4663,35 +4794,70 @@ function MyHubView({ projects, people, holidays, pto = [], currentUserId, onSetC
           </div>
         )}
 
+
         {all.length > 0 && (
           <>
-            {/* Active zone: overdue + today + next 2 weeks */}
-            <div style={{ fontSize:10, fontWeight:700, color:"#9ca3af", textTransform:"uppercase", letterSpacing:"0.07em", marginBottom:8 }}>
-              Now &amp; Next 2 Weeks
-              {activeNow.length > 0 && <span style={{ color:"#6b7280", fontWeight:500, textTransform:"none", letterSpacing:0, marginLeft:6 }}>{activeNow.length} task{activeNow.length!==1?"s":""}</span>}
-            </div>
-            {activeNow.length === 0 && (
-              <div style={{ fontSize:11, color:"#9ca3af", padding:"8px 0", marginBottom:8 }}>All clear for the next two weeks.</div>
-            )}
-            <div style={{ display:"grid", gridTemplateColumns:"repeat(2,1fr)", gap:8, marginBottom:8 }}>
-              {activeNow.map(item => <HubTaskTile key={item._key} item={item}
-                statusC={statusC}
-                onOpenItem={handleOpenItem}
-                onSaveStatus={handleSaveStatus}
-              />)}
+            {/* ── Sort + Filter controls ── */}
+            <div style={{ display:"flex", alignItems:"center", gap:6, padding:"8px 16px 4px", flexWrap:"wrap" }}>
+              <span style={{ fontSize:10, color:"#9ca3af", fontWeight:600, marginRight:2 }}>SORT:</span>
+              {[["date","By Date"],["project","By Project"]].map(([val,label]) => (
+                <button key={val} onClick={() => setSortBy(val)}
+                  style={{ fontSize:10, fontWeight:600, padding:"3px 9px", borderRadius:5, cursor:"pointer", fontFamily:"inherit",
+                    background: sortBy===val ? BRAND_TEAL+"18" : "none",
+                    color: sortBy===val ? BRAND_TEAL : "#9ca3af",
+                    border: "1px solid "+(sortBy===val ? BRAND_TEAL+"40" : "rgba(0,0,0,0.08)") }}>
+                  {label}
+                </button>
+              ))}
+              {myProjectOptions.length > 1 && (
+                <>
+                  <span style={{ fontSize:10, color:"rgba(0,0,0,0.15)", margin:"0 2px" }}>|</span>
+                  <span style={{ fontSize:10, color:"#9ca3af", fontWeight:600 }}>PROJECT:</span>
+                  <select
+                    value={filterProject}
+                    onChange={e => setFilterProject(e.target.value)}
+                    style={{ fontSize:10, padding:"3px 7px", borderRadius:5, border:"1px solid rgba(0,0,0,0.12)",
+                      background: filterProject ? BRAND_TEAL+"12" : "#fff",
+                      color: filterProject ? BRAND_TEAL : "#6b7280",
+                      fontFamily:"inherit", cursor:"pointer", outline:"none", maxWidth:160 }}>
+                    <option value="">All Projects</option>
+                    {myProjectOptions.map(p => (
+                      <option key={p.id} value={p.id}>{p.name}</option>
+                    ))}
+                  </select>
+                  {filterProject && (
+                    <button onClick={() => setFilterProject("")}
+                      style={{ fontSize:10, color:"#9ca3af", background:"none", border:"none", cursor:"pointer", padding:"2px 4px", fontFamily:"inherit" }}>
+                      ✕ Clear
+                    </button>
+                  )}
+                </>
+              )}
             </div>
 
-            {/* Collapsed future buckets */}
-            <CollapsibleBucket label="Weeks 3–4 (Coming up)" items={week4Items} accent="#6366f1" renderItem={item => <HubTaskTile key={item._key} item={item}
-                  statusC={statusC}
-                  onOpenItem={handleOpenItem}
-                  onSaveStatus={handleSaveStatus}
-                />} />
-            <CollapsibleBucket label="Beyond 4 weeks (On the horizon)" items={[...futureItems,...nodateItems]} accent="#9ca3af" renderItem={item => <HubTaskTile key={item._key} item={item}
-                  statusC={statusC}
-                  onOpenItem={handleOpenItem}
-                  onSaveStatus={handleSaveStatus}
-                />} />
+            {/* ── This Week (overdue + due by Sunday) ── */}
+            <div style={{ padding:"0 16px" }}>
+              <div style={{ fontSize:10, fontWeight:700, color:"#9ca3af", textTransform:"uppercase", letterSpacing:"0.07em", marginBottom:6, marginTop:6, display:"flex", alignItems:"center", gap:6 }}>
+                This Week
+                {overdueItems.length > 0 && <span style={{ fontSize:9, fontWeight:700, color:"#f87171", background:"rgba(248,113,113,0.1)", borderRadius:4, padding:"1px 6px" }}>{overdueItems.length} overdue</span>}
+                {activeNow.length > 0 && <span style={{ color:"#9ca3af", fontWeight:500, textTransform:"none", letterSpacing:0 }}>({activeNow.length})</span>}
+              </div>
+              {activeNow.length === 0 && (
+                <div style={{ fontSize:11, color:"#9ca3af", padding:"8px 0", marginBottom:8 }}>All clear this week.</div>
+              )}
+              <div style={{ display:"grid", gridTemplateColumns:"repeat(2,1fr)", gap:8, marginBottom:8 }}>
+                {sortItems(activeNow).map(item => <HubTaskTile key={item._key} item={item}
+                  statusC={statusC} onOpenItem={handleOpenItem} onSaveStatus={handleSaveStatus} />)}
+              </div>
+            </div>
+
+            {/* ── Next 2–4 Weeks ── */}
+            <CollapsibleBucket label="Next 2–4 Weeks" items={sortItems(week4Items)} accent="#6366f1" renderItem={item =>
+              <HubTaskTile key={item._key} item={item} statusC={statusC} onOpenItem={handleOpenItem} onSaveStatus={handleSaveStatus} />} />
+
+            {/* ── 4 Weeks+ ── */}
+            <CollapsibleBucket label="4 Weeks+" items={sortItems([...futureItems,...nodateItems])} accent="#9ca3af" renderItem={item =>
+              <HubTaskTile key={item._key} item={item} statusC={statusC} onOpenItem={handleOpenItem} onSaveStatus={handleSaveStatus} />} />
           </>
         )}
 
@@ -7381,6 +7547,7 @@ function NewDeliverableModal({ project, onClose, onAdd, allPeople, savedTemplate
   };
   const [error, setError] = useState("");
   const [keepOpen, setKeepOpen] = useState(false);
+  const [fromTemplate, setFromTemplate] = useState(null);
 
   const handleAdd = () => {
     if (!form.title.trim()) { setError("Title is required."); return; }
@@ -8381,6 +8548,41 @@ export default function App() {
       }
       return newProjs;
     };
+
+
+    // ── Workflow: "Task Ready to Start" notifications ──────────────────────────
+    // Fire synchronously (before optimistic) so the notification appears
+    // instantly, matching the behaviour of task_assigned notifications above.
+    const prevStatus = oldItem?.status;
+    const wasJustCompleted = updated.status === "Done" && prevStatus !== "Done";
+
+    if (wasJustCompleted) {
+      const nextProjs = doSave(projects); // post-completion tree
+      const readyTasks = getReadyTasks(nextProjs, updated.id);
+      const readyNotifs = buildReadyNotifications({
+        readyTasks,
+        people,
+        completedByPersonId: authMemberId || currentUserId,
+        notifications,
+      });
+      if (readyNotifs.length > 0) {
+        console.log(`[PulseX] workflow — ${readyTasks.length} task(s) ready to start:`,
+          readyTasks.map(t => t.title));
+        setNotifications(prev => [...readyNotifs, ...prev]);
+        setToastNotif({ ...readyNotifs[0] });
+        if (SB_READY) {
+          readyNotifs.forEach(n => {
+            sb.upsert("task_notifications", {
+              id: n.id, task_id: n.taskId, notification_type: "task_ready",
+              message: n.message, assigned_to_person_id: n.assignedToPersonId,
+              completed_by_person_id: n.completedByPersonId,
+              project_id: n.projectId, deliverable_id: n.deliverableId,
+              is_read: false, created_at: n.createdAt,
+            }).then(r => { if (r?.error) console.error("[PulseX] ready notif save failed:", r.error); });
+          });
+        }
+      }
+    }
 
     optimistic(
       () => setProjects(ps => doSave(ps)),
