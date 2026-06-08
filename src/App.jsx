@@ -12,7 +12,7 @@ import { parseDate, fmt, durDays, dayOffset, busyDays, addWorkingDays } from "./
 import { effortHours, classifyLoad, ptoDaysInWeek, availableHours } from "./utils/workload.js";
 import { getInitials } from "./utils/formatting.js";
 import { rowToSubtask, rowToDeliverable, rowToProject, delToRow, subToRow, ptoToRow, rowToPto, isOnPto, ptoOverlap } from "./lib/dataConverters.js";
-import { signOut, getStoredSession, fetchAppUser } from "./lib/supabaseAuth.js";
+import { signOut, getStoredSession, fetchAppUser, refreshSession } from "./lib/supabaseAuth.js";
 import LoginScreen from "./components/LoginScreen.jsx";
 
 const MEMBER_COLORS = ["#f59e0b","#38bdf8","#a78bfa","#34d399","#f87171","#fb923c","#e879f9","#4ade80","#60a5fa","#facc15","#64748b"];
@@ -9241,22 +9241,55 @@ export default function App() {
     try { localStorage.removeItem("planr_view"); } catch {}
   };
   useEffect(() => {
-    const session = getStoredSession();
-    if (!session) { setAuthLoading(false); return; }
-    fetchAppUser(session.user?.id, session.access_token)
-      .then(appUser => {
-        if (appUser) {
-          setCurrentRole(appUser.role);
-          setCurrentUser(appUser.teamMemberId);
-          setOwnMemberId(appUser.teamMemberId);
-          try { localStorage.setItem("planr_own_member_id", appUser.teamMemberId); } catch {}
+    async function boot() {
+      let session = getStoredSession();
+      if (!session) { setAuthLoading(false); return; }
+
+      // If the stored access token is expired but we have a refresh token, silently refresh
+      const isExpired = session.expires_at && Date.now() / 1000 > session.expires_at;
+      if (isExpired && session.refresh_token) {
+        const refreshed = await refreshSession(session);
+        if (refreshed) {
+          session = refreshed;
+        } else {
+          // Refresh failed — clear session and show login
+          try { localStorage.removeItem("sb_session"); } catch {}
+          setAuthLoading(false);
+          return;
         }
-        setAuthSession(session); setAuthUser(session.user); setAuthLoading(false);
-      })
-      .catch(() => {
-        setAuthSession(session); setAuthUser(session.user); setAuthLoading(false);
-      });
+      }
+
+      fetchAppUser(session.user?.id, session.access_token)
+        .then(appUser => {
+          if (appUser) {
+            setCurrentRole(appUser.role);
+            setCurrentUser(appUser.teamMemberId);
+            setOwnMemberId(appUser.teamMemberId);
+            try { localStorage.setItem("planr_own_member_id", appUser.teamMemberId); } catch {}
+          }
+          setAuthSession(session); setAuthUser(session.user); setAuthLoading(false);
+        })
+        .catch(() => {
+          setAuthSession(session); setAuthUser(session.user); setAuthLoading(false);
+        });
+    }
+    boot();
   }, []); // eslint-disable-line
+
+  // Background token refresh — runs every 10 minutes, refreshes if expiry < 15 min away
+  useEffect(() => {
+    const interval = setInterval(async () => {
+      const session = getStoredSession();
+      if (!session?.refresh_token) return;
+      const secsLeft = (session.expires_at || 0) - Date.now() / 1000;
+      if (secsLeft < 900) { // refresh when less than 15 minutes remaining
+        const refreshed = await refreshSession(session);
+        if (refreshed) setAuthSession(refreshed);
+      }
+    }, 10 * 60 * 1000); // check every 10 minutes
+    return () => clearInterval(interval);
+  }, []);
+
 
   // Detect session expiry from sbFetch and show friendly message
   useEffect(() => {
@@ -10254,9 +10287,15 @@ export default function App() {
     }).catch(() => {});
   }, [SB_READY, ownMemberId]);
 
-  // Track login on initial load
+  // Track login on initial load — once per browser session (sessionStorage flag prevents duplicates)
   React.useEffect(() => {
-    if (SB_READY && ownMemberId) trackActivity("login");
+    if (SB_READY && ownMemberId) {
+      const key = `planr_login_tracked_${ownMemberId}`;
+      if (!sessionStorage.getItem(key)) {
+        trackActivity("login");
+        try { sessionStorage.setItem(key, "1"); } catch {}
+      }
+    }
   }, [SB_READY, ownMemberId]);
 
   // Track tab/view changes

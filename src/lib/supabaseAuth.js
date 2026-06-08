@@ -146,28 +146,20 @@ export async function updatePassword(newPassword, accessToken) {
 export async function sendPasswordReset(email, redirectTo) {
   try {
     const body = { email };
-
-    if (redirectTo) {
-      body.redirect_to = redirectTo;
-    }
-
+    if (redirectTo) body.redirect_to = redirectTo;
     const res = await fetch(`${getBase()}/auth/v1/recover`, {
       method: "POST",
       headers: authHeaders(),
       body: JSON.stringify(body),
     });
-
+    // 200 or 429 (rate limit)
+    if (res.status === 429) {
+      return { error: "Too many reset attempts. Please wait a few minutes and try again." };
+    }
     if (!res.ok) {
       const data = await res.json().catch(() => ({}));
-      const msg =
-        data.error_description ||
-        data.msg ||
-        data.error ||
-        `Password reset failed with status ${res.status}`;
-
-      return { error: friendlyAuthError(msg) };
+      return { error: friendlyAuthError(data.error_description || data.msg || "Reset failed") };
     }
-
     return { error: null };
   } catch {
     return { error: "Could not send reset email. Check your connection." };
@@ -187,6 +179,22 @@ export async function signOut(accessToken) {
   }
 }
 
+// ── Refresh an expired access token using the refresh_token ──────────────
+export async function refreshSession(session) {
+  if (!session?.refresh_token) return null;
+  try {
+    const res = await fetch(`${getBase()}/auth/v1/token?grant_type=refresh_token`, {
+      method: "POST",
+      headers: authHeaders(null),
+      body: JSON.stringify({ refresh_token: session.refresh_token }),
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    if (!data.access_token) return null;
+    return storeSession(data); // persist refreshed session
+  } catch { return null; }
+}
+
 // ── Restore session from localStorage ─────────────────────────────────────
 export function getStoredSession() {
   try {
@@ -194,6 +202,10 @@ export function getStoredSession() {
     if (!raw) return null;
     const session = JSON.parse(raw);
     if (session.expires_at && Date.now() / 1000 > session.expires_at) {
+      // Token is expired — if there's a refresh token, keep the session object
+      // so the app can attempt a refresh. Don't wipe it here.
+      // The app will call refreshSession() and replace it.
+      if (session.refresh_token) return session; // return stale session; app will refresh
       localStorage.removeItem("sb_session");
       return null;
     }
