@@ -5262,6 +5262,773 @@ function ReportExportCenter({ projects, people, pto, adminTasks, holidays }) {
 }
 
 
+
+// ─────────────────────────────────────────────────────────────────────────────
+// KPI DASHBOARD — Admin only
+// Measures PulseX adoption, data quality, workflow, and system value.
+// NOT an employee scorecard — focus is platform health and improvement.
+// ─────────────────────────────────────────────────────────────────────────────
+
+function Sparkline({ data = [], color = "#0ea5e9", width = 80, height = 32, fill = false }) {
+  const w = typeof width === "number" ? width : 80;
+  const h = typeof height === "number" ? height : 32;
+  if (!data || data.length < 2) {
+    return <svg width={w} height={h}><line x1={0} y1={h/2} x2={w} y2={h/2} stroke="#e5e7eb" strokeWidth={1} /></svg>;
+  }
+  const min = Math.min(...data), max = Math.max(...data);
+  const range = max - min || 1;
+  const pts = data.map((v, i) => [
+    (i / (data.length - 1)) * w,
+    h - 4 - ((v - min) / range) * (h - 8),
+  ]);
+  const polyline = pts.map(([x,y]) => `${x.toFixed(1)},${y.toFixed(1)}`).join(" ");
+  const fillPath = fill
+    ? `M${pts[0][0]},${h} ` + pts.map(([x,y]) => `L${x},${y}`).join(" ") + ` L${pts[pts.length-1][0]},${h} Z`
+    : null;
+  return (
+    <svg width={w} height={h} style={{ display:"block", overflow:"visible" }}>
+      {fill && <path d={fillPath} fill={color + "20"} />}
+      <polyline points={polyline} fill="none" stroke={color} strokeWidth={1.5} strokeLinejoin="round" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+function KPIMetricCard({ label, value, sub, desc, trend, trendLabel, color = "#0ea5e9", sparkData, icon, warning }) {
+  const trendUp   = typeof trend === "number" && trend > 0;
+  const trendDown = typeof trend === "number" && trend < 0;
+  const trendColor = trendUp ? "#10b981" : trendDown ? "#f87171" : "#9ca3af";
+  return (
+    <div style={{ background:"#fff", borderWidth:"1px", borderStyle:"solid", borderColor:`${warning ? "#fde68a" : "rgba(0,0,0,0.08)"}`, borderTopWidth:"3px", borderTopColor:`${warning ? "#f59e0b" : color}`, borderRadius:8, padding:"14px 16px", minWidth:0 }}>
+      <div style={{ fontSize:10, fontWeight:700, color:"#9ca3af", letterSpacing:"0.07em", textTransform:"uppercase", marginBottom:6 }}>
+        {icon && <span style={{ marginRight:5 }}>{icon}</span>}{label}
+      </div>
+      <div style={{ fontSize:24, fontWeight:900, color: warning ? "#f59e0b" : color, lineHeight:1 }}>{value}</div>
+      {sub    && <div style={{ fontSize:11, color:"#6b7280", marginTop:3 }}>{sub}</div>}
+      {desc   && <div style={{ fontSize:10, color:"#9ca3af", marginTop:4, lineHeight:1.4, borderTop:"1px solid rgba(0,0,0,0.05)", paddingTop:6 }}>{desc}</div>}
+      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginTop:8 }}>
+        {typeof trend === "number" ? (
+          <span style={{ fontSize:11, fontWeight:700, color:trendColor }}>
+            {trendUp ? "↑" : trendDown ? "↓" : "→"} {Math.abs(trend).toFixed(1)}{trendLabel || ""}
+          </span>
+        ) : <span />}
+        {sparkData && <Sparkline data={sparkData} color={color} width={72} height={28} fill />}
+      </div>
+    </div>
+  );
+}
+
+function KPISection({ title, children }) {
+  const [open, setOpen] = React.useState(true);
+  return (
+    <div style={{ background:"#fff", border:"1px solid rgba(0,0,0,0.08)", borderRadius:10, overflow:"hidden" }}>
+      <div onClick={() => setOpen(o => !o)} style={{ display:"flex", alignItems:"center", justifyContent:"space-between", padding:"12px 18px", cursor:"pointer", background:"#f8fafc", borderBottom: open ? "1px solid rgba(0,0,0,0.06)" : "none" }}>
+        <span style={{ fontSize:13, fontWeight:800, color:"#1f2937" }}>{title}</span>
+        <span style={{ fontSize:12, color:"#9ca3af" }}>{open ? "▲" : "▼"}</span>
+      </div>
+      {open && <div style={{ padding:"18px" }}>{children}</div>}
+    </div>
+  );
+}
+
+function KPIDashboardView({ projects, people, notifications, adminTasks = [], sb, SB_READY, authMemberId }) {
+  const [snapshots,    setSnapshots]    = React.useState([]);
+  const [activity,     setActivity]     = React.useState([]);
+  const [dateRange,    setDateRange]    = React.useState("30d");
+  const [exporting,    setExporting]    = React.useState(false);
+  const [snapshotSaved,setSnapshotSaved]= React.useState(false);
+
+  const today     = new Date(); today.setHours(0,0,0,0);
+  const todayStr  = today.toISOString().slice(0,10);
+  const EFFORT_HRS = { S:1, M:4, L:8 };
+  const eHrs = t => Number(t.customHours) || EFFORT_HRS[t.effort] || 4;
+
+  // ── Derived data ─────────────────────────────────────────────────────────
+  const activeProjects  = projects.filter(p => !p.archived);
+  const allDels         = activeProjects.flatMap(p => p.deliverables);
+  const allTasks        = activeProjects.flatMap(p =>
+    p.deliverables.flatMap(d => d.subtasks.length > 0 ? d.subtasks : [d])
+  );
+  const openTasks       = allTasks.filter(t => t.status !== "Done");
+  const doneTasks       = allTasks.filter(t => t.status === "Done");
+  const totalHrs        = allTasks.reduce((s,t) => s+eHrs(t), 0);
+  const assignedHrs     = openTasks.reduce((s,t) => s + ((t.assignees||[]).length > 0 ? eHrs(t) : 0), 0);
+
+  // ── Visibility Score ──────────────────────────────────────────────────────
+  const visibilityScore = React.useMemo(() => {
+    if (!activeProjects.length) return 0;
+    let totalPts = 0, maxPts = 0;
+    activeProjects.forEach(proj => {
+      const tasks = proj.deliverables.flatMap(d => d.subtasks.length > 0 ? d.subtasks : [d]);
+      const open  = tasks.filter(t => t.status !== "Done");
+      const pts = [
+        proj.client                           ? 10 : 0,
+        proj.deliverables.length > 0          ? 15 : 0,
+        tasks.length > 0                      ? 15 : 0,
+        open.length === 0 || open.every(t => (t.assignees||[]).length > 0)  ? 20 : Math.round(20 * open.filter(t=>(t.assignees||[]).length>0).length / open.length),
+        open.length === 0 || open.every(t => t.end)  ? 20 : Math.round(20 * open.filter(t=>t.end).length / open.length),
+        open.length === 0 || open.every(t => t.effort || t.customHours) ? 10 : Math.round(10 * open.filter(t=>t.effort||t.customHours).length / open.length),
+        proj.ownerId ? 10 : 0,
+      ];
+      totalPts += pts.reduce((s,v) => s+v, 0);
+      maxPts   += 100;
+    });
+    return maxPts > 0 ? Math.round((totalPts / maxPts) * 100) : 0;
+  }, [activeProjects]);
+
+  // ── Planning Completeness ─────────────────────────────────────────────────
+  const planningScore = React.useMemo(() => {
+    if (!activeProjects.length) return 0;
+    let pts = 0, max = 0;
+    activeProjects.forEach(proj => {
+      max += 4;
+      if (proj.ownerId) pts++;
+      if (proj.deliverables.length > 0) pts++;
+      const delsWithDates = proj.deliverables.filter(d => d.start && d.end).length;
+      if (proj.deliverables.length === 0 || delsWithDates / proj.deliverables.length >= 0.75) pts++;
+      const tasks = proj.deliverables.flatMap(d => d.subtasks.length > 0 ? d.subtasks : [d]);
+      if (tasks.length > 0) pts++;
+    });
+    return Math.round((pts / max) * 100);
+  }, [activeProjects]);
+
+  // ── Forecast Coverage ─────────────────────────────────────────────────────
+  const forecastCov = allTasks.length > 0
+    ? Math.round(allTasks.filter(t => t.effort || t.customHours).length / allTasks.length * 100) : 0;
+
+  // ── Capacity Visibility ───────────────────────────────────────────────────
+  const capacityVis = totalHrs > 0 ? Math.round((assignedHrs / totalHrs) * 100) : 0;
+
+  // ── Missing data ──────────────────────────────────────────────────────────
+  const missingOwners = openTasks.filter(t => !(t.assignees||[]).length).length;
+  const missingDates  = openTasks.filter(t => !t.end).length;
+  const missingEffort = openTasks.filter(t => !t.effort && !t.customHours).length;
+  const missingOwnersPct = openTasks.length ? Math.round(missingOwners/openTasks.length*100) : 0;
+  const missingDatesPct  = openTasks.length ? Math.round(missingDates/openTasks.length*100)  : 0;
+
+  // ── Stale projects ────────────────────────────────────────────────────────
+  const staleProjects = React.useMemo(() => {
+    return activeProjects.map(proj => {
+      const allProjTasks = proj.deliverables.flatMap(d => d.subtasks.length > 0 ? d.subtasks : [d]);
+      const dates = allProjTasks.flatMap(t => [t.start, t.end]).filter(Boolean).sort();
+      const latest = dates.length ? new Date(dates[dates.length-1] + "T00:00:00") : null;
+      const daysSince = latest ? Math.floor((today - latest) / 86400000) : 999;
+      return { ...proj, lastActivity: dates[dates.length-1] || null, daysSince };
+    }).sort((a,b) => b.daysSince - a.daysSince);
+  }, [activeProjects]);
+
+  // ── Avg task cycle time ───────────────────────────────────────────────────
+  const avgCycleTime = React.useMemo(() => {
+    const valid = doneTasks.filter(t => t.start && t.end && t.end > t.start);
+    if (!valid.length) return null;
+    const days = valid.map(t => Math.ceil((new Date(t.end+"T00:00:00") - new Date(t.start+"T00:00:00")) / 86400000));
+    const avg  = days.reduce((s,d) => s+d, 0) / days.length;
+    const sorted = [...days].sort((a,b) => a-b);
+    const median = sorted.length % 2 === 0
+      ? (sorted[sorted.length/2-1] + sorted[sorted.length/2]) / 2
+      : sorted[Math.floor(sorted.length/2)];
+    return { avg: Math.round(avg * 10) / 10, median: Math.round(median * 10) / 10, count: valid.length };
+  }, [doneTasks]);
+
+  // ── Reporting / Health coverage ───────────────────────────────────────────
+  const eligible = activeProjects.filter(p => {
+    const tasks = p.deliverables.flatMap(d => d.subtasks.length>0?d.subtasks:[d]);
+    return tasks.length > 0 && p.deliverables.some(d => d.end) && p.deliverables.some(d => (d.assignees||[]).length > 0);
+  });
+  const reportingCov    = activeProjects.length ? Math.round(eligible.length/activeProjects.length*100) : 0;
+  const healthEligible  = activeProjects.filter(p => p.deliverables.length > 0 && p.deliverables.some(d => d.end));
+  const healthCov       = activeProjects.length ? Math.round(healthEligible.length/activeProjects.length*100) : 0;
+
+  // ── Low-visibility projects ───────────────────────────────────────────────
+  const projectScores = React.useMemo(() => {
+    return activeProjects.map(proj => {
+      const tasks = proj.deliverables.flatMap(d => d.subtasks.length>0?d.subtasks:[d]);
+      const open  = tasks.filter(t => t.status !== "Done");
+      let pts = 0;
+      if (proj.client)                pts += 10;
+      if (proj.deliverables.length)   pts += 15;
+      if (tasks.length)               pts += 15;
+      if (!open.length || open.every(t=>(t.assignees||[]).length>0)) pts += 20;
+      else pts += Math.round(20 * open.filter(t=>(t.assignees||[]).length>0).length / open.length);
+      if (!open.length || open.every(t=>t.end)) pts += 20;
+      else pts += Math.round(20 * open.filter(t=>t.end).length / open.length);
+      if (!open.length || open.every(t=>t.effort||t.customHours)) pts += 10;
+      else pts += Math.round(10 * open.filter(t=>t.effort||t.customHours).length / open.length);
+      if (proj.ownerId) pts += 10;
+      return { ...proj, score: pts };
+    }).sort((a,b) => a.score - b.score);
+  }, [activeProjects]);
+
+  // ── Load snapshots + activity from Supabase ───────────────────────────────
+  React.useEffect(() => {
+    if (!SB_READY) return;
+
+    // Load last 12 months of snapshots
+    const since = new Date(today); since.setFullYear(since.getFullYear()-1);
+    sb.select("kpi_snapshots", `snapshot_date=gte.${since.toISOString().slice(0,10)}&order=snapshot_date.asc&limit=400`)
+      .then(r => { if (r.data) setSnapshots(r.data); })
+      .catch(() => {});
+
+    // Load activity last 90 days
+    const act90 = new Date(today); act90.setDate(act90.getDate()-90);
+    sb.select("user_activity", `occurred_at=gte.${act90.toISOString()}&order=occurred_at.desc&limit=2000`)
+      .then(r => { if (r.data) setActivity(r.data); })
+      .catch(() => {});
+  }, [SB_READY]);
+
+  // Ref guard — prevents React Strict Mode double-invocation from writing duplicate snapshots
+  const snapshotInFlight = React.useRef(false);
+
+
+  // ── Auto-capture snapshot if none for today ───────────────────────────────
+  React.useEffect(() => {
+    if (!SB_READY || snapshotSaved || snapshotInFlight.current) return;
+    const hasTodaySnapshot = snapshots.some(s => s.snapshot_date === todayStr);
+    if (hasTodaySnapshot) return;
+
+    // Derive active users from activity
+    const d7  = new Date(today); d7.setDate(d7.getDate()-7);
+    const d30 = new Date(today); d30.setDate(d30.getDate()-30);
+    const active7  = new Set(activity.filter(a => new Date(a.occurred_at) >= d7 ).map(a => a.person_id)).size;
+    const active30 = new Set(activity.filter(a => new Date(a.occurred_at) >= d30).map(a => a.person_id)).size;
+
+    const stale7  = staleProjects.filter(p => p.daysSince >= 7).length;
+    const stale14 = staleProjects.filter(p => p.daysSince >= 14).length;
+    const stale30 = staleProjects.filter(p => p.daysSince >= 30).length;
+
+    const snapshot = {
+      snapshot_date:            todayStr,
+      active_users_7d:          active7,
+      active_users_30d:         active30,
+      total_users:              people.length,
+      visibility_score:         visibilityScore,
+      tasks_missing_owners:     missingOwners,
+      tasks_missing_dates:      missingDates,
+      tasks_missing_effort:     missingEffort,
+      stale_projects_7d:        stale7,
+      stale_projects_14d:       stale14,
+      stale_projects_30d:       stale30,
+      planning_completeness:    planningScore,
+      forecast_coverage:        forecastCov,
+      capacity_visibility:      capacityVis,
+      avg_task_cycle_time_days: avgCycleTime?.avg || null,
+      reporting_coverage:       reportingCov,
+      project_health_coverage:  healthCov,
+      total_projects:           projects.length,
+      total_active_projects:    activeProjects.length,
+      total_tasks:              allTasks.length,
+      total_open_tasks:         openTasks.length,
+      total_deliverables:       allDels.length,
+    };
+
+    snapshotInFlight.current = true;
+    sb.upsert("kpi_snapshots", snapshot).then(r => {
+      // 409 = snapshot for today already exists (e.g. Strict Mode double-invoke) — treat as success
+      if (!r?.error || r?.status === 409) {
+        setSnapshots(prev => [...prev.filter(s => s.snapshot_date !== todayStr), snapshot]);
+        setSnapshotSaved(true);
+      } else { snapshotInFlight.current = false; }
+    }).catch(() => { snapshotInFlight.current = false; });
+  }, [SB_READY, snapshots.length, snapshotSaved]);
+
+  // ── Date range helpers ────────────────────────────────────────────────────
+  const rangeStart = React.useMemo(() => {
+    const d = new Date(today);
+    if (dateRange === "7d")  { d.setDate(d.getDate()-7);       return d.toISOString().slice(0,10); }
+    if (dateRange === "30d") { d.setDate(d.getDate()-30);      return d.toISOString().slice(0,10); }
+    if (dateRange === "90d") { d.setDate(d.getDate()-90);      return d.toISOString().slice(0,10); }
+    if (dateRange === "1y")  { d.setFullYear(d.getFullYear()-1); return d.toISOString().slice(0,10); }
+    if (dateRange === "ytd") { return `${today.getFullYear()}-01-01`; }
+    return new Date(today.getTime()-30*86400000).toISOString().slice(0,10);
+  }, [dateRange]);
+
+  const filteredSnaps = snapshots.filter(s => s.snapshot_date >= rangeStart);
+  const sparkVis      = filteredSnaps.map(s => Number(s.visibility_score||0));
+  const sparkPlan     = filteredSnaps.map(s => Number(s.planning_completeness||0));
+  const sparkForecast = filteredSnaps.map(s => Number(s.forecast_coverage||0));
+  const sparkCap      = filteredSnaps.map(s => Number(s.capacity_visibility||0));
+  const sparkActive7  = filteredSnaps.map(s => Number(s.active_users_7d||0));
+
+  // Trend = change vs start of period
+  const trend = (arr) => arr.length >= 2 ? arr[arr.length-1] - arr[0] : null;
+
+  // ── Activity-derived metrics ──────────────────────────────────────────────
+  const actD7   = activity.filter(a => { const d = new Date(a.occurred_at); return d >= new Date(today.getTime()-7*86400000); });
+  const actD30  = activity.filter(a => { const d = new Date(a.occurred_at); return d >= new Date(today.getTime()-30*86400000); });
+  const active7d  = new Set(actD7.map(a => a.person_id)).size;
+  const active30d = new Set(actD30.map(a => a.person_id)).size;
+
+  const loginEvents = actD30.filter(a => a.event_type === "login");
+  const avgLogins   = people.length > 0 ? (loginEvents.length / people.length).toFixed(1) : "—";
+
+  const featureCounts = ["myhub","dashboard","timeline","people","status","workload","reporting","history"].map(f => ({
+    feature: f,
+    label: { myhub:"My Hub", dashboard:"Dashboard", timeline:"Timeline", people:"By Person", status:"Status", workload:"Workload", reporting:"Reporting", history:"History" }[f] || f,
+    views: actD30.filter(a => a.event_type === `view_${f}`).length,
+    users: new Set(actD30.filter(a => a.event_type === `view_${f}`).map(a => a.person_id)).size,
+  })).sort((a,b) => b.views - a.views);
+
+  // Login recency per person
+  const lastLogin = people.map(p => {
+    const events = activity.filter(a => a.person_id === p.id && a.event_type === "login");
+    const last = events.sort((a,b) => b.occurred_at.localeCompare(a.occurred_at))[0];
+    const daysAgo = last ? Math.floor((today - new Date(last.occurred_at)) / 86400000) : null;
+    return { ...p, lastEvent: last?.occurred_at || null, daysAgo };
+  }).sort((a,b) => (a.daysAgo ?? 9999) - (b.daysAgo ?? 9999));
+
+  // ── Excel export ──────────────────────────────────────────────────────────
+  const exportExcel = async () => {
+    setExporting(true);
+    try {
+      let XLSX = window.XLSX;
+      if (!XLSX) {
+        await new Promise((res,rej) => { const s=document.createElement("script"); s.src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"; s.onload=res; s.onerror=rej; document.head.appendChild(s); });
+        XLSX = window.XLSX;
+      }
+      const wb = XLSX.utils.book_new();
+
+      // Current KPIs
+      const currentRows = [
+        ["KPI","Value","Category"],
+        ["Visibility Score", visibilityScore+"%", "Data Quality"],
+        ["Planning Completeness", planningScore+"%", "Workflow"],
+        ["Forecast Coverage", forecastCov+"%", "Workflow"],
+        ["Capacity Visibility", capacityVis+"%", "Workflow"],
+        ["Reporting Coverage", reportingCov+"%", "System Value"],
+        ["Project Health Coverage", healthCov+"%", "System Value"],
+        ["Active Users (7d)", active7d, "Adoption"],
+        ["Active Users (30d)", active30d, "Adoption"],
+        ["Tasks Missing Owners", missingOwners + " ("+missingOwnersPct+"%)", "Data Quality"],
+        ["Tasks Missing Dates", missingDates + " ("+missingDatesPct+"%)", "Data Quality"],
+        ["Avg Task Cycle Time", avgCycleTime ? avgCycleTime.avg+"d" : "—", "Workflow"],
+      ];
+      const ws1 = XLSX.utils.aoa_to_sheet(currentRows);
+      ws1["!cols"] = [30,20,20].map(w=>({wch:w}));
+      XLSX.utils.book_append_sheet(wb, ws1, "Current KPIs");
+
+      // Historical snapshots
+      if (filteredSnaps.length > 0) {
+        const histRows = [["Date","Visibility","Planning","Forecast","Capacity","Active 7d","Active 30d","Missing Owners","Missing Dates","Stale 7d","Stale 30d"]];
+        filteredSnaps.forEach(s => histRows.push([
+          s.snapshot_date, s.visibility_score, s.planning_completeness, s.forecast_coverage,
+          s.capacity_visibility, s.active_users_7d, s.active_users_30d,
+          s.tasks_missing_owners, s.tasks_missing_dates, s.stale_projects_7d, s.stale_projects_30d,
+        ]));
+        const ws2 = XLSX.utils.aoa_to_sheet(histRows);
+        ws2["!cols"] = [12,...Array(10).fill(14)].map(w=>({wch:w}));
+        XLSX.utils.book_append_sheet(wb, ws2, "Historical Trends");
+      }
+
+      // Project scores
+      const projRows = [["Project","Client","Project #","Visibility Score","Has Owner","Has Deliverables","Has Tasks","Missing Owner Tasks","Missing Date Tasks"]];
+      projectScores.forEach(p => {
+        const tasks = p.deliverables.flatMap(d => d.subtasks.length>0?d.subtasks:[d]);
+        const open  = tasks.filter(t => t.status!=="Done");
+        projRows.push([p.name, p.client||"", p.projectNumber||"", p.score+"%", p.ownerId?"Yes":"No", p.deliverables.length, tasks.length, open.filter(t=>!(t.assignees||[]).length).length, open.filter(t=>!t.end).length]);
+      });
+      const ws3 = XLSX.utils.aoa_to_sheet(projRows);
+      ws3["!cols"] = [28,16,12,...Array(6).fill(16)].map(w=>({wch:w}));
+      XLSX.utils.book_append_sheet(wb, ws3, "Project Scores");
+
+      XLSX.writeFile(wb, `kpi-dashboard-${todayStr}.xlsx`);
+    } catch(e) { console.error("KPI export failed:", e); }
+    setExporting(false);
+  };
+
+  // ── CSV export ────────────────────────────────────────────────────────────
+  const exportCSV = () => {
+    const esc = v => `"${String(v||"").replace(/"/g,'""')}"`;
+    const rows = [["Date","Visibility","Planning","Forecast","Capacity","Active7d","Active30d","MissingOwners","MissingDates","Stale7d","Stale30d"]];
+    filteredSnaps.forEach(s => rows.push([
+      s.snapshot_date,s.visibility_score,s.planning_completeness,s.forecast_coverage,
+      s.capacity_visibility,s.active_users_7d,s.active_users_30d,
+      s.tasks_missing_owners,s.tasks_missing_dates,s.stale_projects_7d,s.stale_projects_30d,
+    ]));
+    const csv = rows.map(r=>r.map(esc).join(",")).join("\n");
+    const a = document.createElement("a");
+    a.href = "data:text/csv;charset=utf-8,"+encodeURIComponent(csv);
+    a.download = `kpi-trends-${todayStr}.csv`;
+    a.click();
+  };
+
+  // ── Shared styles ─────────────────────────────────────────────────────────
+  const TEAL = "#50C0C0", NAVY = "#002A4E";
+  const tblH = { fontSize:10, fontWeight:700, color:"#9ca3af", textTransform:"uppercase", letterSpacing:"0.06em", padding:"6px 10px", borderBottom:"2px solid rgba(0,0,0,0.07)", textAlign:"left", background:"#f8fafc" };
+  const tblC = (extra={}) => ({ fontSize:12, padding:"7px 10px", borderBottom:"1px solid rgba(0,0,0,0.05)", ...extra });
+  const fmtDate = d => d ? new Date(d+"T00:00:00").toLocaleDateString("en-US",{month:"short",day:"numeric"}) : "—";
+
+  return (
+    <div style={{ display:"flex", flexDirection:"column", gap:18, padding:"0 0 40px" }}>
+
+      {/* ── Header ── */}
+      <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", flexWrap:"wrap", gap:10 }}>
+        <div>
+          <h2 style={{ margin:0, fontSize:18, fontWeight:900, color:NAVY }}>KPI Dashboard</h2>
+          <p style={{ margin:"3px 0 0", fontSize:11, color:"#6b7280" }}>
+            Platform health, adoption, and data quality — {activeProjects.length} active projects · {people.length} users · {allTasks.length} tasks
+          </p>
+        </div>
+        <div style={{ display:"flex", gap:8, alignItems:"center", flexWrap:"wrap" }}>
+          {/* Date range */}
+          <div style={{ display:"flex", gap:2, background:"rgba(0,0,0,0.04)", borderRadius:7, padding:2 }}>
+            {[["7d","7 Days"],["30d","30 Days"],["90d","90 Days"],["ytd","YTD"],["1y","1 Year"]].map(([v,l]) => (
+              <button key={v} onClick={() => setDateRange(v)}
+                style={{ fontSize:10, fontWeight:600, padding:"4px 10px", borderRadius:5, border:"none", cursor:"pointer", fontFamily:"inherit",
+                  background: dateRange===v ? "#fff" : "none", color: dateRange===v ? NAVY : "#6b7280",
+                  boxShadow: dateRange===v ? "0 1px 4px rgba(0,0,0,0.1)" : "none" }}>
+                {l}
+              </button>
+            ))}
+          </div>
+          <button onClick={exportCSV}   style={{ fontSize:11, fontWeight:700, padding:"7px 13px", background:"#fff", color:NAVY, border:`1px solid rgba(0,0,0,0.15)`, borderRadius:7, cursor:"pointer", fontFamily:"inherit" }}>↓ CSV</button>
+          <button onClick={exportExcel} disabled={exporting}
+            style={{ fontSize:11, fontWeight:700, padding:"7px 13px", background:"#1d6f42", color:"#fff", border:"none", borderRadius:7, cursor:"pointer", fontFamily:"inherit", opacity:exporting?0.7:1 }}>
+            {exporting ? "Exporting…" : "↓ Excel"}
+          </button>
+        </div>
+      </div>
+
+      {/* ── Summary Cards ── */}
+      <div style={{ display:"grid", gridTemplateColumns:"repeat(5,1fr)", gap:12 }}>
+        <KPIMetricCard label="Visibility Score"       value={visibilityScore+"%"} color={TEAL}     icon="◉" sparkData={sparkVis}      trend={trend(sparkVis)}      trendLabel="pts"
+          desc="How well-structured your projects are. Scores tasks for having owners, due dates, effort estimates, and more." />
+        <KPIMetricCard label="Planning Completeness"  value={planningScore+"%"}   color="#6366f1"  icon="◈" sparkData={sparkPlan}     trend={trend(sparkPlan)}     trendLabel="pts"
+          desc="% of active projects that have an owner, deliverables, dates, and tasks defined before work begins." />
+        <KPIMetricCard label="Forecast Coverage"      value={forecastCov+"%"}     color="#0ea5e9"  icon="▬" sparkData={sparkForecast} trend={trend(sparkForecast)} trendLabel="pts"
+          desc="% of tasks with an effort estimate (S/M/L). Higher coverage means more reliable capacity forecasting." />
+        <KPIMetricCard label="Capacity Visibility"    value={capacityVis+"%"}     color="#8b5cf6"  icon="▦" sparkData={sparkCap}      trend={trend(sparkCap)}      trendLabel="pts"
+          desc="% of total forecasted hours that are assigned to a specific person. Shows how much future work has a clear owner." />
+        <KPIMetricCard label="Active Users (7d)"      value={activity.length > 0 ? active7d : "—"} sub={activity.length > 0 ? `of ${people.length}` : "Tracking starts now"}
+          color="#f59e0b" icon="⊙" sparkData={sparkActive7} trend={null} warning={activity.length === 0}
+          desc="Team members who have opened PulseX in the last 7 days. Measures day-to-day platform adoption." />
+      </div>
+
+      {/* ── Data note if no activity yet ── */}
+      {activity.length === 0 && (
+        <div style={{ background:"#fef9ec", border:"1px solid #fcd34d", borderRadius:8, padding:"10px 16px", fontSize:12, color:"#92400e" }}>
+          📊 Activity tracking is now live. Login and feature usage data will accumulate over the coming days. User adoption metrics will populate automatically.
+        </div>
+      )}
+
+      {/* ═══ 1. ADOPTION ═══ */}
+      <KPISection title="1 · Adoption">
+        <p style={{ margin:"0 0 16px", fontSize:12, color:"#6b7280", lineHeight:1.5 }}>
+          Tracks whether the team is actively using PulseX. Adoption is the foundation — the platform only improves visibility and planning if people are using it.
+        </p>
+        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:14, marginBottom:18 }}>
+          <div style={{ background:"#f8fafc", borderRadius:8, padding:"14px 16px" }}>
+            <div style={{ fontSize:10, fontWeight:700, color:"#9ca3af", textTransform:"uppercase", letterSpacing:"0.07em", marginBottom:4 }}>Active Users — 7 Days</div>
+            <div style={{ fontSize:26, fontWeight:900, color:TEAL }}>{activity.length > 0 ? `${active7d} / ${people.length}` : "—"}</div>
+            {activity.length > 0 && <div style={{ fontSize:11, color:"#6b7280" }}>{people.length > 0 ? Math.round(active7d/people.length*100) : 0}% of team active</div>}
+          </div>
+          <div style={{ background:"#f8fafc", borderRadius:8, padding:"14px 16px" }}>
+            <div style={{ fontSize:10, fontWeight:700, color:"#9ca3af", textTransform:"uppercase", letterSpacing:"0.07em", marginBottom:4 }}>Active Users — 30 Days</div>
+            <div style={{ fontSize:26, fontWeight:900, color:"#6366f1" }}>{activity.length > 0 ? `${active30d} / ${people.length}` : "—"}</div>
+            {activity.length > 0 && <div style={{ fontSize:11, color:"#6b7280" }}>Avg {avgLogins} logins / person</div>}
+          </div>
+          <div style={{ background:"#f8fafc", borderRadius:8, padding:"14px 16px" }}>
+            <div style={{ fontSize:10, fontWeight:700, color:"#9ca3af", textTransform:"uppercase", letterSpacing:"0.07em", marginBottom:4 }}>Snapshots Captured</div>
+            <div style={{ fontSize:26, fontWeight:900, color:"#0ea5e9" }}>{snapshots.length}</div>
+            <div style={{ fontSize:11, color:"#6b7280" }}>Daily KPI history</div>
+          </div>
+        </div>
+
+        {/* Login recency table */}
+        <div style={{ fontSize:12, fontWeight:700, color:NAVY, marginBottom:8 }}>Last Login by User</div>
+        <div style={{ overflowX:"auto" }}>
+          <table style={{ width:"100%", borderCollapse:"collapse" }}>
+            <thead><tr>
+              <th style={tblH}>User</th>
+              <th style={tblH}>Last Login</th>
+              <th style={tblH}>Status</th>
+              <th style={{ ...tblH, textAlign:"right" }}>Logins (30d)</th>
+            </tr></thead>
+            <tbody>
+              {lastLogin.map((p, i) => {
+                const logins30 = activity.filter(a => a.person_id === p.id && a.event_type === "login" && new Date(a.occurred_at) >= new Date(today.getTime()-30*86400000)).length;
+                const inactive = p.daysAgo === null || p.daysAgo > 14;
+                const label = p.daysAgo === null ? "No data yet" : p.daysAgo === 0 ? "Today" : p.daysAgo === 1 ? "Yesterday" : `${p.daysAgo}d ago`;
+                return (
+                  <tr key={p.id} style={{ background: inactive ? "rgba(248,113,113,0.05)" : i%2===0?"#fff":"rgba(0,0,0,0.01)" }}>
+                    <td style={tblC()}>
+                      <div style={{ display:"flex", alignItems:"center", gap:7 }}>
+                        <div style={{ width:20, height:20, borderRadius:"50%", background:p.color, display:"flex", alignItems:"center", justifyContent:"center", fontSize:8, fontWeight:800, color:"#fff" }}>
+                          {p.name.split(" ").map(w=>w[0]).join("").slice(0,2).toUpperCase()}
+                        </div>
+                        <span style={{ fontWeight:500 }}>{p.name}</span>
+                      </div>
+                    </td>
+                    <td style={tblC({ color: inactive ? "#f87171" : "#374151", fontWeight: inactive ? 700 : 400 })}>{label}</td>
+                    <td style={tblC()}>
+                      {p.daysAgo === null ? <span style={{ fontSize:10, color:"#9ca3af" }}>Not tracked yet</span>
+                        : p.daysAgo <= 1  ? <span style={{ fontSize:10, fontWeight:700, color:"#10b981", background:"rgba(16,185,129,0.1)", borderRadius:3, padding:"1px 6px" }}>Active</span>
+                        : p.daysAgo <= 7  ? <span style={{ fontSize:10, color:"#f59e0b", background:"rgba(245,158,11,0.1)", borderRadius:3, padding:"1px 6px" }}>Recent</span>
+                        : p.daysAgo <= 14 ? <span style={{ fontSize:10, color:"#f97316", background:"rgba(249,115,22,0.1)", borderRadius:3, padding:"1px 6px" }}>Inactive</span>
+                        : <span style={{ fontSize:10, fontWeight:700, color:"#f87171", background:"rgba(248,113,113,0.1)", borderRadius:3, padding:"1px 6px" }}>⚠ {p.daysAgo}d inactive</span>}
+                    </td>
+                    <td style={tblC({ textAlign:"right", fontVariantNumeric:"tabular-nums" })}>{logins30 || (p.daysAgo === null ? "—" : 0)}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </KPISection>
+
+      {/* ═══ 2. DATA QUALITY ═══ */}
+      <KPISection title="2 · Data Quality">
+        <p style={{ margin:"0 0 16px", fontSize:12, color:"#6b7280", lineHeight:1.5 }}>
+          Measures how complete and usable the data in PulseX is. High data quality means reports are reliable, capacity is accurate, and nothing important is invisible to the team.
+        </p>
+        {/* Summary row */}
+        <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:12, marginBottom:18 }}>
+          <KPIMetricCard label="Visibility Score"     value={visibilityScore+"%"} color={TEAL}    sub={`${activeProjects.length} projects scored`} sparkData={sparkVis} trend={trend(sparkVis)} trendLabel="pts"
+            desc="Each project earns points for having a client, deliverables, tasks, owners, due dates, and effort sizes. 100% = fully visible." />
+          <KPIMetricCard label="Tasks Missing Owners" value={missingOwners}       color="#f97316" sub={`${missingOwnersPct}% of ${openTasks.length} open tasks`} warning={missingOwnersPct > 20}
+            desc="Open tasks with no one assigned. Unowned tasks create blind spots in capacity planning and scheduling." />
+          <KPIMetricCard label="Tasks Missing Dates"  value={missingDates}        color="#f59e0b" sub={`${missingDatesPct}% of ${openTasks.length} open tasks`} warning={missingDatesPct > 20}
+            desc="Open tasks with no due date. Missing dates make Timeline and By Person views incomplete and forecasting unreliable." />
+        </div>
+
+        {/* Project scores table */}
+        <div style={{ fontSize:12, fontWeight:700, color:NAVY, marginBottom:8 }}>Project Visibility Scores <span style={{ fontSize:10, fontWeight:400, color:"#9ca3af" }}>— lowest first</span></div>
+        <div style={{ overflowX:"auto" }}>
+          <table style={{ width:"100%", borderCollapse:"collapse" }}>
+            <thead><tr>
+              <th style={tblH}>Project</th>
+              <th style={tblH}>Client</th>
+              <th style={{ ...tblH, width:120 }}>Score</th>
+              <th style={{ ...tblH, textAlign:"right" }}>No Owner</th>
+              <th style={{ ...tblH, textAlign:"right" }}>No Date</th>
+              <th style={{ ...tblH, textAlign:"right" }}>No Effort</th>
+            </tr></thead>
+            <tbody>
+              {projectScores.map((p, i) => {
+                const tasks = p.deliverables.flatMap(d => d.subtasks.length>0?d.subtasks:[d]);
+                const open  = tasks.filter(t => t.status!=="Done");
+                const mo = open.filter(t=>!(t.assignees||[]).length).length;
+                const md = open.filter(t=>!t.end).length;
+                const me = open.filter(t=>!t.effort&&!t.customHours).length;
+                const color = p.score >= 80 ? "#10b981" : p.score >= 60 ? "#f59e0b" : "#f87171";
+                return (
+                  <tr key={p.id} style={{ background: i%2===0?"#fff":"rgba(0,0,0,0.01)" }}>
+                    <td style={tblC()}>
+                      <div style={{ display:"flex", alignItems:"center", gap:7 }}>
+                        <div style={{ width:7, height:7, borderRadius:2, background:p.color, flexShrink:0 }} />
+                        <span style={{ fontWeight:500 }}>{p.name}</span>
+                      </div>
+                    </td>
+                    <td style={tblC({ color:"#6b7280" })}>{p.client||"—"}</td>
+                    <td style={tblC()}>
+                      <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+                        <div style={{ flex:1, height:5, background:"#f3f4f6", borderRadius:3 }}>
+                          <div style={{ height:5, background:color, borderRadius:3, width:`${p.score}%` }} />
+                        </div>
+                        <span style={{ fontSize:11, fontWeight:700, color, width:36, textAlign:"right" }}>{p.score}%</span>
+                      </div>
+                    </td>
+                    <td style={tblC({ textAlign:"right", color: mo>0?"#f87171":"#9ca3af" })}>{mo}</td>
+                    <td style={tblC({ textAlign:"right", color: md>0?"#f59e0b":"#9ca3af" })}>{md}</td>
+                    <td style={tblC({ textAlign:"right", color: me>0?"#9ca3af":"#10b981" })}>{me}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+
+        {/* Stale projects */}
+        {staleProjects.filter(p => p.daysSince >= 7).length > 0 && (
+          <div style={{ marginTop:20 }}>
+            <div style={{ fontSize:12, fontWeight:700, color:NAVY, marginBottom:8 }}>Stale Projects <span style={{ fontSize:10, fontWeight:400, color:"#9ca3af" }}>— no task updates in 7+ days</span></div>
+            <div style={{ display:"flex", gap:12, marginBottom:10 }}>
+              {[7,14,30].map(d => (
+                <div key={d} style={{ background:"#f8fafc", borderRadius:7, padding:"8px 14px", textAlign:"center" }}>
+                  <div style={{ fontSize:18, fontWeight:900, color: d===7?"#f59e0b":d===14?"#f97316":"#f87171" }}>{staleProjects.filter(p=>p.daysSince>=d).length}</div>
+                  <div style={{ fontSize:10, color:"#9ca3af" }}>{d}+ days</div>
+                </div>
+              ))}
+            </div>
+            <table style={{ width:"100%", borderCollapse:"collapse" }}>
+              <thead><tr>
+                <th style={tblH}>Project</th>
+                <th style={tblH}>Client</th>
+                <th style={tblH}>Last Activity</th>
+                <th style={{ ...tblH, textAlign:"right" }}>Days Since Update</th>
+              </tr></thead>
+              <tbody>
+                {staleProjects.filter(p=>p.daysSince>=7).map((p,i) => (
+                  <tr key={p.id} style={{ background: i%2===0?"#fff":"rgba(0,0,0,0.01)" }}>
+                    <td style={tblC()}>
+                      <div style={{ display:"flex", alignItems:"center", gap:7 }}>
+                        <div style={{ width:7, height:7, borderRadius:2, background:p.color, flexShrink:0 }} />
+                        <span style={{ fontWeight:500 }}>{p.name}</span>
+                      </div>
+                    </td>
+                    <td style={tblC({ color:"#6b7280" })}>{p.client||"—"}</td>
+                    <td style={tblC({ color:"#6b7280" })}>{fmtDate(p.lastActivity)}</td>
+                    <td style={tblC({ textAlign:"right", fontWeight:700, color: p.daysSince>=30?"#f87171":p.daysSince>=14?"#f97316":"#f59e0b" })}>
+                      {p.daysSince === 999 ? "No dates set" : `${p.daysSince}d`}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </KPISection>
+
+      {/* ═══ 3. WORKFLOW METRICS ═══ */}
+      <KPISection title="3 · Workflow Metrics">
+        <p style={{ margin:"0 0 16px", fontSize:12, color:"#6b7280", lineHeight:1.5 }}>
+          Measures how effectively PulseX is being used to plan, estimate, and manage work. Higher scores mean more predictable delivery and better resource allocation.
+        </p>
+        <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:12, marginBottom:18 }}>
+          <KPIMetricCard label="Planning Completeness" value={planningScore+"%"}  color="#6366f1" sparkData={sparkPlan}     trend={trend(sparkPlan)}     trendLabel="pts"
+            desc="% of projects that have an owner, deliverables with dates, and tasks before work starts. Goal: plan before you build." />
+          <KPIMetricCard label="Forecast Coverage"     value={forecastCov+"%"}   color="#0ea5e9" sparkData={sparkForecast} trend={trend(sparkForecast)} trendLabel="pts"
+            sub={`${allTasks.filter(t=>t.effort||t.customHours).length} / ${allTasks.length} tasks`}
+            desc="% of tasks with S/M/L effort sizing or custom hours. Needed to calculate capacity and workload reports accurately." />
+          <KPIMetricCard label="Capacity Visibility"   value={capacityVis+"%"}   color="#8b5cf6" sparkData={sparkCap}      trend={trend(sparkCap)}      trendLabel="pts"
+            sub={`${assignedHrs}h / ${totalHrs}h assigned`}
+            desc="% of total estimated hours that have a named owner. Shows how much future work is properly assigned vs floating." />
+          <KPIMetricCard label="Avg Cycle Time"        value={avgCycleTime ? avgCycleTime.avg+"d" : "—"} color="#f59e0b"
+            sub={avgCycleTime ? `Median ${avgCycleTime.median}d · ${avgCycleTime.count} tasks` : "No completed tasks with dates"}
+            desc="Average days from task start to completion. Tracks whether delivery speed is improving over time." />
+        </div>
+
+        {/* Forecast by project */}
+        <div style={{ fontSize:12, fontWeight:700, color:NAVY, marginBottom:8 }}>Forecast Coverage by Project</div>
+        <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:8 }}>
+          {activeProjects.map(proj => {
+            const tasks = proj.deliverables.flatMap(d => d.subtasks.length>0?d.subtasks:[d]);
+            const withEff = tasks.filter(t => t.effort||t.customHours).length;
+            const pct = tasks.length > 0 ? Math.round(withEff/tasks.length*100) : 0;
+            const color = pct >= 80 ? "#10b981" : pct >= 50 ? "#f59e0b" : "#f87171";
+            return (
+              <div key={proj.id} style={{ background:"#f8fafc", borderRadius:6, padding:"8px 12px" }}>
+                <div style={{ display:"flex", alignItems:"center", gap:6, marginBottom:4 }}>
+                  <div style={{ width:7, height:7, borderRadius:2, background:proj.color, flexShrink:0 }} />
+                  <span style={{ fontSize:11, fontWeight:600, color:"#1f2937", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{proj.name}</span>
+                </div>
+                <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+                  <div style={{ flex:1, height:4, background:"#e5e7eb", borderRadius:2 }}>
+                    <div style={{ height:4, background:color, borderRadius:2, width:`${pct}%` }} />
+                  </div>
+                  <span style={{ fontSize:10, fontWeight:700, color, width:30, textAlign:"right" }}>{pct}%</span>
+                </div>
+                <div style={{ fontSize:9, color:"#9ca3af", marginTop:2 }}>{withEff}/{tasks.length} tasks</div>
+              </div>
+            );
+          })}
+        </div>
+      </KPISection>
+
+      {/* ═══ 4. SYSTEM VALUE ═══ */}
+      <KPISection title="4 · System Value">
+        <p style={{ margin:"0 0 16px", fontSize:12, color:"#6b7280", lineHeight:1.5 }}>
+          Measures whether PulseX has enough data to generate meaningful reports, health scores, and capacity forecasts — the outputs the platform exists to produce.
+        </p>
+        <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:12 }}>
+          <KPIMetricCard label="Reporting Coverage"      value={reportingCov+"%"}    color="#10b981"
+            sub={`${eligible.length} / ${activeProjects.length} projects eligible`}
+            desc="% of active projects that qualify for reporting: have tasks, due dates, and at least one assigned owner." />
+          <KPIMetricCard label="Project Health Coverage" value={healthCov+"%"}        color="#0ea5e9"
+            sub={`${healthEligible.length} / ${activeProjects.length} with enough data`}
+            desc="% of projects with enough date information to calculate an on-track / at-risk / off-track status." />
+          <KPIMetricCard label="Notifications"           value={notifications.filter(n=>n.isRead).length}
+            sub={`${notifications.length} total · ${Math.round(notifications.length>0?notifications.filter(n=>n.isRead).length/notifications.length*100:0)}% open rate`}
+            color="#6366f1"
+            desc="Tracks whether workflow notifications (assignments, completions, ready-to-start) are being opened and acted on." />
+        </div>
+      </KPISection>
+
+      {/* ═══ 5. USER BEHAVIOR ═══ */}
+      <KPISection title="5 · User Behavior">
+        <p style={{ margin:"0 0 16px", fontSize:12, color:"#6b7280", lineHeight:1.5 }}>
+          Shows which parts of PulseX the team uses most. Helps identify underused features, training opportunities, and where the platform is delivering the most value.
+        </p>
+        {activity.length === 0 ? (
+          <div style={{ textAlign:"center", padding:"24px 0", color:"#9ca3af", fontSize:12 }}>
+            Feature usage tracking is now active. Data will appear as the team uses PulseX.
+          </div>
+        ) : (
+          <div>
+            <div style={{ fontSize:12, fontWeight:700, color:NAVY, marginBottom:10 }}>Feature Usage — Last 30 Days</div>
+            <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:10, marginBottom:18 }}>
+              {featureCounts.map(f => (
+                <div key={f.feature} style={{ background:"#f8fafc", borderRadius:7, padding:"10px 14px" }}>
+                  <div style={{ fontSize:11, fontWeight:600, color:"#374151" }}>{f.label}</div>
+                  <div style={{ fontSize:20, fontWeight:900, color:TEAL, marginTop:2 }}>{f.views}</div>
+                  <div style={{ fontSize:10, color:"#9ca3af" }}>views · {f.users} user{f.users!==1?"s":""}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Notification engagement */}
+        <div style={{ marginTop:8 }}>
+          <div style={{ fontSize:12, fontWeight:700, color:NAVY, marginBottom:8 }}>Notification Engagement</div>
+          <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:10 }}>
+            {["task_assigned","task_completed","task_ready"].map(type => {
+              const sent   = notifications.filter(n => n.type === type).length;
+              const opened = notifications.filter(n => n.type === type && n.isRead).length;
+              const rate   = sent > 0 ? Math.round(opened/sent*100) : 0;
+              const label  = { task_assigned:"Assigned to You", task_completed:"Task Completed", task_ready:"Ready to Start" }[type];
+              return (
+                <div key={type} style={{ background:"#f8fafc", borderRadius:7, padding:"10px 14px" }}>
+                  <div style={{ fontSize:10, fontWeight:600, color:"#6b7280" }}>{label}</div>
+                  <div style={{ fontSize:18, fontWeight:900, color:"#6366f1", marginTop:2 }}>{rate}%</div>
+                  <div style={{ fontSize:10, color:"#9ca3af" }}>open rate · {opened}/{sent}</div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      </KPISection>
+
+      {/* ═══ 6. TRENDS ═══ */}
+      {filteredSnaps.length >= 2 && (
+        <KPISection title="6 · Historical Trends">
+          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:16 }}>
+            {[
+              { label:"Visibility Score",      key:"visibility_score",       color:TEAL    },
+              { label:"Planning Completeness",  key:"planning_completeness",  color:"#6366f1"},
+              { label:"Forecast Coverage",      key:"forecast_coverage",      color:"#0ea5e9"},
+              { label:"Capacity Visibility",    key:"capacity_visibility",    color:"#8b5cf6"},
+            ].map(({ label, key, color }) => {
+              const vals  = filteredSnaps.map(s => Number(s[key]||0));
+              const first = vals[0], last = vals[vals.length-1];
+              const chg   = last - first;
+              return (
+                <div key={key} style={{ background:"#f8fafc", borderRadius:8, padding:"14px 16px" }}>
+                  <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-end", marginBottom:8 }}>
+                    <div>
+                      <div style={{ fontSize:10, fontWeight:700, color:"#9ca3af", textTransform:"uppercase", letterSpacing:"0.06em" }}>{label}</div>
+                      <div style={{ fontSize:22, fontWeight:900, color, lineHeight:1, marginTop:3 }}>{last.toFixed(0)}%</div>
+                    </div>
+                    <span style={{ fontSize:12, fontWeight:700, color: chg>0?"#10b981":chg<0?"#f87171":"#9ca3af" }}>
+                      {chg>0?"+":""}{chg.toFixed(1)}pts
+                    </span>
+                  </div>
+                  <div style={{ width:"100%" }}>
+                    <Sparkline data={vals} color={color} width={260} height={48} fill />
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+          <div style={{ fontSize:11, color:"#9ca3af", marginTop:12, textAlign:"center" }}>
+            Based on {filteredSnaps.length} daily snapshots in selected period. Snapshots are captured automatically each time this dashboard is opened.
+          </div>
+        </KPISection>
+      )}
+
+    </div>
+  );
+}
+
+
 function ReportingDashboardView({ projects, people, holidays = [], pto = [], adminTasks = [] }) {
   // Export center data is passed from parent props
   const [drawer, setDrawer] = useState(null); // { title, subtitle, rows, cols, groupBy }
@@ -5947,12 +6714,8 @@ function ReportingDashboardView({ projects, people, holidays = [], pto = [], adm
       })()}
 
 
-      {/* ═══════════════════════════════════════════════════════════════════════
+      {/* TIME ALLOCATION REPORT — by person → project number / client */}
 
-
-      {/* ═══════════════════════════════════════════════════════════════════════
-          TIME ALLOCATION REPORT — by person → project number / client
-      ═══════════════════════════════════════════════════════════════════════ */}
       {(() => {
         const EFFORT_HRS = { S:1, M:4, L:8 };
         const hrs = t => Number(t.customHours) || EFFORT_HRS[t.effort] || 4;
@@ -9477,6 +10240,30 @@ export default function App() {
     return proj.deliverables.filter(d => d.id !== item.id);
   };
 
+  // ── KPI activity tracking ─────────────────────────────────────────────────
+  // Records logins and page views to user_activity for the KPI Dashboard.
+  // Fires once on auth success (login event) and on every tab change.
+  const trackActivity = React.useCallback((eventType) => {
+    if (!SB_READY || !ownMemberId) return;
+    // Do NOT pass id — let Supabase generate a uuid via gen_random_uuid().
+    // Passing a text string like "ua_p1_login_123" causes a 400 because id is uuid type.
+    sb.upsert("user_activity", {
+      person_id:   ownMemberId,
+      event_type:  eventType,
+      occurred_at: new Date().toISOString(),
+    }).catch(() => {});
+  }, [SB_READY, ownMemberId]);
+
+  // Track login on initial load
+  React.useEffect(() => {
+    if (SB_READY && ownMemberId) trackActivity("login");
+  }, [SB_READY, ownMemberId]);
+
+  // Track tab/view changes
+  React.useEffect(() => {
+    if (view) trackActivity(`view_${view}`);
+  }, [view]);
+
   const navItems = [
     { id: "myhub",     label: "My Hub",    icon: "⊙" },
     { id: "dashboard", label: "Dashboard", icon: "◈" },
@@ -9485,7 +10272,10 @@ export default function App() {
     { id: "status",    label: "Status",    icon: "◉" },
     { id: "workload",  label: "Workload",  icon: "▦" },
     { id: "reporting", label: "Reporting", icon: "◈" },
-    ...(currentRole === "admin" ? [{ id: "history", label: "History", icon: "⟳" }] : []),
+    ...(currentRole === "admin" ? [
+      { id: "history", label: "History", icon: "⟳" },
+      { id: "kpi",     label: "KPI",     icon: "◉" },
+    ] : []),
   ];
 
   // Auth gate — must be in App() so setting authSession=null triggers re-render
@@ -9806,6 +10596,18 @@ export default function App() {
             currentUserId={currentUserId}
             sb={sb}
             SB_READY={SB_READY}
+          />
+        )}
+
+        {view === "kpi" && currentRole === "admin" && (
+          <KPIDashboardView
+            projects={projects}
+            people={people}
+            notifications={notifications}
+            adminTasks={adminTasks}
+            sb={sb}
+            SB_READY={SB_READY}
+            authMemberId={ownMemberId}
           />
         )}
 
