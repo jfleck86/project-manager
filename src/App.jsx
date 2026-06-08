@@ -3798,6 +3798,209 @@ function HubTaskTile({ item, onSaveStatus, onOpenItem, statusC }) {
 }
 
 
+// ── Personal Work Report Modal ──────────────────────────────────────────────
+function WorkReportModal({ meId, meName, projects, adminTasks, people, onClose }) {
+  const today = new Date().toISOString().slice(0,10);
+  const thirtyDaysAgo = new Date(Date.now() - 30*86400000).toISOString().slice(0,10);
+  const [dateFrom, setDateFrom] = React.useState(thirtyDaysAgo);
+  const [dateTo,   setDateTo]   = React.useState(today);
+  const [copied,   setCopied]   = React.useState(false);
+
+  const EFFORT_HOURS_MAP = { S:1, M:4, L:8 };
+
+  // Collect all completed tasks assigned to me
+  const completedItems = React.useMemo(() => {
+    const items = [];
+
+    // Project deliverables + subtasks
+    (projects || []).forEach(proj => {
+      (proj.deliverables || []).forEach(del => {
+        // Check deliverable itself
+        const delAssigned = (del.assignees||[]).includes(meId);
+        if (delAssigned && del.status === "Done") {
+          const completedDate = del.completedAt || del.end || "";
+          if (!completedDate || (completedDate >= dateFrom && completedDate <= dateTo)) {
+            items.push({
+              id: del.id,
+              title: del.title,
+              project: proj.name,
+              type: "Deliverable",
+              effort: del.effort || "M",
+              customHours: del.customHours || null,
+              completedDate: completedDate || del.end || "—",
+              hours: del.customHours || EFFORT_HOURS_MAP[del.effort] || 4,
+            });
+          }
+        }
+        // Subtasks
+        (del.subtasks || []).forEach(sub => {
+          const assigned = (sub.assignees||[]).includes(meId);
+          if (assigned && sub.status === "Done") {
+            const completedDate = sub.completedAt || sub.end || "";
+            if (!completedDate || (completedDate >= dateFrom && completedDate <= dateTo)) {
+              items.push({
+                id: sub.id,
+                title: sub.title,
+                project: proj.name,
+                deliverable: del.title,
+                type: "Task",
+                effort: sub.effort || "M",
+                customHours: sub.customHours || null,
+                completedDate: completedDate || sub.end || "—",
+                hours: sub.customHours || EFFORT_HOURS_MAP[sub.effort] || 4,
+              });
+            }
+          }
+        });
+      });
+    });
+
+    // Admin tasks
+    (adminTasks || []).forEach(t => {
+      const assigned = (t.assignedTo === meId) || (t.assignees||[]).includes(meId);
+      if (assigned && t.status === "Done") {
+        const completedDate = t.completedAt || t.end || t.dueDate || "";
+        if (!completedDate || (completedDate >= dateFrom && completedDate <= dateTo)) {
+          items.push({
+            id: t.id,
+            title: t.title,
+            project: "Admin / Internal",
+            type: "Admin Task",
+            effort: t.effort || "M",
+            customHours: t.customHours || t.hours || null,
+            completedDate: completedDate || "—",
+            hours: t.customHours || t.hours || EFFORT_HOURS_MAP[t.effort] || 4,
+          });
+        }
+      }
+    });
+
+    return items.sort((a,b) => (b.completedDate||"").localeCompare(a.completedDate||""));
+  }, [projects, adminTasks, meId, dateFrom, dateTo]);
+
+  const totalHours = completedItems.reduce((s, item) => s + (item.hours || 0), 0);
+
+  // Group by project for display
+  const byProject = completedItems.reduce((acc, item) => {
+    const k = item.project || "Other";
+    if (!acc[k]) acc[k] = [];
+    acc[k].push(item);
+    return acc;
+  }, {});
+
+  // Copy as plain text for pasting into time entry system
+  function handleCopy() {
+    const lines = [
+      `Work Report — ${meName}`,
+      `Period: ${dateFrom} to ${dateTo}`,
+      `Total Hours: ${totalHours.toFixed(1)}h`,
+      "",
+    ];
+    Object.entries(byProject).forEach(([proj, tasks]) => {
+      const projHours = tasks.reduce((s,t) => s+t.hours, 0);
+      lines.push(`${proj} — ${projHours.toFixed(1)}h`);
+      tasks.forEach(t => {
+        lines.push(`  • ${t.title} (${t.type}) — ${t.hours}h — ${t.completedDate}`);
+      });
+      lines.push("");
+    });
+    navigator.clipboard?.writeText(lines.join("\n")).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    });
+  }
+
+  const fmtD = d => d && d !== "—" ? new Date(d+"T00:00:00").toLocaleDateString("en-US",{month:"short",day:"numeric"}) : "—";
+  const inputSt = { padding:"6px 10px", border:"1px solid rgba(255,255,255,0.2)", borderRadius:6, background:"rgba(255,255,255,0.1)", color:"#fff", fontSize:12, fontFamily:"inherit" };
+
+  return (
+    <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.6)", display:"flex", alignItems:"center", justifyContent:"center", zIndex:1100, padding:16 }} onClick={onClose}>
+      <div style={{ background:"#fff", borderRadius:12, maxWidth:680, width:"100%", maxHeight:"90vh", overflowY:"auto", boxShadow:"0 24px 80px rgba(0,0,0,0.4)" }} onClick={e=>e.stopPropagation()}>
+
+        {/* Header */}
+        <div style={{ background:"#002A4E", borderRadius:"12px 12px 0 0", padding:"16px 20px", display:"flex", alignItems:"center", justifyContent:"space-between" }}>
+          <div>
+            <div style={{ fontSize:15, fontWeight:800, color:"#fff" }}>📊 My Work Report</div>
+            <div style={{ fontSize:11, color:"rgba(255,255,255,0.55)", marginTop:2 }}>{meName} — completed tasks for time entry</div>
+          </div>
+          <div style={{ display:"flex", gap:8, alignItems:"center" }}>
+            <input type="date" value={dateFrom} onChange={e=>setDateFrom(e.target.value)} style={inputSt} />
+            <span style={{ color:"rgba(255,255,255,0.4)", fontSize:11 }}>to</span>
+            <input type="date" value={dateTo} onChange={e=>setDateTo(e.target.value)} style={inputSt} />
+            <button onClick={onClose} style={{ background:"none", border:"none", color:"rgba(255,255,255,0.5)", cursor:"pointer", fontSize:20, padding:"0 4px" }}>×</button>
+          </div>
+        </div>
+
+        {/* Summary bar */}
+        <div style={{ background:"#f8fafc", borderBottom:"1px solid rgba(0,0,0,0.08)", padding:"12px 20px", display:"flex", alignItems:"center", gap:24 }}>
+          <div style={{ textAlign:"center" }}>
+            <div style={{ fontSize:22, fontWeight:900, color:"#002A4E" }}>{completedItems.length}</div>
+            <div style={{ fontSize:10, color:"#6b7280", fontWeight:600 }}>TASKS</div>
+          </div>
+          <div style={{ textAlign:"center" }}>
+            <div style={{ fontSize:22, fontWeight:900, color:"#50C0C0" }}>{totalHours.toFixed(1)}h</div>
+            <div style={{ fontSize:10, color:"#6b7280", fontWeight:600 }}>TOTAL HOURS</div>
+          </div>
+          <div style={{ textAlign:"center" }}>
+            <div style={{ fontSize:22, fontWeight:900, color:"#6366f1" }}>{Object.keys(byProject).length}</div>
+            <div style={{ fontSize:10, color:"#6b7280", fontWeight:600 }}>PROJECTS</div>
+          </div>
+          <div style={{ marginLeft:"auto", display:"flex", gap:8 }}>
+            <button onClick={handleCopy}
+              style={{ fontSize:11, fontWeight:700, padding:"7px 14px", background:copied?"#34d399":"#002A4E", color:"#fff", border:"none", borderRadius:7, cursor:"pointer", fontFamily:"inherit", transition:"background 0.2s" }}>
+              {copied ? "✓ Copied!" : "📋 Copy for Time Entry"}
+            </button>
+          </div>
+        </div>
+
+        {/* Content */}
+        <div style={{ padding:"16px 20px" }}>
+          {completedItems.length === 0 ? (
+            <div style={{ textAlign:"center", padding:"32px 0", color:"#9ca3af", fontSize:13 }}>
+              No completed tasks found in this date range.
+            </div>
+          ) : (
+            Object.entries(byProject).map(([proj, tasks]) => {
+              const projHours = tasks.reduce((s,t)=>s+t.hours,0);
+              return (
+                <div key={proj} style={{ marginBottom:20 }}>
+                  {/* Project header */}
+                  <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:8, paddingBottom:6, borderBottom:"2px solid #e5e7eb" }}>
+                    <span style={{ fontSize:13, fontWeight:800, color:"#1f2937" }}>{proj}</span>
+                    <span style={{ fontSize:12, fontWeight:700, color:"#50C0C0", background:"#E6F7F7", borderRadius:6, padding:"2px 10px" }}>{projHours.toFixed(1)}h</span>
+                  </div>
+                  {/* Task rows */}
+                  {tasks.map(task => (
+                    <div key={task.id} style={{ display:"grid", gridTemplateColumns:"1fr auto auto auto", gap:8, alignItems:"center", padding:"7px 0", borderBottom:"1px solid #f3f4f6" }}>
+                      <div>
+                        <div style={{ fontSize:12, fontWeight:600, color:"#1f2937" }}>{task.title}</div>
+                        {task.deliverable && <div style={{ fontSize:10, color:"#9ca3af", marginTop:1 }}>{task.deliverable}</div>}
+                      </div>
+                      <span style={{ fontSize:10, color:"#6b7280", background:"#f1f5f9", borderRadius:4, padding:"1px 7px", whiteSpace:"nowrap" }}>{task.type}</span>
+                      <span style={{ fontSize:11, color:"#6b7280", whiteSpace:"nowrap" }}>{fmtD(task.completedDate)}</span>
+                      <span style={{ fontSize:12, fontWeight:700, color:"#374151", background:"#f9fafb", borderRadius:5, padding:"3px 10px", minWidth:40, textAlign:"center", border:"1px solid #e5e7eb" }}>
+                        {task.hours}h
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              );
+            })
+          )}
+        </div>
+
+        {/* Footer note */}
+        <div style={{ padding:"10px 20px 16px", borderTop:"1px solid #f3f4f6" }}>
+          <p style={{ margin:0, fontSize:11, color:"#9ca3af" }}>
+            Hours are based on task effort sizing (S=1h, M=4h, L=8h) or custom hours if set. Completed date is the task end date or when it was marked Done.
+          </p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+
 function MyHubView({ projects, people, holidays, pto = [], currentUserId, onSetCurrentUser, onEditItem, onMarkDone, onSaveItem, savePto, deletePto, personalTasks = [], onSavePersonalTask, onDeletePersonalTask, currentRole = "member", authMemberId = "", authUUID = "", adminTasks = [], onSaveAdminTask, onUpdateAdminTaskStatus, onDeleteAdminTask, notifications = [], onDismissNotification, onOpenNotifTask, setToastNotif }) {
   const TODAY = new Date(); TODAY.setHours(0,0,0,0);
 
@@ -3818,6 +4021,7 @@ function MyHubView({ projects, people, holidays, pto = [], currentUserId, onSetC
   const [ptoForm, setPtoForm] = useState({ start: todayStr, end: todayStr, note: "" });
   const [showTaskForm, setShowTaskForm] = useState(false);
   const [editingTask, setEditingTask] = useState(null);
+  const [showWorkReport, setShowWorkReport] = useState(false);
   const [waitingIds, setWaitingIds] = useState(new Set()); // tasks parked from Focus strip
   const [taskForm, setTaskForm] = useState({ title: "", status: "Not Started", priority: "Medium", dueDate: "", notes: "" });
   const hubHolidaySet = new Set((holidays||[]).map(h => h.date));
@@ -4081,6 +4285,10 @@ function MyHubView({ projects, people, holidays, pto = [], currentUserId, onSetC
                   style={{ fontSize:10, fontWeight:700, color:BRAND_NAVY, background:BRAND_TEAL, border:"none", borderRadius:6, padding:"6px 12px", cursor:"pointer", fontFamily:"inherit" }}>
                   + Assign Task
                 </button>
+                <button onClick={() => setShowWorkReport(true)}
+                  style={{ fontSize:10, fontWeight:700, color:"rgba(255,255,255,0.8)", background:"rgba(255,255,255,0.12)", border:"1px solid rgba(255,255,255,0.2)", borderRadius:6, padding:"6px 12px", cursor:"pointer", fontFamily:"inherit" }}>
+                  &#128202; My Work Report
+                </button>
               </>
             )}
           </div>
@@ -4328,6 +4536,57 @@ function MyHubView({ projects, people, holidays, pto = [], currentUserId, onSetC
           </button>
         </div>
         <div style={{ padding:"8px 0" }}>
+          {/* ── Inline Add/Edit form ── */}
+          {showTaskForm && (
+            <div style={{ padding:"12px 16px", borderBottom:"1px solid rgba(0,0,0,0.06)", background:"#f8fafc" }}>
+              <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
+                <input
+                  autoFocus
+                  value={taskForm.title}
+                  onChange={e => setTaskForm(f => ({...f, title:e.target.value}))}
+                  onKeyDown={e => {
+                    if (e.key === "Enter" && taskForm.title.trim()) {
+                      if (editingTask) {
+                        onSavePersonalTask({...editingTask, ...taskForm});
+                      } else {
+                        onSavePersonalTask({id:"pt_"+Date.now(), ...taskForm, status:"Not Started"});
+                      }
+                      setShowTaskForm(false); setEditingTask(null);
+                    }
+                    if (e.key === "Escape") { setShowTaskForm(false); setEditingTask(null); }
+                  }}
+                  placeholder="Task title…"
+                  style={{ padding:"7px 10px", border:"1px solid rgba(80,192,192,0.4)", borderRadius:6, fontSize:13, fontFamily:"inherit", outline:"none", width:"100%", boxSizing:"border-box" }}
+                />
+                <div style={{ display:"flex", gap:8, alignItems:"center", flexWrap:"wrap" }}>
+                  <select value={taskForm.priority} onChange={e => setTaskForm(f=>({...f,priority:e.target.value}))}
+                    style={{ fontSize:11, padding:"4px 8px", border:"1px solid rgba(0,0,0,0.15)", borderRadius:5, fontFamily:"inherit" }}>
+                    {["Low","Medium","High","Urgent"].map(p=><option key={p}>{p}</option>)}
+                  </select>
+                  <input type="date" value={taskForm.dueDate} onChange={e=>setTaskForm(f=>({...f,dueDate:e.target.value}))}
+                    style={{ fontSize:11, padding:"4px 8px", border:"1px solid rgba(0,0,0,0.15)", borderRadius:5, fontFamily:"inherit" }} />
+                  <div style={{ display:"flex", gap:6, marginLeft:"auto" }}>
+                    <button onClick={() => { setShowTaskForm(false); setEditingTask(null); }}
+                      style={{ fontSize:11, padding:"5px 10px", background:"none", border:"1px solid rgba(0,0,0,0.15)", borderRadius:5, cursor:"pointer", fontFamily:"inherit" }}>
+                      Cancel
+                    </button>
+                    <button onClick={() => {
+                      if (!taskForm.title.trim()) return;
+                      if (editingTask) {
+                        onSavePersonalTask({...editingTask, ...taskForm});
+                      } else {
+                        onSavePersonalTask({id:"pt_"+Date.now(), ...taskForm, status:"Not Started"});
+                      }
+                      setShowTaskForm(false); setEditingTask(null);
+                    }}
+                      style={{ fontSize:11, fontWeight:700, padding:"5px 12px", background:BRAND_TEAL, color:"#fff", border:"none", borderRadius:5, cursor:"pointer", fontFamily:"inherit" }}>
+                      {editingTask ? "Save" : "Add Task"}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
           {personalTasks.filter(t=>t.status!=="Done").length === 0 && (
             <div style={{ fontSize:12, color:"#9ca3af", textAlign:"center", padding:"16px 0" }}>No active tasks. Add one above.</div>
           )}
@@ -4448,6 +4707,16 @@ function MyHubView({ projects, people, holidays, pto = [], currentUserId, onSetC
 
 
 
+      {showWorkReport && (
+        <WorkReportModal
+          meId={meId}
+          meName={me?.name || "Me"}
+          projects={projects}
+          adminTasks={adminTasks}
+          people={people}
+          onClose={() => setShowWorkReport(false)}
+        />
+      )}
       {showAssignModal && (
         <AssignTaskModal
           people={people}
@@ -9137,6 +9406,7 @@ export default function App() {
           project={newDeliverable}
           allPeople={people}
           savedTemplates={savedTemplates}
+          deliverableTemplates={deliverableTemplates}
           onClose={() => setNewDeliverable(null)}
           onAdd={handleAddDeliverable}
         />

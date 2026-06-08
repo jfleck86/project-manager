@@ -146,20 +146,28 @@ export async function updatePassword(newPassword, accessToken) {
 export async function sendPasswordReset(email, redirectTo) {
   try {
     const body = { email };
-    if (redirectTo) body.redirect_to = redirectTo;
+
+    if (redirectTo) {
+      body.redirect_to = redirectTo;
+    }
+
     const res = await fetch(`${getBase()}/auth/v1/recover`, {
       method: "POST",
       headers: authHeaders(),
       body: JSON.stringify(body),
     });
-    // 200 or 429 (rate limit)
-    if (res.status === 429) {
-      return { error: "Too many reset attempts. Please wait a few minutes and try again." };
-    }
+
     if (!res.ok) {
       const data = await res.json().catch(() => ({}));
-      return { error: friendlyAuthError(data.error_description || data.msg || "Reset failed") };
+      const msg =
+        data.error_description ||
+        data.msg ||
+        data.error ||
+        `Password reset failed with status ${res.status}`;
+
+      return { error: friendlyAuthError(msg) };
     }
+
     return { error: null };
   } catch {
     return { error: "Could not send reset email. Check your connection." };
