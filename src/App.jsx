@@ -599,6 +599,7 @@ function ProjectDetailsModal({ proj, people, onClose, onSave, onArchive, onDelet
   const [form, setForm] = useState({
     name:           proj.name,
     client:         proj.client || "",
+    projectNumber:  proj.projectNumber || "",
     ownerId:        proj.ownerId || "",
     teamMemberIds:  proj.teamMemberIds || [],
     notes:          proj.notes || "",
@@ -656,6 +657,17 @@ function ProjectDetailsModal({ proj, people, onClose, onSave, onArchive, onDelet
             <label style={labelStyle}>Client / Account</label>
             <input value={form.client} onChange={e => set("client", e.target.value)}
               placeholder="Client name" style={inputStyle} />
+          </div>
+
+          {/* Project Number */}
+          <div>
+            <label style={labelStyle}>Project Number
+              <span style={{ fontSize:9, fontWeight:400, color:"#9ca3af", marginLeft:6, textTransform:"none", letterSpacing:0 }}>
+                Used in time allocation reports &amp; financial exports
+              </span>
+            </label>
+            <input value={form.projectNumber} onChange={e => set("projectNumber", e.target.value)}
+              placeholder="e.g. 23-041" style={inputStyle} />
           </div>
 
           {/* Owner / Account Lead */}
@@ -5934,6 +5946,319 @@ function ReportingDashboardView({ projects, people, holidays = [], pto = [], adm
         );
       })()}
 
+
+      {/* ═══════════════════════════════════════════════════════════════════════
+
+
+      {/* ═══════════════════════════════════════════════════════════════════════
+          TIME ALLOCATION REPORT — by person → project number / client
+      ═══════════════════════════════════════════════════════════════════════ */}
+      {(() => {
+        const EFFORT_HRS = { S:1, M:4, L:8 };
+        const hrs = t => Number(t.customHours) || EFFORT_HRS[t.effort] || 4;
+
+        // ── Accumulate: person → project ─────────────────────────────────────
+        const accMap = {};
+        activeProjects.forEach(proj => {
+          proj.deliverables.forEach(del => {
+            const items = del.subtasks.length > 0 ? del.subtasks : [del];
+            items.forEach(task => {
+              (task.assignees || []).forEach(pid => {
+                const key = `${pid}::${proj.id}`;
+                if (!accMap[key]) accMap[key] = {
+                  personId: pid,
+                  projectId: proj.id, projectName: proj.name,
+                  projectNumber: proj.projectNumber || "",
+                  client: proj.client || "No Client",
+                  color: proj.color,
+                  totalHrs: 0, completedHrs: 0, pendingHrs: 0, taskCount: 0,
+                };
+                const h = hrs(task);
+                accMap[key].totalHrs  += h;
+                accMap[key].taskCount += 1;
+                if (task.status === "Done") accMap[key].completedHrs += h;
+                else                        accMap[key].pendingHrs   += h;
+              });
+            });
+          });
+        });
+
+        // ── Enrich rows with person name/color ───────────────────────────────
+        const allRows = Object.values(accMap).map(r => ({
+          ...r,
+          personName:  people.find(p => p.id === r.personId)?.name  || r.personId,
+          personColor: people.find(p => p.id === r.personId)?.color || "#9ca3af",
+        }));
+
+        // ── Build nested: person → projects (sorted by project number, then name)
+        const personOrder = people.filter(p => allRows.some(r => r.personId === p.id));
+        const structure = personOrder.map(person => {
+          const pRows = allRows
+            .filter(r => r.personId === person.id)
+            .sort((a, b) => {
+              // Sort by project number if available, otherwise by client then name
+              if (a.projectNumber && b.projectNumber)
+                return a.projectNumber.localeCompare(b.projectNumber, undefined, { numeric: true });
+              if (a.projectNumber) return -1;
+              if (b.projectNumber) return 1;
+              const cc = a.client.localeCompare(b.client);
+              return cc !== 0 ? cc : a.projectName.localeCompare(b.projectName);
+            });
+          return {
+            personId:    person.id,
+            personName:  person.name,
+            personColor: person.color,
+            projects:    pRows,
+            totalHrs:    pRows.reduce((s,r) => s+r.totalHrs,    0),
+            completedHrs:pRows.reduce((s,r) => s+r.completedHrs, 0),
+            pendingHrs:  pRows.reduce((s,r) => s+r.pendingHrs,   0),
+            taskCount:   pRows.reduce((s,r) => s+r.taskCount,    0),
+          };
+        });
+
+        const grand = structure.reduce(
+          (s,p) => ({ total:s.total+p.totalHrs, done:s.done+p.completedHrs, pending:s.pending+p.pendingHrs }),
+          { total:0, done:0, pending:0 }
+        );
+
+        // ── CSV ───────────────────────────────────────────────────────────────
+        const downloadCSV = () => {
+          const esc = v => `"${String(v||"").replace(/"/g,'""')}"`;
+          const rows = [["Person","Project Number","Client","Project","Total Allocated (h)","Completed (h)","Pending (h)","Task Count"]];
+          structure.forEach(person => {
+            person.projects.forEach(r => {
+              rows.push([person.personName, r.projectNumber, r.client, r.projectName, r.totalHrs, r.completedHrs, r.pendingHrs, r.taskCount]);
+            });
+            rows.push([`${person.personName} TOTAL`, "", "", "", person.totalHrs, person.completedHrs, person.pendingHrs, person.taskCount]);
+            rows.push([]);
+          });
+          rows.push(["GRAND TOTAL","","","", grand.total, grand.done, grand.pending]);
+          const csv = rows.map(r => r.map(esc).join(",")).join("\n");
+          const a = document.createElement("a");
+          a.href = "data:text/csv;charset=utf-8," + encodeURIComponent(csv);
+          a.download = `time-allocation-${new Date().toISOString().slice(0,10)}.csv`;
+          a.click();
+        };
+
+        // ── Excel (3 tabs: Detail | By Person | By Client) ────────────────────
+        const downloadExcel = async () => {
+          let XLSX = window.XLSX;
+          if (!XLSX) {
+            await new Promise((res, rej) => {
+              const s = document.createElement("script");
+              s.src = "https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js";
+              s.onload = res; s.onerror = rej;
+              document.head.appendChild(s);
+            });
+            XLSX = window.XLSX;
+          }
+          const wb = XLSX.utils.book_new();
+
+          // Detail — one row per person × project
+          const detailRows = [];
+          structure.forEach(person => {
+            person.projects.forEach(r => {
+              detailRows.push({
+                "Person":              person.personName,
+                "Project Number":      r.projectNumber || "",
+                "Client":              r.client,
+                "Project":             r.projectName,
+                "Total Allocated (h)": r.totalHrs,
+                "Completed (h)":       r.completedHrs,
+                "Pending (h)":         r.pendingHrs,
+                "Task Count":          r.taskCount,
+                "% Complete":          r.totalHrs > 0 ? Math.round((r.completedHrs/r.totalHrs)*100)+"%" : "0%",
+              });
+            });
+          });
+          const ws1 = XLSX.utils.json_to_sheet(detailRows);
+          ws1["!cols"] = [20,14,20,32,18,14,14,10,12].map(w => ({ wch: w }));
+          XLSX.utils.book_append_sheet(wb, ws1, "Detail");
+
+          // By Person summary
+          const personRows = [];
+          structure.forEach(person => {
+            personRows.push({
+              "Person":              person.personName,
+              "Projects":            person.projects.length,
+              "Total Allocated (h)": person.totalHrs,
+              "Completed (h)":       person.completedHrs,
+              "Pending (h)":         person.pendingHrs,
+              "Task Count":          person.taskCount,
+              "% Complete":          person.totalHrs > 0 ? Math.round((person.completedHrs/person.totalHrs)*100)+"%" : "0%",
+            });
+          });
+          personRows.push({ "Person":"GRAND TOTAL", "Projects":structure.reduce((s,p)=>s+p.projects.length,0), "Total Allocated (h)":grand.total, "Completed (h)":grand.done, "Pending (h)":grand.pending });
+          const ws2 = XLSX.utils.json_to_sheet(personRows);
+          ws2["!cols"] = [22,10,18,14,14,10,12].map(w => ({ wch: w }));
+          XLSX.utils.book_append_sheet(wb, ws2, "By Person");
+
+          // By Client summary
+          const clientMap = {};
+          allRows.forEach(r => {
+            if (!clientMap[r.client]) clientMap[r.client] = { total:0, done:0, pending:0, projects: new Set() };
+            clientMap[r.client].total   += r.totalHrs;
+            clientMap[r.client].done    += r.completedHrs;
+            clientMap[r.client].pending += r.pendingHrs;
+            clientMap[r.client].projects.add(r.projectId);
+          });
+          const clientRows = Object.entries(clientMap)
+            .sort(([a],[b]) => a.localeCompare(b))
+            .map(([client, d]) => ({
+              "Client":              client,
+              "Projects":            d.projects.size,
+              "Total Allocated (h)": d.total,
+              "Completed (h)":       d.done,
+              "Pending (h)":         d.pending,
+              "% Complete":          d.total > 0 ? Math.round((d.done/d.total)*100)+"%" : "0%",
+            }));
+          clientRows.push({ "Client":"GRAND TOTAL", "Projects":allRows.reduce((s,r,i,arr)=>s+(i===0||arr[i-1].client!==r.client?1:0),0), "Total Allocated (h)":grand.total, "Completed (h)":grand.done, "Pending (h)":grand.pending });
+          const ws3 = XLSX.utils.json_to_sheet(clientRows);
+          ws3["!cols"] = [28,10,18,14,14,12].map(w => ({ wch: w }));
+          XLSX.utils.book_append_sheet(wb, ws3, "By Client");
+
+          XLSX.writeFile(wb, `time-allocation-${new Date().toISOString().slice(0,10)}.xlsx`);
+        };
+
+        // ── UI ────────────────────────────────────────────────────────────────
+        const colH = (extra={}) => ({ fontSize:10, fontWeight:700, color:"#9ca3af", letterSpacing:"0.06em",
+          textTransform:"uppercase", padding:"7px 12px", borderBottom:"2px solid rgba(0,0,0,0.07)",
+          background:"#f8fafc", textAlign:"left", position:"sticky", top:0, ...extra });
+        const cell = (extra={}) => ({ fontSize:12, padding:"7px 12px",
+          borderBottom:"1px solid rgba(0,0,0,0.04)", verticalAlign:"middle", ...extra });
+
+        return (
+          <div style={{ background:"#fff", border:"1px solid rgba(0,0,0,0.08)", borderRadius:10, overflow:"hidden", marginTop:8 }}>
+
+            {/* Header bar */}
+            <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", padding:"14px 18px",
+              borderBottom:"1px solid rgba(0,0,0,0.07)", background:"#f8fafc", flexWrap:"wrap", gap:10 }}>
+              <div>
+                <div style={{ fontSize:14, fontWeight:800, color:"#1f2937" }}>Time Allocation Report</div>
+                <div style={{ fontSize:11, color:"#6b7280", marginTop:2 }}>
+                  By person &amp; project — compare allocated hours to time entry tool
+                </div>
+              </div>
+              <div style={{ display:"flex", gap:8, alignItems:"center" }}>
+                <span style={{ fontSize:11, color:"#9ca3af" }}>
+                  {structure.length} people · {allRows.length} assignments
+                </span>
+                <button onClick={downloadCSV}
+                  style={{ fontSize:11, fontWeight:700, padding:"7px 14px", background:"#fff", color:"#374151",
+                    border:"1px solid rgba(0,0,0,0.15)", borderRadius:7, cursor:"pointer", fontFamily:"inherit" }}>
+                  ↓ CSV
+                </button>
+                <button onClick={downloadExcel}
+                  style={{ fontSize:11, fontWeight:700, padding:"7px 14px", background:"#1d6f42", color:"#fff",
+                    border:"none", borderRadius:7, cursor:"pointer", fontFamily:"inherit" }}>
+                  ↓ Excel
+                </button>
+              </div>
+            </div>
+
+            {/* Legend */}
+            <div style={{ display:"flex", gap:20, padding:"7px 18px", borderBottom:"1px solid rgba(0,0,0,0.05)", background:"#fafafa" }}>
+              {[["Total Allocated","#002A4E"],["Completed","#10b981"],["Pending","#f59e0b"]].map(([l,c]) => (
+                <div key={l} style={{ display:"flex", alignItems:"center", gap:5, fontSize:11, color:"#6b7280" }}>
+                  <div style={{ width:8, height:8, borderRadius:2, background:c }} />{l}
+                </div>
+              ))}
+              <div style={{ marginLeft:"auto", fontSize:11, color:"#9ca3af" }}>S=1h · M=4h · L=8h or custom hours</div>
+            </div>
+
+            {/* Table */}
+            <div style={{ overflowX:"auto", maxHeight:600, overflowY:"auto" }}>
+              <table style={{ width:"100%", borderCollapse:"collapse" }}>
+                <thead>
+                  <tr>
+                    <th style={colH({ width:160 })}>Person</th>
+                    <th style={colH({ width:100 })}>Project #</th>
+                    <th style={colH({ width:120 })}>Client</th>
+                    <th style={colH()}>Project</th>
+                    <th style={colH({ width:90, textAlign:"right" })}>Total (h)</th>
+                    <th style={colH({ width:85, textAlign:"right" })}>Done (h)</th>
+                    <th style={colH({ width:85, textAlign:"right" })}>Pending (h)</th>
+                    <th style={colH({ width:55, textAlign:"right" })}>Tasks</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {structure.map(person => (
+                    <React.Fragment key={person.personId}>
+                      {/* Person header row */}
+                      <tr style={{ background:"#002A4E" }}>
+                        <td colSpan={4} style={{ ...cell(), fontWeight:800, color:"#fff", fontSize:13, paddingTop:9, paddingBottom:9 }}>
+                          <div style={{ display:"flex", alignItems:"center", gap:9 }}>
+                            <div style={{ width:24, height:24, borderRadius:"50%", background:person.personColor,
+                              display:"flex", alignItems:"center", justifyContent:"center",
+                              fontSize:9, fontWeight:800, color:"#fff", flexShrink:0 }}>
+                              {person.personName.split(" ").map(w=>w[0]).join("").slice(0,2).toUpperCase()}
+                            </div>
+                            {person.personName}
+                            <span style={{ fontSize:10, fontWeight:500, color:"rgba(255,255,255,0.5)" }}>
+                              {person.projects.length} project{person.projects.length!==1?"s":""}
+                            </span>
+                          </div>
+                        </td>
+                        <td style={{ ...cell({ textAlign:"right", fontWeight:800, color:"#50C0C0", fontSize:13 }), paddingTop:9, paddingBottom:9 }}>{person.totalHrs}h</td>
+                        <td style={{ ...cell({ textAlign:"right", fontWeight:700, color:"#34d399" }), paddingTop:9, paddingBottom:9 }}>{person.completedHrs}h</td>
+                        <td style={{ ...cell({ textAlign:"right", fontWeight:700, color:"#fbbf24" }), paddingTop:9, paddingBottom:9 }}>{person.pendingHrs}h</td>
+                        <td style={{ ...cell({ textAlign:"right", color:"rgba(255,255,255,0.4)", fontSize:11 }) }}>{person.taskCount}</td>
+                      </tr>
+
+                      {/* Project rows */}
+                      {person.projects.map((r, ri) => {
+                        const pct = r.totalHrs > 0 ? Math.round((r.completedHrs/r.totalHrs)*100) : 0;
+                        return (
+                          <tr key={r.projectId} style={{ background: ri%2===0 ? "#fff" : "rgba(0,0,0,0.015)" }}>
+                            <td style={{ ...cell({ paddingLeft:20, color:"#9ca3af", fontSize:11 }) }}></td>
+                            <td style={{ ...cell({ fontFamily:"monospace", fontSize:11,
+                              color: r.projectNumber ? "#374151" : "#d1d5db",
+                              fontWeight: r.projectNumber ? 600 : 400 }) }}>
+                              {r.projectNumber || "—"}
+                            </td>
+                            <td style={{ ...cell({ color:"#6b7280", fontSize:11 }) }}>{r.client}</td>
+                            <td style={{ ...cell() }}>
+                              <div style={{ display:"flex", alignItems:"center", gap:7 }}>
+                                <div style={{ width:7, height:7, borderRadius:2, background:r.color, flexShrink:0 }} />
+                                <span style={{ color:"#1f2937", fontWeight:500 }}>{r.projectName}</span>
+                                {pct===100 && <span style={{ fontSize:9, color:"#10b981", background:"rgba(16,185,129,0.1)", borderRadius:3, padding:"1px 5px", fontWeight:700 }}>Done</span>}
+                              </div>
+                              <div style={{ height:2, background:"#f3f4f6", borderRadius:2, marginTop:3, marginLeft:14 }}>
+                                <div style={{ height:2, background:r.color, borderRadius:2, width:`${pct}%` }} />
+                              </div>
+                            </td>
+                            <td style={{ ...cell({ textAlign:"right", fontWeight:700, color:"#374151" }) }}>{r.totalHrs}h</td>
+                            <td style={{ ...cell({ textAlign:"right", color:"#10b981" }) }}>{r.completedHrs}h</td>
+                            <td style={{ ...cell({ textAlign:"right", color:"#f59e0b" }) }}>{r.pendingHrs}h</td>
+                            <td style={{ ...cell({ textAlign:"right", color:"#9ca3af", fontSize:11 }) }}>{r.taskCount}</td>
+                          </tr>
+                        );
+                      })}
+                      {/* Spacer */}
+                      <tr><td colSpan={8} style={{ height:6, background:"rgba(0,42,78,0.03)" }} /></tr>
+                    </React.Fragment>
+                  ))}
+                </tbody>
+                <tfoot>
+                  <tr style={{ background:"#f8fafc", borderTop:"2px solid rgba(0,0,0,0.1)" }}>
+                    <td colSpan={4} style={{ ...cell({ fontWeight:800, color:"#1f2937", fontSize:13 }) }}>Grand Total</td>
+                    <td style={{ ...cell({ textAlign:"right", fontWeight:800, color:"#002A4E", fontSize:13 }) }}>{grand.total}h</td>
+                    <td style={{ ...cell({ textAlign:"right", fontWeight:800, color:"#10b981" }) }}>{grand.done}h</td>
+                    <td style={{ ...cell({ textAlign:"right", fontWeight:800, color:"#f59e0b" }) }}>{grand.pending}h</td>
+                    <td style={{ ...cell({ textAlign:"right", color:"#9ca3af" }) }}></td>
+                  </tr>
+                </tfoot>
+              </table>
+            </div>
+
+            <div style={{ padding:"10px 18px", borderTop:"1px solid rgba(0,0,0,0.06)", background:"#fafafa", fontSize:11, color:"#9ca3af" }}>
+              📌 Add project numbers in each project's settings (Project Details). Excel export includes 3 tabs: Detail, By Person, and By Client.
+            </div>
+          </div>
+        );
+      })()}
+
+
     </div>
   );
 }
@@ -8409,7 +8734,7 @@ export default function App() {
     }
     for (let pi = 0; pi < initialProjects.length; pi++) {
       const proj = initialProjects[pi];
-      await sb.upsert("projects", { id: proj.id, name: proj.name, client: proj.client || "", color: proj.color, archived: false, position: pi });
+      await sb.upsert("projects", { id: proj.id, name: proj.name, client: proj.client || "", color: proj.color, project_number: proj.projectNumber || "", archived: false, position: pi });
       for (let di = 0; di < proj.deliverables.length; di++) {
         const del = proj.deliverables[di];
         await sb.upsert("deliverables", delToRow(del, proj.id, di));
@@ -8666,7 +8991,7 @@ export default function App() {
   const handleAddProject = (proj) => optimistic(
     () => setProjects(ps => [...ps, { ...proj, deliverables: [] }]),
     async () => {
-      const { error } = await sb.upsert("projects", { id: proj.id, name: proj.name, client: proj.client || "", color: proj.color, archived: false, position: projects.length });
+      const { error } = await sb.upsert("projects", { id: proj.id, name: proj.name, client: proj.client || "", color: proj.color, project_number: proj.projectNumber || "", archived: false, position: projects.length });
       return error;
     }
   );
@@ -8723,6 +9048,7 @@ export default function App() {
         owner_id:         proj.ownerId || null,
         name:             proj.name,
         client:           proj.client || "",
+        project_number:   proj.projectNumber || "",
         team_member_ids:  proj.teamMemberIds || [],
         notes:            proj.notes || "",
         meta:             proj.meta || {},
