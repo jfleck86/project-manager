@@ -9566,7 +9566,7 @@ export default function App() {
             setPeople(newPeople);
             // Upsert all members
             for (let i = 0; i < newPeople.length; i++) {
-              await sb.upsert("team_members", { id: newPeople[i].id, name: newPeople[i].name, color: newPeople[i].color, position: i, annual_target: newPeople[i].annualTarget || 1850 });
+              await sb.upsert("team_members", { id: newPeople[i].id, name: newPeople[i].name, color: newPeople[i].color, position: i, annual_target: newPeople[i].annualTarget || 1850, department: newPeople[i].department || "" });
             }
           }} />
       )}
