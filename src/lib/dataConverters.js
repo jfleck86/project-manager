@@ -7,6 +7,7 @@ export function rowToSubtask(r) {
     progress: r.progress ?? 0, dependencies: r.dependencies ?? [], assignees: r.assignees ?? [],
     effort: r.effort || "M",
     file_url: r.file_url || "",
+    isWaiting: r.is_waiting ?? false,
   };
 }
 export function rowToDeliverable(r, subs) {
@@ -17,6 +18,7 @@ export function rowToDeliverable(r, subs) {
     trackOverride: r.track_override || null,
     effort: r.effort || "M",
     file_url: r.file_url || "",
+    isWaiting: r.is_waiting ?? false,
     subtasks: (subs || []).filter(s => s.deliverable_id != null && s.deliverable_id === r.id)
       .sort((a, b) => a.position - b.position).map(rowToSubtask),
   };
@@ -24,6 +26,7 @@ export function rowToDeliverable(r, subs) {
 export function rowToProject(r, dels, subs) {
   return {
     id: r.id, name: r.name, client: r.client || "", color: r.color,
+    projectNumber: r.project_number || "",
     archived: r.archived, archivedAt: r.archived_at || null,
     ownerId: r.owner_id || null,
     teamMemberIds: r.team_member_ids || [],
@@ -38,7 +41,9 @@ export function delToRow(d, projectId, pos = 0) {
     id: d.id, project_id: projectId, title: d.title, status: d.status, priority: d.priority,
     department: d.department || null, start_date: d.start || null, end_date: d.end || null,
     progress: d.progress ?? 0, dependencies: d.dependencies ?? [], assignees: d.assignees ?? [],
-    track_override: d.trackOverride || null, effort: d.effort || "M", file_url: d.file_url || null, position: pos,
+    track_override: d.trackOverride || null, effort: d.effort || "M",
+    file_url: d.file_url || null, position: pos,
+    is_waiting: d.isWaiting ?? false,
   };
 }
 export function subToRow(s, delId, projId, pos = 0) {
@@ -48,6 +53,7 @@ export function subToRow(s, delId, projId, pos = 0) {
     start_date: s.start || null, end_date: s.end || null,
     progress: s.progress ?? 0, dependencies: s.dependencies ?? [], assignees: s.assignees ?? [],
     effort: s.effort || "M", file_url: s.file_url || null, position: pos,
+    is_waiting: s.isWaiting ?? false,
   };
 }
 

@@ -1821,7 +1821,7 @@ function cascadeDates(projects, changedId, newEnd, holidays = []) {
 
 
 
-function TimelineView({ projects, people, onEditItem, onAddDeliverable, onAddSubtask, onMarkDone, onSaveItem, holidays = [], onInsertSubtask, onReorderSubtasks, onDeleteSubtask, statusNotes = {}, onUpdateNote, onSaveProject, onOpenProject, clipboard, onCopySubtask, onCopyDeliverable, onPasteSubtask, onPasteDeliverable }) {
+function TimelineView({ projects, people, onEditItem, onAddDeliverable, onAddSubtask, onMarkDone, onSaveItem, holidays = [], onInsertSubtask, onReorderDeliverables, onReorderSubtasks, onDeleteSubtask, statusNotes = {}, onUpdateNote, onSaveProject, onOpenProject, clipboard, onCopySubtask, onCopyDeliverable, onPasteSubtask, onPasteDeliverable }) {
   const [collapsed, setCollapsed] = useState(() => {
     try { return JSON.parse(localStorage.getItem('planr_collapsed') || '{}'); } catch { return {}; }
   });
@@ -1854,8 +1854,11 @@ function TimelineView({ projects, people, onEditItem, onAddDeliverable, onAddSub
   const [colWidths, setColWidths] = useState(() => {
     try {
       const saved = JSON.parse(localStorage.getItem('planr_colWidths') || '{}');
-      // Merge saved with defaults so new columns always appear
-      return { ...COL_DEFAULTS, ...saved };
+      const merged = { ...COL_DEFAULTS, ...saved };
+      // If saved widths total more than the viewport, reset to defaults
+      const total = Object.values(merged).reduce((a,b) => a+b, 0);
+      if (total > window.innerWidth * 0.95) return { ...COL_DEFAULTS };
+      return merged;
     } catch { return { ...COL_DEFAULTS }; }
   });
 
@@ -2116,7 +2119,7 @@ function TimelineView({ projects, people, onEditItem, onAddDeliverable, onAddSub
           onAddDeliverable={onAddDeliverable} onAddSubtask={onAddSubtask}
           onMarkDone={onMarkDone} onSaveItem={onSaveItem} rowIndex={rowIndex} DAY_W={DAY_W}
           colWidths={colWidths} LEFT_W={LEFT_W} holidays={holidays}
-          onInsertSubtask={onInsertSubtask} onReorderSubtasks={onReorderSubtasks} onDeleteSubtask={onDeleteSubtask}
+          onInsertSubtask={onInsertSubtask} onReorderDeliverables={onReorderDeliverables} onReorderSubtasks={onReorderSubtasks} onDeleteSubtask={onDeleteSubtask}
           statusNotes={statusNotes} onUpdateNote={onUpdateNote}
           clipboard={clipboard} onCopySubtask={onCopySubtask} onCopyDeliverable={onCopyDeliverable}
           onPasteSubtask={onPasteSubtask} onPasteDeliverable={onPasteDeliverable}
@@ -2178,7 +2181,7 @@ function EdgeFade({ bodyRef, leftWidth }) {
   );
 }
 
-function TimelineBody({ projects, people, collapsed, toggle, weeks, todayOff, allItemsFlat, onEditItem, headerScrollRef, topScrollRef, onAddDeliverable, onAddSubtask, onMarkDone, onSaveItem, rowIndex, DAY_W, colWidths, LEFT_W, holidays = [], onInsertSubtask, onReorderSubtasks, onDeleteSubtask, statusNotes = {}, onUpdateNote, onSaveProject, onOpenProject, clipboard, onCopySubtask, onCopyDeliverable, onPasteSubtask, onPasteDeliverable, showGantt  }) {
+function TimelineBody({ projects, people, collapsed, toggle, weeks, todayOff, allItemsFlat, onEditItem, headerScrollRef, topScrollRef, onAddDeliverable, onAddSubtask, onMarkDone, onSaveItem, rowIndex, DAY_W, colWidths, LEFT_W, holidays = [], onInsertSubtask, onReorderDeliverables, onReorderSubtasks, onDeleteSubtask, statusNotes = {}, onUpdateNote, onSaveProject, onOpenProject, clipboard, onCopySubtask, onCopyDeliverable, onPasteSubtask, onPasteDeliverable, showGantt  }) {
   const bodyRef  = useRef(null);
   // syncScroll removed — single scroll container handles both header and body
 
@@ -2215,7 +2218,7 @@ function TimelineBody({ projects, people, collapsed, toggle, weeks, todayOff, al
             weeks={weeks} todayOff={todayOff} allItemsFlat={allItemsFlat} onEditItem={onEditItem}
             onAddDeliverable={onAddDeliverable} onAddSubtask={onAddSubtask} onMarkDone={onMarkDone}
             onSaveItem={onSaveItem} rowIndex={rowIndex} DAY_W={DAY_W} colWidths={colWidths} LEFT_W={LEFT_W}
-            onInsertSubtask={onInsertSubtask} onReorderSubtasks={onReorderSubtasks} onDeleteSubtask={onDeleteSubtask}
+            onInsertSubtask={onInsertSubtask} onReorderDeliverables={onReorderDeliverables} onReorderSubtasks={onReorderSubtasks} onDeleteSubtask={onDeleteSubtask}
             statusNotes={statusNotes} onUpdateNote={onUpdateNote} holidays={holidays}
             clipboard={clipboard} onCopySubtask={onCopySubtask} onCopyDeliverable={onCopyDeliverable} onPasteSubtask={onPasteSubtask} onPasteDeliverable={onPasteDeliverable}
             onSaveProject={onSaveProject} onOpenProject={onOpenProject} showGantt={showGantt} />
@@ -2234,7 +2237,7 @@ function TimelineBody({ projects, people, collapsed, toggle, weeks, todayOff, al
   );
 }
 
-function ProjectSection({ proj, people, collapsed, toggle, weeks, todayOff, allItemsFlat, onEditItem, onAddDeliverable, onAddSubtask, onMarkDone, onSaveItem, rowIndex, DAY_W, colWidths, LEFT_W, onInsertSubtask, onReorderSubtasks, onDeleteSubtask, statusNotes = {}, onUpdateNote, holidays = [], clipboard, onCopySubtask, onCopyDeliverable, onPasteSubtask, onPasteDeliverable, onSaveProject, onOpenProject , showGantt  }) {
+function ProjectSection({ proj, people, collapsed, toggle, weeks, todayOff, allItemsFlat, onEditItem, onAddDeliverable, onAddSubtask, onMarkDone, onSaveItem, rowIndex, DAY_W, colWidths, LEFT_W, onInsertSubtask, onReorderDeliverables, onReorderSubtasks, onDeleteSubtask, statusNotes = {}, onUpdateNote, holidays = [], clipboard, onCopySubtask, onCopyDeliverable, onPasteSubtask, onPasteDeliverable, onSaveProject, onOpenProject , showGantt  }) {
   const isProjCollapsed = !!collapsed[proj.id];
 
   // Span the whole project across the chart for the summary bar
@@ -5424,12 +5427,125 @@ function Sparkline({ data = [], color = "#0ea5e9", width = 80, height = 32, fill
   );
 }
 
-function KPIMetricCard({ label, value, sub, desc, trend, trendLabel, color = "#0ea5e9", sparkData, icon, warning }) {
+
+// ── KPI Drill-Down Modal ──────────────────────────────────────────────────────
+function KpiDrillDown({ title, onClose, children }) {
+  return (
+    <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.45)", zIndex:9000, display:"flex", alignItems:"flex-start", justifyContent:"center", paddingTop:60, paddingBottom:40, overflowY:"auto" }}>
+      <div style={{ background:"#fff", borderRadius:12, width:"100%", maxWidth:760, margin:"0 16px", boxShadow:"0 20px 60px rgba(0,0,0,0.25)", overflow:"hidden" }}>
+        <div style={{ background:"#002A4E", padding:"16px 20px", display:"flex", alignItems:"center", justifyContent:"space-between" }}>
+          <span style={{ fontSize:15, fontWeight:800, color:"#fff" }}>{title}</span>
+          <button onClick={onClose} style={{ background:"none", border:"none", color:"#9ca3af", fontSize:20, cursor:"pointer", lineHeight:1 }}>×</button>
+        </div>
+        <div style={{ padding:"20px 20px", maxHeight:"65vh", overflowY:"auto" }}>{children}</div>
+      </div>
+    </div>
+  );
+}
+
+function VisibilityDrillDown({ projects, onClose }) {
+  const activeProjects = projects.filter(p => !p.archived);
+  const EFFORT_HRS = { S:1, M:4, L:8 };
+  const rows = activeProjects.map(proj => {
+    const tasks = proj.deliverables.flatMap(d => d.subtasks.length > 0 ? d.subtasks : [d]);
+    const open  = tasks.filter(t => t.status !== "Done");
+    const checks = {
+      client:      { label:"Client name",       pts:10,  pass: !!proj.client },
+      deliverables:{ label:"Has deliverables",  pts:15,  pass: proj.deliverables.length > 0 },
+      tasks:       { label:"Has tasks",         pts:15,  pass: tasks.length > 0 },
+      assignees:   { label:"All tasks assigned",pts:20,  pass: open.length === 0 || open.every(t => (t.assignees||[]).length > 0),
+                     detail: open.filter(t => !(t.assignees||[]).length).map(t => t.title || t.name).join(", ") },
+      dates:       { label:"All tasks dated",   pts:20,  pass: open.length === 0 || open.every(t => t.end),
+                     detail: open.filter(t => !t.end).map(t => t.title || t.name).join(", ") },
+      effort:      { label:"All tasks sized",   pts:10,  pass: open.length === 0 || open.every(t => t.effort || t.customHours),
+                     detail: open.filter(t => !t.effort && !t.customHours).map(t => t.title || t.name).join(", ") },
+      owner:       { label:"Project owner set", pts:10,  pass: !!proj.ownerId },
+    };
+    const score = Object.values(checks).reduce((s,c) => s + (c.pass ? c.pts : 0), 0);
+    return { proj, checks, score };
+  }).sort((a,b) => a.score - b.score);
+
+  return (
+    <KpiDrillDown title="Visibility Score — Breakdown by Project" onClose={onClose}>
+      <p style={{ fontSize:12, color:"#6b7280", marginBottom:16 }}>
+        Each project is scored out of 100 across 7 checks. Click a row to expand missing items.
+      </p>
+      {rows.map(({ proj, checks, score }) => (
+        <VisibilityProjectRow key={proj.id} proj={proj} checks={checks} score={score} />
+      ))}
+    </KpiDrillDown>
+  );
+}
+
+function VisibilityProjectRow({ proj, checks, score }) {
+  const [open, setOpen] = React.useState(false);
+  const failed = Object.entries(checks).filter(([,c]) => !c.pass);
+  const scoreColor = score >= 90 ? "#10b981" : score >= 70 ? "#f59e0b" : "#ef4444";
+  return (
+    <div style={{ border:"1px solid rgba(0,0,0,0.08)", borderRadius:8, marginBottom:8, overflow:"hidden" }}>
+      <div onClick={() => setOpen(o => !o)} style={{ display:"flex", alignItems:"center", gap:12, padding:"10px 14px", cursor:"pointer", background: open ? "#f9fafb" : "#fff" }}>
+        <span style={{ fontSize:20, fontWeight:900, color:scoreColor, minWidth:42 }}>{score}%</span>
+        <span style={{ flex:1, fontSize:13, fontWeight:700, color:"#1f2937" }}>{proj.name}</span>
+        {failed.length === 0
+          ? <span style={{ fontSize:11, color:"#10b981", fontWeight:700 }}>✓ Complete</span>
+          : <span style={{ fontSize:11, color:"#f59e0b", fontWeight:700 }}>⚠ {failed.length} issue{failed.length>1?"s":""}</span>
+        }
+        <span style={{ fontSize:12, color:"#9ca3af" }}>{open ? "▲" : "▼"}</span>
+      </div>
+      {open && (
+        <div style={{ padding:"0 14px 14px", background:"#f9fafb" }}>
+          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:6, marginTop:8 }}>
+            {Object.entries(checks).map(([key, c]) => (
+              <div key={key} style={{ display:"flex", alignItems:"flex-start", gap:8, padding:"6px 10px", background:c.pass?"#f0fdf4":"#fff7ed", borderRadius:6, border:`1px solid ${c.pass?"#bbf7d0":"#fed7aa"}` }}>
+                <span style={{ fontSize:14, marginTop:1 }}>{c.pass ? "✓" : "✗"}</span>
+                <div>
+                  <div style={{ fontSize:11, fontWeight:700, color: c.pass ? "#065F46" : "#92400E" }}>
+                    {c.label} <span style={{ fontWeight:400, color:"#9ca3af" }}>({c.pts}pts)</span>
+                  </div>
+                  {!c.pass && c.detail && (
+                    <div style={{ fontSize:10, color:"#b45309", marginTop:2 }}>Missing: {c.detail}</div>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function MissingItemsDrillDown({ title, items, columns, onClose }) {
+  if (!items.length) return (
+    <KpiDrillDown title={title} onClose={onClose}>
+      <div style={{ textAlign:"center", padding:"40px 20px", color:"#10b981", fontSize:14, fontWeight:700 }}>✓ No issues found — 100% complete!</div>
+    </KpiDrillDown>
+  );
+  return (
+    <KpiDrillDown title={title} onClose={onClose}>
+      <p style={{ fontSize:12, color:"#6b7280", marginBottom:14 }}>{items.length} item{items.length>1?"s":""} need attention:</p>
+      <table style={{ width:"100%", borderCollapse:"collapse", fontSize:12 }}>
+        <thead>
+          <tr>{columns.map(c => <th key={c} style={{ textAlign:"left", padding:"6px 10px", background:"#f3f4f6", fontWeight:700, color:"#374151", borderBottom:"2px solid #e5e7eb" }}>{c}</th>)}</tr>
+        </thead>
+        <tbody>
+          {items.map((row, i) => (
+            <tr key={i} style={{ borderBottom:"1px solid #f3f4f6" }}>
+              {row.map((cell, j) => <td key={j} style={{ padding:"7px 10px", color:"#4b5563" }}>{cell}</td>)}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </KpiDrillDown>
+  );
+}
+
+function KPIMetricCard({ label, value, sub, desc, trend, trendLabel, color = "#0ea5e9", sparkData, icon, warning, onClick }) {
   const trendUp   = typeof trend === "number" && trend > 0;
   const trendDown = typeof trend === "number" && trend < 0;
   const trendColor = trendUp ? "#10b981" : trendDown ? "#f87171" : "#9ca3af";
   return (
-    <div style={{ background:"#fff", borderWidth:"1px", borderStyle:"solid", borderColor:`${warning ? "#fde68a" : "rgba(0,0,0,0.08)"}`, borderTopWidth:"3px", borderTopColor:`${warning ? "#f59e0b" : color}`, borderRadius:8, padding:"14px 16px", minWidth:0 }}>
+    <div onClick={onClick} style={{ background:"#fff", cursor: onClick ? "pointer" : "default", borderWidth:"1px", borderStyle:"solid", borderColor:`${warning ? "#fde68a" : "rgba(0,0,0,0.08)"}`, borderTopWidth:"3px", borderTopColor:`${warning ? "#f59e0b" : color}`, borderRadius:8, padding:"14px 16px", minWidth:0 }}>
       <div style={{ fontSize:10, fontWeight:700, color:"#9ca3af", letterSpacing:"0.07em", textTransform:"uppercase", marginBottom:6 }}>
         {icon && <span style={{ marginRight:5 }}>{icon}</span>}{label}
       </div>
@@ -5467,6 +5583,7 @@ function KPIDashboardView({ projects, people, notifications, adminTasks = [], sb
   const [dateRange,    setDateRange]    = React.useState("30d");
   const [exporting,    setExporting]    = React.useState(false);
   const [snapshotSaved,setSnapshotSaved]= React.useState(false);
+  const [drillDown,    setDrillDown]    = React.useState(null); // null | "visibility" | "missing_owners" | "missing_dates" | "planning" | "forecast"
 
   const today     = new Date(); today.setHours(0,0,0,0);
   const todayStr  = today.toISOString().slice(0,10);
@@ -5787,8 +5904,20 @@ function KPIDashboardView({ projects, people, notifications, adminTasks = [], sb
   const tblC = (extra={}) => ({ fontSize:12, padding:"7px 10px", borderBottom:"1px solid rgba(0,0,0,0.05)", ...extra });
   const fmtDate = d => d ? new Date(d+"T00:00:00").toLocaleDateString("en-US",{month:"short",day:"numeric"}) : "—";
 
+  const missingOwnerRows = openTasks.filter(t => !(t.assignees||[]).length).map(t => {
+    const proj = activeProjects.find(p => p.deliverables.some(d => d.id === t.id || (d.subtasks||[]).some(s=>s.id===t.id)));
+    return [proj?.name||"?", t.title||t.name||"Untitled", t.end||"No date", t.status||"?"];
+  });
+  const missingDateRows = openTasks.filter(t => !t.end).map(t => {
+    const proj = activeProjects.find(p => p.deliverables.some(d => d.id === t.id || (d.subtasks||[]).some(s=>s.id===t.id)));
+    return [proj?.name||"?", t.title||t.name||"Untitled", (t.assignees||[]).length?"Assigned":"No assignee", t.status||"?"];
+  });
+
   return (
     <div style={{ display:"flex", flexDirection:"column", gap:18, padding:"0 0 40px" }}>
+      {drillDown === "visibility" && <VisibilityDrillDown projects={projects} onClose={() => setDrillDown(null)} />}
+      {drillDown === "missing_owners" && <MissingItemsDrillDown title="Tasks Missing Owners" items={missingOwnerRows} columns={["Project","Task","Due Date","Status"]} onClose={() => setDrillDown(null)} />}
+      {drillDown === "missing_dates" && <MissingItemsDrillDown title="Tasks Missing End Dates" items={missingDateRows} columns={["Project","Task","Assigned To","Status"]} onClose={() => setDrillDown(null)} />}
 
       {/* ── Header ── */}
       <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", flexWrap:"wrap", gap:10 }}>
@@ -5820,7 +5949,7 @@ function KPIDashboardView({ projects, people, notifications, adminTasks = [], sb
 
       {/* ── Summary Cards ── */}
       <div style={{ display:"grid", gridTemplateColumns:"repeat(5,1fr)", gap:12 }}>
-        <KPIMetricCard label="Visibility Score"       value={visibilityScore+"%"} color={TEAL}     icon="◉" sparkData={sparkVis}      trend={trend(sparkVis)}      trendLabel="pts"
+        <KPIMetricCard label="Visibility Score"       value={visibilityScore+"%"} color={TEAL}     icon="◉" sparkData={sparkVis}      trend={trend(sparkVis)}      trendLabel="pts" onClick={() => setDrillDown("visibility")}
           desc="How well-structured your projects are. Scores tasks for having owners, due dates, effort estimates, and more." />
         <KPIMetricCard label="Planning Completeness"  value={planningScore+"%"}   color="#6366f1"  icon="◈" sparkData={sparkPlan}     trend={trend(sparkPlan)}     trendLabel="pts"
           desc="% of active projects that have an owner, deliverables, dates, and tasks defined before work begins." />
@@ -5914,9 +6043,9 @@ function KPIDashboardView({ projects, people, notifications, adminTasks = [], sb
         <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:12, marginBottom:18 }}>
           <KPIMetricCard label="Visibility Score"     value={visibilityScore+"%"} color={TEAL}    sub={`${activeProjects.length} projects scored`} sparkData={sparkVis} trend={trend(sparkVis)} trendLabel="pts"
             desc="Each project earns points for having a client, deliverables, tasks, owners, due dates, and effort sizes. 100% = fully visible." />
-          <KPIMetricCard label="Tasks Missing Owners" value={missingOwners}       color="#f97316" sub={`${missingOwnersPct}% of ${openTasks.length} open tasks`} warning={missingOwnersPct > 20}
+          <KPIMetricCard label="Tasks Missing Owners" value={missingOwners}       color="#f97316" sub={`${missingOwnersPct}% of ${openTasks.length} open tasks`} warning={missingOwnersPct > 20} onClick={() => setDrillDown("missing_owners")}
             desc="Open tasks with no one assigned. Unowned tasks create blind spots in capacity planning and scheduling." />
-          <KPIMetricCard label="Tasks Missing Dates"  value={missingDates}        color="#f59e0b" sub={`${missingDatesPct}% of ${openTasks.length} open tasks`} warning={missingDatesPct > 20}
+          <KPIMetricCard label="Tasks Missing Dates"  value={missingDates}        color="#f59e0b" sub={`${missingDatesPct}% of ${openTasks.length} open tasks`} warning={missingDatesPct > 20} onClick={() => setDrillDown("missing_dates")}
             desc="Open tasks with no due date. Missing dates make Timeline and By Person views incomplete and forecasting unreliable." />
         </div>
 
@@ -9523,7 +9652,7 @@ export default function App() {
     setDbError(null);
     try {
       const [pR, dR, sR, mR, hR, nR, tR, ptR] = await Promise.all([
-        sb.select("projects",       "order=position.asc,created_at.asc"),
+        sb.select("projects",       "select=*&order=position.asc,created_at.asc"),
         sb.select("deliverables",   "deleted_at=is.null&order=position.asc,created_at.asc"),
         sb.select("subtasks",       "deleted_at=is.null&order=position.asc,created_at.asc"),
         sb.select("team_members",   "order=position.asc,created_at.asc"),
@@ -10329,6 +10458,16 @@ export default function App() {
     }
   );
 
+  const handleReorderDeliverables = (projectId, newOrder) => optimistic(
+    () => setProjects(projs => projs.map(p =>
+      p.id !== projectId ? p : { ...p, deliverables: newOrder }
+    )),
+    async () => {
+      await Promise.all(newOrder.map((d, i) => sb.update("deliverables", d.id, { position: i })));
+      return null;
+    }
+  );
+
   const handleReorderSubtasks = (projectId, deliverableId, newOrder) => optimistic(
     () => setProjects(projs => projs.map(p => p.id !== projectId ? p : { ...p, deliverables: p.deliverables.map(d => d.id !== deliverableId ? d : { ...d, subtasks: newOrder }) })),
     async () => {
@@ -10850,7 +10989,7 @@ export default function App() {
             onAddSubtask={(proj, del) => setNewSubtask({ project: proj, deliverable: del })}
             onMarkDone={handleMarkDone} onSaveItem={handleSaveItem} holidays={holidays}
             onInsertSubtask={handleInsertSubtask}
-            onReorderSubtasks={handleReorderSubtasks}
+            onReorderDeliverables={handleReorderDeliverables} onReorderSubtasks={handleReorderSubtasks}
             onDeleteSubtask={handleDeleteSubtask}
             statusNotes={statusNotes}
             onUpdateNote={handleUpdateNote}
