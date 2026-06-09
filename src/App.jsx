@@ -1848,23 +1848,13 @@ function TimelineView({ projects, people, onEditItem, onAddDeliverable, onAddSub
     const startW = colWidths[colKey];
     const onMove = (mv) => {
       const delta = mv.clientX - startX;
-      const newW = Math.max(MIN_COL, startW + delta);
-      const actualDelta = newW - startW;
-      if (actualDelta === 0) return;
       setColWidths(cw => {
-        // Available width = container width (list view) or unconstrained (gantt)
-        const maxTotal = !showGantt && containerRef.current
-          ? containerRef.current.offsetWidth - 4
-          : Infinity;
-        const currentTotal = COL_KEYS.reduce((s, k) => s + (cw[k] || 0), 0);
-        if (actualDelta > 0 && currentTotal + actualDelta > maxTotal) {
-          // Shrink "notes" (last col) to compensate, never below MIN_COL
-          const lastKey = "notes";
-          if (colKey === lastKey) return { ...cw, [colKey]: Math.min(newW, maxTotal - currentTotal + cw[lastKey]) };
-          const lastCanGive = Math.max(0, (cw[lastKey] || 0) - MIN_COL);
-          const take = Math.min(actualDelta, lastCanGive);
-          if (take <= 0) return cw; // can't expand further
-          return { ...cw, [colKey]: startW + take, [lastKey]: (cw[lastKey] || 0) - take };
+        const newW = Math.max(MIN_COL, startW + delta);
+        if (!showGantt && containerRef.current) {
+          // In list view: cap so total never exceeds container width
+          const others = COL_KEYS.filter(k => k !== colKey).reduce((s, k) => s + (cw[k] || 0), 0);
+          const maxForThis = containerRef.current.offsetWidth - others - 4;
+          return { ...cw, [colKey]: Math.min(newW, Math.max(MIN_COL, maxForThis)) };
         }
         return { ...cw, [colKey]: newW };
       });
@@ -1941,10 +1931,10 @@ function TimelineView({ projects, people, onEditItem, onAddDeliverable, onAddSub
     };
     const onMouseMove = (e) => {
       if (!active) return;
-      const dx = startX - e.clientX;
+      const dx = showGantt ? startX - e.clientX : 0;  // no horizontal pan in list view
       const dy = startY - e.clientY;
       if (Math.abs(dx) > 2 || Math.abs(dy) > 2) el.style.cursor = "grabbing";
-      el.scrollLeft = startLeft + dx;
+      if (showGantt) el.scrollLeft = startLeft + dx;
       el.scrollTop  = startTop  + dy;
     };
     const onMouseUp = () => {
@@ -2044,6 +2034,7 @@ function TimelineView({ projects, people, onEditItem, onAddDeliverable, onAddSub
           {/* Column labels — frozen left in Gantt view, normal in List view */}
           <div style={{
             display: "flex", alignItems: "center", flexShrink: 0,
+            width: showGantt ? LEFT_W : "100%",
            
             height: "100%",
             background: "#f0f2f5",
@@ -2059,11 +2050,13 @@ function TimelineView({ projects, people, onEditItem, onAddDeliverable, onAddSub
                 </div>
               </div>
             ))}
+            {showGantt && (
             <button onClick={resetColWidths} title="Reset column widths"
               style={{ marginLeft: 4, background: "none", border: "none", color: "#9ca3af", cursor: "pointer", fontFamily: "inherit", fontSize: 12, padding: "0 4px", flexShrink: 0, height: "100%", display: "flex", alignItems: "center" }}
               onMouseEnter={e => e.currentTarget.style.color = "#374151"}
               onMouseLeave={e => e.currentTarget.style.color = "#9ca3af"}
             >↺</button>
+          )}
           </div>
           {/* Week date labels — only in Gantt view */}
           {showGantt && (
@@ -2229,7 +2222,7 @@ function ProjectSection({ proj, people, collapsed, toggle, weeks, todayOff, allI
       <div style={{ display: "flex", height: 36, background: isProjCollapsed ? "rgba(0,0,0,0.03)" : "rgba(0,0,0,0.04)", borderBottom: "1px solid rgba(0,0,0,0.07)", alignItems: "center", cursor: "pointer" }}
         onMouseEnter={e => e.currentTarget.style.background = "rgba(255,255,255,0.045)"}
         onMouseLeave={e => e.currentTarget.style.background = isProjCollapsed ? "rgba(0,0,0,0.03)" : "rgba(0,0,0,0.04)"}>
-        <div style={{ width: LEFT_W, flexShrink: 0, display: "flex", alignItems: "center", padding: "0 12px", gap: 8, borderRight: "1px solid rgba(0,0,0,0.06)", height: "100%", position: showGantt ? "sticky" : "static", left:0, zIndex: showGantt ? 21 : "auto", alignSelf:"stretch", background:"#fff", boxShadow:"2px 0 4px rgba(0,0,0,0.07)" }}>
+        <div style={{ width: showGantt ? LEFT_W : "100%", flexShrink: 0, display: "flex", alignItems: "center", padding: "0 12px", gap: 8, borderRight: "1px solid rgba(0,0,0,0.06)", height: "100%", position: showGantt ? "sticky" : "static", left:0, zIndex: showGantt ? 21 : "auto", alignSelf:"stretch", background:"#fff", width: showGantt ? LEFT_W : "100%", boxShadow:"2px 0 4px rgba(0,0,0,0.07)" }}>
           {/* Collapse chevron — click to toggle */}
           <span onClick={() => toggle(proj.id)} style={{ fontSize: 10, color: "#6b7280", lineHeight: 1, width: 12, flexShrink: 0, transition: "transform 0.15s", display: "inline-block", transform: isProjCollapsed ? "rotate(-90deg)" : "rotate(0deg)", cursor: "pointer" }}>▼</span>
           <div onClick={() => toggle(proj.id)} style={{ width: 3, height: 16, background: proj.color, borderRadius: 2, flexShrink: 0, cursor: "pointer" }} />
@@ -2317,7 +2310,7 @@ function ProjectSection({ proj, people, collapsed, toggle, weeks, todayOff, allI
       {/* Empty state */}
       {!isProjCollapsed && proj.deliverables.length === 0 && (
         <div style={{ display: "flex", height: 44, alignItems: "center" }}>
-          <div style={{ width: LEFT_W, flexShrink: 0, padding: "0 28px", borderRight: "1px solid rgba(0,0,0,0.06)" }}>
+          <div style={{ width: showGantt ? LEFT_W : "100%", flexShrink: 0, padding: "0 28px", borderRight: showGantt ? "1px solid rgba(0,0,0,0.06)" : "none" }}>
             <button onClick={() => onAddDeliverable(proj)} style={{
               background: "none", border: "1px dashed rgba(0,0,0,0.09)", borderRadius: 5,
               color: "#9ca3af", padding: "4px 12px", cursor: "pointer", fontSize: 11, fontFamily: "inherit",
@@ -2454,7 +2447,7 @@ function DeliverableRow({ del, proj, people, collapsed, toggle, weeks, todayOff,
         onContextMenu={e => { e.preventDefault(); setDelCtxMenu({ x: e.clientX, y: e.clientY }); }}
         onMouseEnter={e => e.currentTarget.style.background = "rgba(245,158,11,0.06)"}
         onMouseLeave={e => e.currentTarget.style.background = "rgba(245,158,11,0.03)"}>
-        <div onMouseEnter={e => e.currentTarget.style.background="#fff8ed"} onMouseLeave={e => e.currentTarget.style.background="#fff"} style={{ display:"flex", width:LEFT_W, flexShrink:0, alignSelf:"stretch", position: showGantt ? "sticky" : "static", left:0, zIndex: showGantt ? 20 : "auto", background:"#fff", boxShadow: showGantt ? "2px 0 4px rgba(0,0,0,0.07)" : "none" }}>
+        <div onMouseEnter={e => e.currentTarget.style.background="#fff8ed"} onMouseLeave={e => e.currentTarget.style.background="#fff"} style={{ display:"flex", width:LEFT_W, flexShrink:0, alignSelf:"stretch", position: showGantt ? "sticky" : "static", left:0, zIndex: showGantt ? 20 : "auto", background:"#fff", width: showGantt ? LEFT_W : "100%", boxShadow: showGantt ? "2px 0 4px rgba(0,0,0,0.07)" : "none", width: showGantt ? LEFT_W : "100%" }}>
         {/* Row # */}
         <LeftCell width={colWidths.num} center>
           <span style={{ fontSize: 10, fontWeight: 700, color: "#9ca3af" }}>{rowNum}</span>
