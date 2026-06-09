@@ -1840,13 +1840,34 @@ function TimelineView({ projects, people, onEditItem, onAddDeliverable, onAddSub
 
   // Drag-to-resize columns
   const dragRef = useRef(null);
+  const COL_KEYS = ["num","title","start","end","dur","deps","assignees","notes"];
+  const MIN_COL = 36;
   const startResizeCol = (colKey, e) => {
     e.preventDefault();
     const startX = e.clientX;
     const startW = colWidths[colKey];
     const onMove = (mv) => {
       const delta = mv.clientX - startX;
-      setColWidths(cw => ({ ...cw, [colKey]: Math.max(36, startW + delta) }));
+      const newW = Math.max(MIN_COL, startW + delta);
+      const actualDelta = newW - startW;
+      if (actualDelta === 0) return;
+      setColWidths(cw => {
+        // Available width = container width (list view) or unconstrained (gantt)
+        const maxTotal = !showGantt && containerRef.current
+          ? containerRef.current.offsetWidth - 4
+          : Infinity;
+        const currentTotal = COL_KEYS.reduce((s, k) => s + (cw[k] || 0), 0);
+        if (actualDelta > 0 && currentTotal + actualDelta > maxTotal) {
+          // Shrink "notes" (last col) to compensate, never below MIN_COL
+          const lastKey = "notes";
+          if (colKey === lastKey) return { ...cw, [colKey]: Math.min(newW, maxTotal - currentTotal + cw[lastKey]) };
+          const lastCanGive = Math.max(0, (cw[lastKey] || 0) - MIN_COL);
+          const take = Math.min(actualDelta, lastCanGive);
+          if (take <= 0) return cw; // can't expand further
+          return { ...cw, [colKey]: startW + take, [lastKey]: (cw[lastKey] || 0) - take };
+        }
+        return { ...cw, [colKey]: newW };
+      });
     };
     const onUp = () => {
       document.removeEventListener('mousemove', onMove);
@@ -2003,7 +2024,7 @@ function TimelineView({ projects, people, onEditItem, onAddDeliverable, onAddSub
           height: "calc(100vh - 130px)",
           minHeight: 300,
           overflowY: "auto",
-          overflowX: "auto",
+          overflowX: showGantt ? "auto" : "hidden",
           WebkitOverflowScrolling: "touch",
         }}
       >
