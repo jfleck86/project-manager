@@ -1985,30 +1985,6 @@ function TimelineView({ projects, people, onEditItem, onAddDeliverable, onAddSub
     };
   }, []);
 
-  // ── Deep-link: auto-open task from URL hash (#task=ID) ──────────────────────
-  useEffect(() => {
-    const hash = window.location.hash;
-    const match = hash.match(/[#&]task=([^&]+)/);
-    if (!match || !projects.length) return;
-    const targetId = decodeURIComponent(match[1]);
-    // Search all projects for a matching subtask or deliverable
-    for (const proj of projects) {
-      for (const del of proj.deliverables) {
-        if (del.id === targetId) {
-          setView("timeline");
-          setEditItem({ item: del, projectColor: proj.color });
-          return;
-        }
-        const sub = del.subtasks?.find(s => s.id === targetId);
-        if (sub) {
-          setView("timeline");
-          setEditItem({ item: sub, projectColor: proj.color });
-          return;
-        }
-      }
-    }
-  }, [projects]); // runs once projects load
-
   // Collect all IDs for dependency lookup across whole timeline
   const allItemsFlat = projects.flatMap(p => p.deliverables.flatMap(d => [
     { ...d, projectColor: p.color, projectName: p.name },
@@ -9450,6 +9426,7 @@ export default function App() {
     try { localStorage.setItem("planr_view", v); } catch {}
   };
   const [editingItem, setEditingItem] = useState(null);
+
   const [showNewProject, setShowNewProject] = useState(false);
   const [showImport, setShowImport] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(null);
@@ -9500,6 +9477,22 @@ export default function App() {
 
   // ── Data state ────────────────────────────────────────────────────────────
   const [projects, setProjects] = useState([]);
+
+  // ── Deep-link: auto-open task from URL hash (#task=ID) ──────────────────────
+  useEffect(() => {
+    const hash = window.location.hash;
+    const match = hash.match(/[#&]task=([^&]+)/);
+    if (!match || !projects.length) return;
+    const targetId = decodeURIComponent(match[1]);
+    for (const proj of projects) {
+      for (const del of proj.deliverables) {
+        if (del.id === targetId) { setView("timeline"); setEditingItem(del); return; }
+        const sub = (del.subtasks || []).find(s => s.id === targetId);
+        if (sub) { setView("timeline"); setEditingItem(sub); return; }
+      }
+    }
+  }, [projects]);
+
 
   const [archivedProjects, setArchivedProjects] = useState([]);
   const [people, setPeople] = useState([]);
@@ -9678,7 +9671,7 @@ export default function App() {
   }
 
   // ── handlers ──────────────────────────────────────────────────────────────
-  const handleEditItem = (item, projectColor) => {
+  const handleEditItem = (item) => {
     setEditingItem(item);
     if (item?.id) window.history.replaceState(null, "", window.location.pathname + window.location.search + "#task=" + encodeURIComponent(item.id));
   };
