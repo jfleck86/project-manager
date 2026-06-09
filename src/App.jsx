@@ -9478,11 +9478,17 @@ export default function App() {
   // ── Data state ────────────────────────────────────────────────────────────
   const [projects, setProjects] = useState([]);
 
-  // ── Deep-link: auto-open task from URL hash (#task=ID) ──────────────────────
+  // ── Deep-link: auto-open task from URL hash (#task=ID) — fires once only ────
+  const _deepLinkHandled = useRef(false);
   useEffect(() => {
+    if (_deepLinkHandled.current) return;
     const hash = window.location.hash;
     const match = hash.match(/[#&]task=([^&]+)/);
-    if (!match || !projects.length) return;
+    if (!match) { _deepLinkHandled.current = true; return; }
+    if (!projects.length) return;                   // wait for projects to load
+    _deepLinkHandled.current = true;
+    // Clear hash immediately — so reloads don't re-open the modal
+    window.history.replaceState(null, "", window.location.pathname + window.location.search);
     const targetId = decodeURIComponent(match[1]);
     for (const proj of projects) {
       for (const del of proj.deliverables) {
@@ -9673,7 +9679,7 @@ export default function App() {
   // ── handlers ──────────────────────────────────────────────────────────────
   const handleEditItem = (item) => {
     setEditingItem(item);
-    if (item?.id) window.history.replaceState(null, "", window.location.pathname + window.location.search + "#task=" + encodeURIComponent(item.id));
+    // Note: URL hash is NOT set here — only the Copy Link button puts a hash in a URL
   };
 
   // ── Send a proofreading task to the Proof Queue ───────────────────────────
