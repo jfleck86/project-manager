@@ -1800,6 +1800,20 @@ function TimelineView({ projects, people, onEditItem, onAddDeliverable, onAddSub
   const scrollRef    = useRef(null); // month header scroll sync
   const topBarRef    = useRef(null); // sticky top scrollbar
   const containerRef = useRef(null);
+  const hasScrolled = useRef(false);
+  const [showGantt, setShowGantt] = useState(() => {
+    try { return JSON.parse(localStorage.getItem('planr_show_gantt') ?? 'true'); } catch { return true; }
+  });
+  const toggleGantt = () => setShowGantt(v => {
+    const next = !v;
+    try { localStorage.setItem('planr_show_gantt', JSON.stringify(next)); } catch {}
+    // Reset horizontal scroll when entering list view so columns are visible
+    if (!next && containerRef.current) containerRef.current.scrollLeft = 0;
+    return next;
+  });
+
+
+  const jumpToToday = () => { if (containerRef.current) { const ganttW = (containerRef.current.offsetWidth || 900) - LEFT_W; containerRef.current.scrollLeft = Math.max(0, todayOff * DAY_W - ganttW * 0.25); } };
   const [selectedProjects, setSelectedProjects] = useState([]);
   const toggleProjFilter = (id) => setSelectedProjects(s => s.includes(id) ? s.filter(x => x !== id) : [...s, id]);
   const visibleProjects = selectedProjects.length === 0 ? projects : projects.filter(p => selectedProjects.includes(p.id));
@@ -1876,12 +1890,20 @@ function TimelineView({ projects, people, onEditItem, onAddDeliverable, onAddSub
   }));
   const todayOff = Math.ceil((TODAY - TIMELINE_START) / 86400000);
 
-  // Scroll to left edge on mount (show project columns first)
+  // Scroll to the current week on mount (fires once after DAY_W is computed)
   useEffect(() => {
-    if (containerRef.current) containerRef.current.scrollLeft = 0;
-  }, []);
-
+    if (!containerRef.current || hasScrolled.current || DAY_W <= 16 || !showGantt) return;
+    hasScrolled.current = true;
+    const ganttW = (containerRef.current.offsetWidth || 900) - LEFT_W;
+    const x = Math.max(0, todayOff * DAY_W - ganttW * 0.25);
+    containerRef.current.scrollLeft = x;
+  }, [DAY_W, showGantt]);
   // ── Pan-drag: attach to the actual scroll container (containerRef) ────────
+
+  // Ensure column labels are visible when starting in List View
+  useEffect(() => {
+    if (!showGantt && containerRef.current) containerRef.current.scrollLeft = 0;
+  }, []);  // runs once on mount only
   useEffect(() => {
     const el = containerRef.current;
     if (!el) return;
@@ -1945,6 +1967,12 @@ function TimelineView({ projects, people, onEditItem, onAddDeliverable, onAddSub
             color: selectedProjects.includes(p.id) ? p.color : "#6b7280",
           }}>{p.name}</div>
         ))}
+        <button onClick={jumpToToday} style={{ marginLeft:"auto", padding:"4px 14px", background:BRAND_TEAL, color:"#fff", border:"none", borderRadius:7, cursor:"pointer", fontSize:12, fontWeight:700, fontFamily:"inherit", display:"flex", alignItems:"center", gap:5, flexShrink:0 }}>⌖ Today</button>
+        <button onClick={toggleGantt}
+          title={showGantt ? "Hide Gantt — List View" : "Show Gantt — Planning View"}
+          style={{ padding:"4px 14px", background: showGantt ? "rgba(0,0,0,0.08)" : BRAND_TEAL, color: showGantt ? "#374151" : "#fff", border:"1px solid rgba(0,0,0,0.12)", borderRadius:7, cursor:"pointer", fontSize:12, fontWeight:700, fontFamily:"inherit", display:"flex", alignItems:"center", gap:5, flexShrink:0 }}>
+          {showGantt ? "📋 List View" : "📊 Gantt View"}
+        </button>
       </div>
 
       {/*
@@ -1968,7 +1996,7 @@ function TimelineView({ projects, people, onEditItem, onAddDeliverable, onAddSub
         ref={containerRef}
         onWheel={(e) => { if (e.shiftKey) { e.preventDefault(); containerRef.current.scrollLeft += e.deltaY || e.deltaX; } }}
         style={{
-          background: "#eceef2",
+          background: showGantt ? "#eceef2" : "#fff",
           border: "1px solid rgba(0,0,0,0.07)",
           borderRadius: 10,
           fontFamily: "inherit",
@@ -1980,54 +2008,57 @@ function TimelineView({ projects, people, onEditItem, onAddDeliverable, onAddSub
         }}
       >
         {/* Min-width wrapper so content never wraps */}
-        <div style={{ minWidth: LEFT_W + totalDays * DAY_W }}>
+        <div style={{ minWidth: showGantt ? LEFT_W + totalDays * DAY_W : "100%", background: "#fff" }}>
 
-        {/* ── STICKY HEADER ROW — sticks vertically, scrolls horizontally ── */}
+        {/* ── TIMELINE HEADER ── */}
         <div style={{
-          position: "sticky",
-          top: 0,
-          zIndex: 30,
-          display: "flex",
-          height: 38,
-          flexShrink: 0,
+          position: "sticky", top: 0, zIndex: 35,
+          display: "flex", height: 38, flexShrink: 0,
+          width: showGantt ? LEFT_W + totalDays * DAY_W : "100%",
+          minWidth: "100%",
           background: "#f0f2f5",
           borderBottom: "1px solid rgba(0,0,0,0.09)",
           boxShadow: "0 2px 6px rgba(0,0,0,0.08)",
-          width: "100%",
         }}>
-          {/* Left: column labels */}
-          <div style={{ display: "flex", flexShrink: 0, background: "#f0f2f5", borderRight: "1px solid rgba(0,0,0,0.07)" }}>
+          {/* Column labels — frozen left in Gantt view, normal in List view */}
+          <div style={{
+            display: "flex", alignItems: "center", flexShrink: 0,
+           
+            height: "100%",
+            background: "#f0f2f5",
+            borderRight: "2px solid rgba(0,0,0,0.1)",
+            position: showGantt ? "sticky" : "static",
+            left: 0, zIndex: showGantt ? 2 : "auto",
+          }}>
             {[["#","num"],["Title","title"],["Start","start"],["End","end"],["Dur","dur"],["Deps","deps"],["Assigned To","assignees"],["Notes","notes"]].map(([label, key]) => (
-              <div key={key} style={{ width: colWidths[key], position: "relative", padding: "0 8px", fontSize: fs(10), fontWeight: 700, color: "#6b7280", letterSpacing: "0.09em", flexShrink: 0, borderRight: "1px solid rgba(0,0,0,0.05)", whiteSpace: "nowrap", overflow: "hidden", userSelect: "none", display: "flex", alignItems: "center" }}>
+              <div key={key} style={{ width: colWidths[key], position: "relative", padding: "0 8px", fontSize: 10, fontWeight: 700, color: "#374151", letterSpacing: "0.07em", flexShrink: 0, borderRight: "1px solid rgba(0,0,0,0.06)", whiteSpace: "nowrap", overflow: "hidden", userSelect: "none", display: "flex", alignItems: "center", height: "100%" }}>
                 {label.toUpperCase()}
-                <div onMouseDown={(e) => startResizeCol(key, e)} style={{ position: "absolute", right: 0, top: 0, bottom: 0, width: 6, cursor: "col-resize", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                <div onMouseDown={(e) => startResizeCol(key, e)} style={{ position: "absolute", right: 0, top: 0, bottom: 0, width: 8, cursor: "col-resize", display: "flex", alignItems: "center", justifyContent: "center" }}>
                   <div style={{ width: 2, height: 14, background: "rgba(0,0,0,0.15)", borderRadius: 1 }} />
                 </div>
               </div>
             ))}
-            <button onClick={resetColWidths} title="Reset column widths to defaults"
-              style={{ marginLeft: 4, background: "none", border: "none", color: "#c4c9d4", cursor: "pointer", fontSize: 9, fontFamily: "inherit", padding: "0 6px", alignSelf: "center", whiteSpace: "nowrap" }}
-              onMouseEnter={e => e.currentTarget.style.color = "#6b7280"}
-              onMouseLeave={e => e.currentTarget.style.color = "#c4c9d4"}
+            <button onClick={resetColWidths} title="Reset column widths"
+              style={{ marginLeft: 4, background: "none", border: "none", color: "#9ca3af", cursor: "pointer", fontFamily: "inherit", fontSize: 12, padding: "0 4px", flexShrink: 0, height: "100%", display: "flex", alignItems: "center" }}
+              onMouseEnter={e => e.currentTarget.style.color = "#374151"}
+              onMouseLeave={e => e.currentTarget.style.color = "#9ca3af"}
             >↺</button>
           </div>
-          {/* Right: weekly Monday date labels */}
-          <div style={{ flex: 1, position: "relative", height: "100%", width: totalDays * DAY_W }}>
-            {weekHeaders.map((wh, i) => (
-              <div key={i} style={{
-                position: "absolute", left: wh.offset * DAY_W, width: 7 * DAY_W,
-                height: "100%", display: "flex", alignItems: "center", paddingLeft: 5,
-                fontSize: 10, fontWeight: 700, color: "#6b7280",
-                borderLeft: "1px solid rgba(0,0,0,0.07)", whiteSpace: "nowrap",
-              }}>{wh.label}</div>
-            ))}
-            {/* Today marker — teal dot in header */}
-            <div style={{ position: "absolute", left: todayOff * DAY_W - 1, top: "20%", bottom: "20%", width: 3, background: BRAND_TEAL, borderRadius: 2, opacity: 0.9 }} />
-          </div>
+          {/* Week date labels — only in Gantt view */}
+          {showGantt && (
+            <div style={{ flex: 1, flexShrink: 0, position: "relative", height: "100%", width: totalDays * DAY_W }}>
+              {weekHeaders.map((wh, idx) => (
+                <div key={idx} style={{
+                  position: "absolute", left: wh.offset * DAY_W, width: 7 * DAY_W,
+                  height: "100%", display: "flex", alignItems: "center", paddingLeft: 5,
+                  fontSize: 10, fontWeight: 700, color: "#6b7280",
+                  borderLeft: "1px solid rgba(0,0,0,0.07)", whiteSpace: "nowrap",
+                }}>{wh.label}</div>
+              ))}
+              <div style={{ position: "absolute", left: todayOff * DAY_W - 1, top: "20%", bottom: "20%", width: 3, background: `${BRAND_TEAL}cc`, borderRadius: 2 }} />
+            </div>
+          )}
         </div>
-
-
-
 
         {/* ── BODY — scrolls vertically inside the timeline box ── */}
         <TimelineBody
@@ -2042,7 +2073,7 @@ function TimelineView({ projects, people, onEditItem, onAddDeliverable, onAddSub
           statusNotes={statusNotes} onUpdateNote={onUpdateNote}
           clipboard={clipboard} onCopySubtask={onCopySubtask} onCopyDeliverable={onCopyDeliverable}
           onPasteSubtask={onPasteSubtask} onPasteDeliverable={onPasteDeliverable}
-        />
+        showGantt={showGantt} />
         </div>{/* end minWidth wrapper */}
       </div>{/* end containerRef timeline box */}
     </div>
@@ -2100,7 +2131,7 @@ function EdgeFade({ bodyRef, leftWidth }) {
   );
 }
 
-function TimelineBody({ projects, people, collapsed, toggle, weeks, todayOff, allItemsFlat, onEditItem, headerScrollRef, topScrollRef, onAddDeliverable, onAddSubtask, onMarkDone, onSaveItem, rowIndex, DAY_W, colWidths, LEFT_W, holidays = [], onInsertSubtask, onReorderSubtasks, onDeleteSubtask, statusNotes = {}, onUpdateNote, onSaveProject, onOpenProject, clipboard, onCopySubtask, onCopyDeliverable, onPasteSubtask, onPasteDeliverable }) {
+function TimelineBody({ projects, people, collapsed, toggle, weeks, todayOff, allItemsFlat, onEditItem, headerScrollRef, topScrollRef, onAddDeliverable, onAddSubtask, onMarkDone, onSaveItem, rowIndex, DAY_W, colWidths, LEFT_W, holidays = [], onInsertSubtask, onReorderSubtasks, onDeleteSubtask, statusNotes = {}, onUpdateNote, onSaveProject, onOpenProject, clipboard, onCopySubtask, onCopyDeliverable, onPasteSubtask, onPasteDeliverable, showGantt  }) {
   const bodyRef  = useRef(null);
   // syncScroll removed — single scroll container handles both header and body
 
@@ -2115,8 +2146,8 @@ function TimelineBody({ projects, people, collapsed, toggle, weeks, todayOff, al
       style={{ position: "relative" }}
     >
       <div style={{ minWidth: LEFT_W + totalDays * DAY_W, position: "relative" }}>
-        {/* Holiday shading */}
-        {holidays.map(h => {
+      {/* Holiday shading */}
+      {showGantt && holidays.map(h => {
           const off = Math.ceil((parseDate(h.date) - TIMELINE_START) / 86400000);
           if (off < 0 || off >= totalDays) return null;
           return (
@@ -2140,21 +2171,23 @@ function TimelineBody({ projects, people, collapsed, toggle, weeks, todayOff, al
             onInsertSubtask={onInsertSubtask} onReorderSubtasks={onReorderSubtasks} onDeleteSubtask={onDeleteSubtask}
             statusNotes={statusNotes} onUpdateNote={onUpdateNote} holidays={holidays}
             clipboard={clipboard} onCopySubtask={onCopySubtask} onCopyDeliverable={onCopyDeliverable} onPasteSubtask={onPasteSubtask} onPasteDeliverable={onPasteDeliverable}
-            onSaveProject={onSaveProject} onOpenProject={onOpenProject} />
+            onSaveProject={onSaveProject} onOpenProject={onOpenProject} showGantt={showGantt} />
         ))}
         {/* Today footer */}
+        {showGantt && (
         <div style={{ display: "flex", height: 22, background: "#e8eaee", borderTop: "1px solid rgba(0,0,0,0.06)" }}>
           <div style={{ width: LEFT_W, flexShrink: 0 }} />
           <div style={{ flex: 1, position: "relative", width: totalDays * DAY_W }}>
             <div style={{ position: "absolute", left: todayOff * DAY_W - 20, top: "50%", transform: "translateY(-50%)", background: BRAND_TEAL, color: BRAND_NAVY, fontSize: 9, fontWeight: 900, padding: "2px 7px", borderRadius: 3, letterSpacing: "0.08em" }}>TODAY</div>
           </div>
         </div>
+        )}
       </div>
     </div>
   );
 }
 
-function ProjectSection({ proj, people, collapsed, toggle, weeks, todayOff, allItemsFlat, onEditItem, onAddDeliverable, onAddSubtask, onMarkDone, onSaveItem, rowIndex, DAY_W, colWidths, LEFT_W, onInsertSubtask, onReorderSubtasks, onDeleteSubtask, statusNotes = {}, onUpdateNote, holidays = [], clipboard, onCopySubtask, onCopyDeliverable, onPasteSubtask, onPasteDeliverable, onSaveProject, onOpenProject }) {
+function ProjectSection({ proj, people, collapsed, toggle, weeks, todayOff, allItemsFlat, onEditItem, onAddDeliverable, onAddSubtask, onMarkDone, onSaveItem, rowIndex, DAY_W, colWidths, LEFT_W, onInsertSubtask, onReorderSubtasks, onDeleteSubtask, statusNotes = {}, onUpdateNote, holidays = [], clipboard, onCopySubtask, onCopyDeliverable, onPasteSubtask, onPasteDeliverable, onSaveProject, onOpenProject , showGantt  }) {
   const isProjCollapsed = !!collapsed[proj.id];
 
   // Span the whole project across the chart for the summary bar
@@ -2175,7 +2208,7 @@ function ProjectSection({ proj, people, collapsed, toggle, weeks, todayOff, allI
       <div style={{ display: "flex", height: 36, background: isProjCollapsed ? "rgba(0,0,0,0.03)" : "rgba(0,0,0,0.04)", borderBottom: "1px solid rgba(0,0,0,0.07)", alignItems: "center", cursor: "pointer" }}
         onMouseEnter={e => e.currentTarget.style.background = "rgba(255,255,255,0.045)"}
         onMouseLeave={e => e.currentTarget.style.background = isProjCollapsed ? "rgba(0,0,0,0.03)" : "rgba(0,0,0,0.04)"}>
-        <div style={{ width: LEFT_W, flexShrink: 0, display: "flex", alignItems: "center", padding: "0 12px", gap: 8, borderRight: "1px solid rgba(0,0,0,0.06)", height: "100%" }}>
+        <div style={{ width: LEFT_W, flexShrink: 0, display: "flex", alignItems: "center", padding: "0 12px", gap: 8, borderRight: "1px solid rgba(0,0,0,0.06)", height: "100%", position: showGantt ? "sticky" : "static", left:0, zIndex: showGantt ? 21 : "auto", alignSelf:"stretch", background:"#fff", boxShadow:"2px 0 4px rgba(0,0,0,0.07)" }}>
           {/* Collapse chevron — click to toggle */}
           <span onClick={() => toggle(proj.id)} style={{ fontSize: 10, color: "#6b7280", lineHeight: 1, width: 12, flexShrink: 0, transition: "transform 0.15s", display: "inline-block", transform: isProjCollapsed ? "rotate(-90deg)" : "rotate(0deg)", cursor: "pointer" }}>▼</span>
           <div onClick={() => toggle(proj.id)} style={{ width: 3, height: 16, background: proj.color, borderRadius: 2, flexShrink: 0, cursor: "pointer" }} />
@@ -2220,6 +2253,7 @@ function ProjectSection({ proj, people, collapsed, toggle, weeks, todayOff, allI
           }}>+ Deliverable</button>
         </div>
         {/* Chart area — shows summary bar when collapsed */}
+        {showGantt && (
         <div style={{ flex: 1, height: "100%", position: "relative", width: totalDays * DAY_W }} onClick={() => toggle(proj.id)}>
           {weeks.map(w => <div key={w} style={{ position: "absolute", left: w * DAY_W, top: 0, bottom: 0, width: 1, background: "rgba(0,0,0,0.035)" }} />)}
           <div style={{ position: "absolute", left: todayOff * DAY_W, top: 0, bottom: 0, width: 2, background: `${BRAND_TEAL}22` }} />
@@ -2243,6 +2277,7 @@ function ProjectSection({ proj, people, collapsed, toggle, weeks, todayOff, allI
             </div>
           )}
         </div>
+        )}  {/* end showGantt gantt */}
       </div>
 
       {/* Deliverables — hidden when project is collapsed */}
@@ -2255,7 +2290,7 @@ function ProjectSection({ proj, people, collapsed, toggle, weeks, todayOff, allI
           onInsertSubtask={onInsertSubtask} onReorderSubtasks={onReorderSubtasks} onDeleteSubtask={onDeleteSubtask}
           statusNotes={statusNotes} onUpdateNote={onUpdateNote} holidays={holidays}
           clipboard={clipboard} onCopySubtask={onCopySubtask} onCopyDeliverable={onCopyDeliverable}
-          onPasteSubtask={onPasteSubtask} onPasteDeliverable={onPasteDeliverable} />
+          onPasteSubtask={onPasteSubtask} onPasteDeliverable={onPasteDeliverable} showGantt={showGantt} />
       ))}
 
       {/* Empty state */}
@@ -2310,7 +2345,7 @@ function ContextMenu({ x, y, items, onClose }) {
   );
 }
 
-function DeliverableRow({ del, proj, people, collapsed, toggle, weeks, todayOff, allItemsFlat, onEditItem, onAddSubtask, onMarkDone, onSaveItem, rowIndex, DAY_W, colWidths, LEFT_W, onInsertSubtask, onReorderSubtasks, onDeleteSubtask, statusNotes = {}, onUpdateNote, holidays = [], clipboard, onCopySubtask, onCopyDeliverable, onPasteSubtask, onPasteDeliverable }) {
+function DeliverableRow({ del, proj, people, collapsed, toggle, weeks, todayOff, allItemsFlat, onEditItem, onAddSubtask, onMarkDone, onSaveItem, rowIndex, DAY_W, colWidths, LEFT_W, onInsertSubtask, onReorderSubtasks, onDeleteSubtask, statusNotes = {}, onUpdateNote, holidays = [], clipboard, onCopySubtask, onCopyDeliverable, onPasteSubtask, onPasteDeliverable , showGantt  }) {
   const isCollapsed = collapsed[del.id];
   const rowNum = rowIndex.index[del.id] || "?";
   const startOff = dayOffset(del.start);
@@ -2398,6 +2433,7 @@ function DeliverableRow({ del, proj, people, collapsed, toggle, weeks, todayOff,
         onContextMenu={e => { e.preventDefault(); setDelCtxMenu({ x: e.clientX, y: e.clientY }); }}
         onMouseEnter={e => e.currentTarget.style.background = "rgba(245,158,11,0.06)"}
         onMouseLeave={e => e.currentTarget.style.background = "rgba(245,158,11,0.03)"}>
+        <div onMouseEnter={e => e.currentTarget.style.background="#fff8ed"} onMouseLeave={e => e.currentTarget.style.background="#fff"} style={{ display:"flex", width:LEFT_W, flexShrink:0, alignSelf:"stretch", position: showGantt ? "sticky" : "static", left:0, zIndex: showGantt ? 20 : "auto", background:"#fff", boxShadow: showGantt ? "2px 0 4px rgba(0,0,0,0.07)" : "none" }}>
         {/* Row # */}
         <LeftCell width={colWidths.num} center>
           <span style={{ fontSize: 10, fontWeight: 700, color: "#9ca3af" }}>{rowNum}</span>
@@ -2465,7 +2501,9 @@ function DeliverableRow({ del, proj, people, collapsed, toggle, weeks, todayOff,
           last
         />
 
+        </div>
         {/* Chart */}
+        {showGantt && (
         <div style={{ flex: 1, height: "100%", position: "relative", width: totalDays * DAY_W }}>
           {weeks.map(w => <div key={w} style={{ position: "absolute", left: w * DAY_W, top: 0, bottom: 0, width: 1, background: "rgba(0,0,0,0.04)" }} />)}
           <div style={{ position: "absolute", left: todayOff * DAY_W, top: 0, bottom: 0, width: 2, background: `${BRAND_TEAL}22` }} />
@@ -2491,6 +2529,7 @@ function DeliverableRow({ del, proj, people, collapsed, toggle, weeks, todayOff,
             </div>
           </div>
         </div>
+        )}  {/* end showGantt */}
       </div>
 
       {!isCollapsed && (
@@ -2512,7 +2551,7 @@ function DeliverableRow({ del, proj, people, collapsed, toggle, weeks, todayOff,
                 weeks={weeks} todayOff={todayOff} allItemsFlat={allItemsFlat} onEditItem={onEditItem}
                 onMarkDone={onMarkDone} onSaveItem={onSaveItem} rowIndex={rowIndex} DAY_W={DAY_W} colWidths={colWidths} LEFT_W={LEFT_W}
                 onInsertSubtask={onInsertSubtask} onReorderSubtasks={onReorderSubtasks} onDeleteSubtask={onDeleteSubtask}
-                onDragHandlePointerDown={(e) => startDrag(e, subIdx)} holidays={holidays} />
+                onDragHandlePointerDown={(e) => startDrag(e, subIdx)} holidays={holidays} showGantt={showGantt} />
             </div>
           ))}
         </div>
@@ -2564,7 +2603,7 @@ function DeliverableRow({ del, proj, people, collapsed, toggle, weeks, todayOff,
   );
 }
 
-function SubtaskRow({ sub, del, proj, people, weeks, todayOff, allItemsFlat, onEditItem, onMarkDone, onSaveItem, rowIndex, DAY_W, colWidths, LEFT_W, onInsertSubtask, onReorderSubtasks, onDeleteSubtask, onDragHandlePointerDown, holidays = [] }) {
+function SubtaskRow({ sub, del, proj, people, weeks, todayOff, allItemsFlat, onEditItem, onMarkDone, onSaveItem, rowIndex, DAY_W, colWidths, LEFT_W, onInsertSubtask, onReorderSubtasks, onDeleteSubtask, onDragHandlePointerDown, holidays = [] , showGantt  }) {
   const m = statusMeta[sub.status] || statusMeta["Not Started"];
   const rowNum = rowIndex.index[sub.id] || "?";
   const startOff = dayOffset(sub.start);
@@ -2590,6 +2629,7 @@ function SubtaskRow({ sub, del, proj, people, weeks, todayOff, allItemsFlat, onE
       onMouseEnter={e => { const t=new Date().toLocaleDateString('en-CA'); e.currentTarget.style.background=sub.end&&sub.end<t&&sub.status==="In Progress"?"rgba(239,68,68,0.24)":sub.end&&sub.end<t&&sub.status!=="Done"?"rgba(239,68,68,0.13)":"rgba(0,0,0,0.04)"; }}
       onMouseLeave={e => { const t=new Date().toLocaleDateString('en-CA'); e.currentTarget.style.background=sub.end&&sub.end<t&&sub.status==="In Progress"?"rgba(239,68,68,0.18)":sub.end&&sub.end<t&&sub.status!=="Done"?"rgba(239,68,68,0.09)":sub.end&&sub.end===t&&sub.status!=="Done"?"rgba(251,146,60,0.16)":"rgba(0,0,0,0.025)"; }}>
 
+      <div style={{ display:"flex", width:LEFT_W, flexShrink:0, alignSelf:"stretch", position: showGantt ? "sticky" : "static", left:0, zIndex: showGantt ? 20 : "auto", background:"#fff", boxShadow:"2px 0 4px rgba(0,0,0,0.07)" }}>
       {/* Row # */}
       <LeftCell width={colWidths.num} center>
         <span style={{ fontSize: 9, color: "#9ca3af" }}>{rowNum}</span>
@@ -2643,7 +2683,9 @@ function SubtaskRow({ sub, del, proj, people, weeks, todayOff, allItemsFlat, onE
         small
       />
 
+        </div>
       {/* Chart */}
+      {showGantt && (
       <div style={{ flex: 1, height: "100%", position: "relative", width: totalDays * DAY_W }}>
         {weeks.map(w => <div key={w} style={{ position: "absolute", left: w * DAY_W, top: 0, bottom: 0, width: 1, background: "rgba(0,0,0,0.025)" }} />)}
         <div style={{ position: "absolute", left: todayOff * DAY_W, top: 0, bottom: 0, width: 2, background: `${BRAND_TEAL}15` }} />
@@ -2667,6 +2709,7 @@ function SubtaskRow({ sub, del, proj, people, weeks, todayOff, allItemsFlat, onE
           </div>
         </div>
       </div>
+      )}  {/* end showGantt */}
     </div>
   );
 }
