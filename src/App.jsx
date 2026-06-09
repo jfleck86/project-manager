@@ -5,6 +5,13 @@ import { STATUSES, statusMeta } from "./constants/statuses.js";
 import { PRIORITIES, priorityMeta, DEPARTMENTS, deptMeta } from "./constants/priorities.js";
 import { EFFORT_OPTS, EFFORT_LABEL, EFFORT_HOURS, EFFORT_VAL, WEEKLY_HOURS, HOURS_LIGHT, HOURS_MEDIUM } from "./constants/effort.js";
 import { TIMELINE_START, TIMELINE_END } from "./constants/timeline.js";
+import {
+  allowedNavItems, canAccessKPIDashboard, canAccessHistory,
+  canViewPersonalTasks, canManageUsers, canAccessSettings,
+  canCreateProject, canEditProject, canDeleteProject,
+  canViewReporting, canViewWorkload, canViewByPerson, canViewStatus,
+  canAccessMyHub, canViewPersonHub, ROLE_LABELS, normalize as normalizeRole,
+} from "./lib/permissions.js";
 import { MIN_DAY_W, MAX_DAY_W, D_ROW, S_ROW, COL_DEFAULTS } from "./constants/columns.js";
 import { PROJECT_COLORS } from "./constants/colors.js";
 import { getReadyTasks, buildReadyNotifications } from "./lib/workflowEngine.js";
@@ -14,6 +21,20 @@ import { getInitials } from "./utils/formatting.js";
 import { rowToSubtask, rowToDeliverable, rowToProject, delToRow, subToRow, ptoToRow, rowToPto, isOnPto, ptoOverlap } from "./lib/dataConverters.js";
 import { signOut, getStoredSession, fetchAppUser, refreshSession } from "./lib/supabaseAuth.js";
 import LoginScreen from "./components/LoginScreen.jsx";
+
+// ── AccessDenied ─────────────────────────────────────────────────────────────
+function AccessDenied({ message }) {
+  return (
+    <div style={{ display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center",
+      height:"100%", minHeight:320, padding:"40px 24px", textAlign:"center", color:"#6b7280" }}>
+      <div style={{ fontSize:40, marginBottom:16 }}>🔒</div>
+      <div style={{ fontSize:18, fontWeight:700, color:"#374151", marginBottom:8 }}>Access Restricted</div>
+      <div style={{ fontSize:14, maxWidth:380, lineHeight:1.6 }}>
+        {message || "You do not have permission to access this section."}
+      </div>
+    </div>
+  );
+}
 
 const MEMBER_COLORS = ["#f59e0b","#38bdf8","#a78bfa","#34d399","#f87171","#fb923c","#e879f9","#4ade80","#60a5fa","#facc15","#64748b"];
 const ZOOM_LEVELS = [
@@ -7488,7 +7509,121 @@ function StatusNoteCell({ note, color, onSave }) {
 
 // --- TEAM SETTINGS MODAL ─────────────────────────────────────────────────────
 
-function TeamSettingsModal({ people, onClose, onSave, sbUrl = "", sbKey = "" }) {
+
+// ── RoleManager — shows app_users + allows admins to change roles ─────────────
+const ROLE_OPTIONS = [
+  { value: "admin",           label: "Admin",           color: "#dc2626" },
+  { value: "leadership",      label: "Leadership",      color: "#7c3aed" },
+  { value: "project_manager", label: "Project Manager", color: "#2563eb" },
+  { value: "contributor",     label: "Contributor",     color: "#059669" },
+  { value: "viewer",          label: "Viewer",          color: "#6b7280" },
+];
+
+function RoleManager({ people, sbUrl, sbKey, isAdmin, authToken }) {
+  const [appUsers, setAppUsers] = React.useState([]);
+  const [saving,   setSaving]   = React.useState(null); // person_id being saved
+  const [msg,      setMsg]      = React.useState("");
+
+  // Load app_users on mount
+  React.useEffect(() => {
+    if (!sbUrl || !sbKey) return;
+    fetch(`${sbUrl}/rest/v1/app_users?select=id,role,team_member_id`, {
+      headers: { apikey: sbKey, Authorization: `Bearer ${authToken || sbKey}`, Accept: "application/json" },
+    })
+      .then(r => r.json())
+      .then(rows => { if (Array.isArray(rows)) setAppUsers(rows); })
+      .catch(() => {});
+  }, [sbUrl, sbKey]);
+
+  const getRole = (personId) => {
+    const au = appUsers.find(u => u.team_member_id === personId);
+    return au ? (au.role || "contributor") : null;
+  };
+
+  const handleRoleChange = async (personId, newRole) => {
+    const au = appUsers.find(u => u.team_member_id === personId);
+    if (!au) return;
+    setSaving(personId);
+    setMsg("");
+    try {
+      const res = await fetch(`${sbUrl}/rest/v1/app_users?id=eq.${au.id}`, {
+        method: "PATCH",
+        headers: {
+          apikey: sbKey, Authorization: `Bearer ${authToken || sbKey}`,
+          "Content-Type": "application/json", Prefer: "return=minimal",
+        },
+        body: JSON.stringify({ role: newRole }),
+      });
+      if (res.ok) {
+        setAppUsers(prev => prev.map(u => u.id === au.id ? { ...u, role: newRole } : u));
+        setMsg("Role updated ✓");
+        setTimeout(() => setMsg(""), 2500);
+      } else {
+        setMsg("Save failed — check permissions.");
+      }
+    } catch { setMsg("Save failed."); }
+    setSaving(null);
+  };
+
+  return (
+    <div>
+      <div style={{ fontSize: 10, fontWeight: 700, color: "#6b7280", letterSpacing: "0.07em",
+        textTransform: "uppercase", marginBottom: 10 }}>
+        Team Access & Roles
+      </div>
+      {msg && <div style={{ fontSize: 11, color: "#059669", marginBottom: 8, fontWeight: 600 }}>{msg}</div>}
+      {!isAdmin && (
+        <div style={{ fontSize: 12, color: "#9ca3af", marginBottom: 8 }}>
+          Only admins can change roles. Contact your administrator.
+        </div>
+      )}
+      {people.length === 0 && <div style={{ fontSize: 12, color: "#9ca3af" }}>No team members yet.</div>}
+      {people.map(p => {
+        const role = getRole(p.id);
+        const roleInfo = ROLE_OPTIONS.find(r => r.value === role) || ROLE_OPTIONS[4];
+        return (
+          <div key={p.id} style={{ display: "flex", alignItems: "center", gap: 10,
+            padding: "8px 0", borderBottom: "1px solid rgba(0,0,0,0.04)" }}>
+            <Avatar person={p} size={28} />
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontSize: 12, fontWeight: 600, color: "#1f2937", whiteSpace: "nowrap",
+                overflow: "hidden", textOverflow: "ellipsis" }}>{p.name}</div>
+              {role === null && (
+                <div style={{ fontSize: 10, color: "#9ca3af" }}>Not linked to a login</div>
+              )}
+            </div>
+            {role !== null && isAdmin ? (
+              <select
+                value={role}
+                disabled={saving === p.id}
+                onChange={e => handleRoleChange(p.id, e.target.value)}
+                style={{ fontSize: 11, fontWeight: 700, border: "1px solid rgba(0,0,0,0.12)",
+                  borderRadius: 5, padding: "3px 6px", background: "#fff",
+                  color: roleInfo.color, cursor: "pointer", outline: "none" }}
+              >
+                {ROLE_OPTIONS.map(opt => (
+                  <option key={opt.value} value={opt.value}>{opt.label}</option>
+                ))}
+              </select>
+            ) : role !== null ? (
+              <span style={{ fontSize: 10, fontWeight: 700, color: roleInfo.color,
+                background: roleInfo.color + "15", borderRadius: 4, padding: "2px 8px" }}>
+                {roleInfo.label}
+              </span>
+            ) : null}
+          </div>
+        );
+      })}
+      {appUsers.length === 0 && people.length > 0 && (
+        <div style={{ fontSize: 11, color: "#9ca3af", marginTop: 6 }}>
+          No app_users found. Team members need to accept an invite to get a login.
+        </div>
+      )}
+    </div>
+  );
+}
+
+function TeamSettingsModal({ people, onClose, onSave, sbUrl = "", sbKey = "", currentRole = "viewer", authToken = "" }) {
   const [tab, setTab] = useState("team");
   const [members, setMembers] = useState(people.map(p => ({ ...p })));
   const updateMember = (id, field, val) =>
@@ -7501,54 +7636,18 @@ function TeamSettingsModal({ people, onClose, onSave, sbUrl = "", sbKey = "" }) 
   const removeMember = (id) => setMembers(ms => ms.filter(m => m.id !== id));
   const handleSave = () => { onSave(members.filter(m => m.name.trim())); onClose(); };
 
-  // ── Invite state ────────────────────────────────────────────────────────────
-  const [invEmail, setInvEmail]     = useState("");
-  const [invName,  setInvName]      = useState("");
-  const [invRole,  setInvRole]      = useState("member");
-  const [invMember,setInvMember]    = useState(people[0]?.id || "");
-  const [invStatus,setInvStatus]    = useState(null); // null | "sending" | "done" | "sql" | "error"
-  const [invResult,setInvResult]    = useState(null); // { sql, message } or error string
-  // Service role key removed — invite flow now uses anon key + admin UI
-  // Admin invites should be handled via Supabase Dashboard or a server-side Edge Function
-
-  const handleInvite = async () => {
-    if (!invEmail.trim()) return;
-    setInvStatus("sending");
-    // ── Security note ─────────────────────────────────────────────────────
-    // Sending admin invites requires the Supabase service role key,
-    // which must NEVER be exposed in frontend code.
-    // Two safe options:
-    //   A. Send invites from Supabase Dashboard → Authentication → Users → Invite user
-    //   B. Build a Supabase Edge Function that accepts { email } and sends the invite server-side
-    // For now we insert the app_users row manually and show setup instructions.
-    // ─────────────────────────────────────────────────────────────────────
-    const linkedPerson = people.find(p => p.id === invMember);
-    if (!linkedPerson) { setInvStatus("error"); setInvMsg("Select a team member first."); return; }
-
-    // Insert the app_users row via RLS (requires admin role in Supabase)
-    if (SB_READY) {
-      const r = await sb.upsert("app_users", {
-        id: "pending-" + Date.now(), // placeholder until real auth UUID is known
-        email: invEmail.trim(),
-        display_name: linkedPerson.name,
-        role: invRole || "member",
-        team_member_id: invMember,
-      });
-      if (r?.error) {
-        setInvStatus("error");
-        setInvMsg("Could not create user record: " + (r.error?.message || r.error));
-        return;
-      }
-    }
-    setInvStatus("manual");
-    setInvMsg(`Ready. Now go to Supabase Dashboard → Authentication → Users → Invite user, enter ${invEmail.trim()}.`);
-  };
-  const tabStyle = (t) => ({
-    flex: 1, padding: "10px 0", textAlign: "center", fontSize: 11, fontWeight: 700,
-    letterSpacing: "0.06em", cursor: "pointer", userSelect: "none",
-    borderBottom: tab === t ? "2px solid #38bdf8" : "2px solid transparent",
-    color: tab === t ? "#0284c7" : "#6b7280", transition: "all 0.12s",
+  const tabStyle = (id) => ({
+    padding: "10px 20px", fontSize: 12, fontWeight: tab === id ? 700 : 500,
+    color: tab === id ? "#38bdf8" : "#6b7280", cursor: "pointer",
+    borderBottom: tab === id ? "2px solid #38bdf8" : "2px solid transparent",
+    userSelect: "none", transition: "all 0.12s",
   });
+
+  const selectStyle = {
+    width: "100%", padding: "8px 10px", borderRadius: 6,
+    border: "1px solid rgba(0,0,0,0.12)", fontSize: 12,
+    fontFamily: "inherit", background: "#fff", color: "#1f2937", outline: "none",
+  };
 
   return (
     <Overlay onClose={onClose}>
@@ -7556,7 +7655,7 @@ function TeamSettingsModal({ people, onClose, onSave, sbUrl = "", sbKey = "" }) 
         {/* Tabs */}
         <div style={{ display: "flex", borderBottom: "1px solid rgba(0,0,0,0.07)" }}>
           <div style={tabStyle("team")} onClick={() => setTab("team")}>TEAM MEMBERS</div>
-          <div style={tabStyle("access")} onClick={() => setTab("access")}>ACCESS & INVITES</div>
+          <div style={tabStyle("access")} onClick={() => setTab("access")}>ACCESS</div>
         </div>
 
         {/* ── Team Members tab ── */}
@@ -7615,122 +7714,12 @@ function TeamSettingsModal({ people, onClose, onSave, sbUrl = "", sbKey = "" }) 
           </div>
         )}
 
-        {/* ── Access & Invites tab ── */}
+        {/* ── Access tab ── */}
         {tab === "access" && (
           <div style={{ padding: 22, display: "flex", flexDirection: "column", gap: 16 }}>
 
-            {/* Existing access rows */}
-            <div>
-              <div style={{ fontSize: 10, fontWeight: 700, color: "#6b7280", letterSpacing: "0.07em", textTransform: "uppercase", marginBottom: 10 }}>
-                Current Team Access
-              </div>
-              {people.length === 0 && <div style={{ fontSize: 12, color: "#9ca3af" }}>No team members yet.</div>}
-              {people.map(p => (
-                <div key={p.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "7px 0", borderBottom: "1px solid rgba(0,0,0,0.04)" }}>
-                  <Avatar person={p} size={28} />
-                  <div style={{ flex: 1 }}>
-                    <div style={{ fontSize: 12, fontWeight: 600, color: "#1f2937" }}>{p.name}</div>
-                    <div style={{ fontSize: 10, color: "#9ca3af" }}>ID: {p.id}</div>
-                  </div>
-                  <span style={{ fontSize: 10, fontWeight: 700, color: "#6b7280", background: "rgba(0,0,0,0.05)", borderRadius: 4, padding: "2px 8px" }}>
-                    team member
-                  </span>
-                </div>
-              ))}
-            </div>
-
-            {/* Divider */}
-            <div style={{ borderTop: "1px solid rgba(0,0,0,0.07)", paddingTop: 16 }}>
-              <div style={{ fontSize: 10, fontWeight: 700, color: "#6b7280", letterSpacing: "0.07em", textTransform: "uppercase", marginBottom: 12 }}>
-                Invite New User
-              </div>
-
-              {invStatus === "done" && (
-                <div style={{ background: "rgba(52,211,153,0.1)", border: "1px solid rgba(52,211,153,0.3)", borderRadius: 8, padding: "12px 14px", marginBottom: 12 }}>
-                  <div style={{ fontSize: 12, fontWeight: 700, color: "#059669" }}>✓ Invite sent</div>
-                  <div style={{ fontSize: 11, color: "#6b7280", marginTop: 4 }}>{invResult?.message}</div>
-                </div>
-              )}
-
-              {invStatus === "sql" && invResult && (
-                <div style={{ marginBottom: 12 }}>
-                  <div style={{ background: "rgba(251,191,36,0.1)", border: "1px solid rgba(251,191,36,0.3)", borderRadius: 8, padding: "12px 14px", marginBottom: 10 }}>
-                    <div style={{ fontSize: 12, fontWeight: 700, color: "#92400e" }}>Two-step manual setup required</div>
-                    <div style={{ fontSize:11, color:"#6b7280", lineHeight:1.6, marginTop:8 }}>
-                    To invite users, go to your{" "}
-                    <strong>Supabase Dashboard → Authentication → Users → Invite user</strong>.
-                    After accepting, the user's auth ID will appear in Supabase and you can link it here.
-                  </div>
-                  </div>
-                  <div style={{ fontSize: 11, fontWeight: 700, color: "#374151", marginBottom: 6 }}>
-                    Copy this SQL and run it in Supabase → SQL Editor after inviting the user:
-                  </div>
-                  <div style={{ position: "relative" }}>
-                    <pre style={{ background: "#1e293b", color: "#e2e8f0", borderRadius: 8, padding: "12px 14px", fontSize: 10, lineHeight: 1.6, overflowX: "auto", margin: 0, fontFamily: "monospace" }}>
-                      {invResult.sql}
-                    </pre>
-                    <button
-                      onClick={() => { navigator.clipboard?.writeText(invResult.sql); }}
-                      style={{ position: "absolute", top: 8, right: 8, background: "rgba(255,255,255,0.1)", border: "1px solid rgba(255,255,255,0.2)", borderRadius: 4, color: "#e2e8f0", fontSize: 10, cursor: "pointer", padding: "3px 8px", fontFamily: "inherit" }}>
-                      Copy
-                    </button>
-                  </div>
-                  <div style={{ marginTop: 10, fontSize: 11, color: "#6b7280", lineHeight: 1.6 }}>
-                    <b>Step 1:</b> Go to <b>Supabase → Authentication → Users → Invite User</b>, enter <b>{invResult.email}</b>.<br />
-                    <b>Step 2:</b> After they accept, copy their UUID from the Users table and paste it into the SQL above, then run it.
-                  </div>
-                  <button onClick={() => { setInvStatus(null); setInvResult(null); }} style={{ marginTop: 10, background: "none", border: "1px solid rgba(0,0,0,0.1)", borderRadius: 6, color: "#6b7280", padding: "6px 14px", cursor: "pointer", fontSize: 11, fontFamily: "inherit" }}>
-                    Invite another
-                  </button>
-                </div>
-              )}
-
-              {(invStatus === null || invStatus === "sending") && (
-                <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-                  <div style={{ display: "flex", gap: 10 }}>
-                    <div style={{ flex: 1 }}>
-                      <div style={{ fontSize: 10, fontWeight: 700, color: "#6b7280", marginBottom: 4, textTransform: "uppercase", letterSpacing: "0.07em" }}>Email *</div>
-                      <input type="email" value={invEmail} onChange={e => setInvEmail(e.target.value)}
-                        placeholder="name@company.com"
-                        style={{ ...selectStyle, width: "100%" }} />
-                    </div>
-                    <div style={{ flex: 1 }}>
-                      <div style={{ fontSize: 10, fontWeight: 700, color: "#6b7280", marginBottom: 4, textTransform: "uppercase", letterSpacing: "0.07em" }}>Display Name</div>
-                      <input value={invName} onChange={e => setInvName(e.target.value)}
-                        placeholder="Optional"
-                        style={{ ...selectStyle, width: "100%" }} />
-                    </div>
-                  </div>
-                  <div style={{ display: "flex", gap: 10 }}>
-                    <div style={{ flex: 1 }}>
-                      <div style={{ fontSize: 10, fontWeight: 700, color: "#6b7280", marginBottom: 4, textTransform: "uppercase", letterSpacing: "0.07em" }}>Role</div>
-                      <select value={invRole} onChange={e => setInvRole(e.target.value)} style={{ ...selectStyle, width: "100%" }}>
-                        <option value="member">Member</option>
-                        <option value="admin">Admin</option>
-                      </select>
-                    </div>
-                    <div style={{ flex: 1 }}>
-                      <div style={{ fontSize: 10, fontWeight: 700, color: "#6b7280", marginBottom: 4, textTransform: "uppercase", letterSpacing: "0.07em" }}>Link to Team Member</div>
-                      <select value={invMember} onChange={e => setInvMember(e.target.value)} style={{ ...selectStyle, width: "100%" }}>
-                        <option value="">— not linked —</option>
-                        {people.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
-                      </select>
-                    </div>
-                  </div>
-                  {!serviceKey && (
-                    <div style={{ fontSize: 10, color: "#9ca3af", background: "rgba(0,0,0,0.03)", borderRadius: 6, padding: "8px 10px", lineHeight: 1.5 }}>
-                      💡 For one-click invites, add <code style={{ background: "rgba(0,0,0,0.06)", borderRadius: 3, padding: "1px 4px" }}>window.__SB_SERVICE_KEY__ = "your-service-role-key"</code> to <code style={{ background: "rgba(0,0,0,0.06)", borderRadius: 3, padding: "1px 4px" }}>main.jsx</code>. Without it, you'll get SQL to run manually.
-                    </div>
-                  )}
-                  <button
-                    onClick={handleInvite}
-                    disabled={!invEmail.trim() || invStatus === "sending"}
-                    style={{ padding: "10px 0", borderRadius: 7, background: invEmail.trim() ? "#38bdf8" : "rgba(0,0,0,0.07)", border: "none", color: invEmail.trim() ? "#fff" : "#9ca3af", fontSize: 12, fontWeight: 700, cursor: invEmail.trim() ? "pointer" : "default", fontFamily: "inherit", transition: "all 0.12s" }}>
-                    {invStatus === "sending" ? "Sending…" : serviceKey ? "Send Invite Email" : "Generate Setup SQL"}
-                  </button>
-                </div>
-              )}
-            </div>
+            {/* Role Management */}
+            <RoleManager people={people} sbUrl={sbUrl} sbKey={sbKey} isAdmin={currentRole === "admin"} authToken={authToken} />
           </div>
         )}
 
@@ -9300,7 +9289,7 @@ export default function App() {
     return getStoredSession();
   });
   const [authUser,    setAuthUser]    = useState(null);
-  const [currentRole, setCurrentRole] = useState("member");
+  const [currentRole, setCurrentRole] = useState("viewer");
   const [authLoading, setAuthLoading] = useState(true);
   const [sessionExpired, setSessionExpired] = useState(false);
   // Supabase v1 returns { user: { id } }, v2 may return { user_id } or decode from JWT
@@ -9322,7 +9311,7 @@ export default function App() {
     setAuthSession(session); setAuthUser(user);
     const appUser = await fetchAppUser(user.id, session.access_token);
     if (appUser) {
-      setCurrentRole(appUser.role);
+      setCurrentRole(appUser.role === 'member' ? 'contributor' : (appUser.role || 'viewer'));
       setCurrentUser(appUser.teamMemberId);
       setOwnMemberId(appUser.teamMemberId);
       try { localStorage.setItem("planr_own_member_id", appUser.teamMemberId); } catch {}
@@ -9336,7 +9325,7 @@ export default function App() {
     await signOut(authSession?.access_token || "");
     setAuthSession(null);
     setAuthUser(null);
-    setCurrentRole("member");
+    setCurrentRole("viewer");
     try { localStorage.removeItem("planr_view"); } catch {}
   };
   useEffect(() => {
@@ -9361,7 +9350,7 @@ export default function App() {
       fetchAppUser(session.user?.id, session.access_token)
         .then(appUser => {
           if (appUser) {
-            setCurrentRole(appUser.role);
+            setCurrentRole(appUser.role === 'member' ? 'contributor' : (appUser.role || 'viewer'));
             setCurrentUser(appUser.teamMemberId);
             setOwnMemberId(appUser.teamMemberId);
             try { localStorage.setItem("planr_own_member_id", appUser.teamMemberId); } catch {}
@@ -9396,7 +9385,7 @@ export default function App() {
     const t = setInterval(() => {
       if (window.__pulsex_session_expired_flag__) {
         window.__pulsex_session_expired_flag__ = false;
-        setAuthSession(null); setAuthUser(null); setCurrentRole("member");
+        setAuthSession(null); setAuthUser(null); setCurrentRole("viewer");
         setSessionExpired(true);
       }
     }, 1000);
@@ -9410,7 +9399,7 @@ export default function App() {
         window.__pulsex_session_expired_flag__ = false;
         setAuthSession(null);
         setAuthUser(null);
-        setCurrentRole("member");
+        setCurrentRole("viewer");
         setSessionExpired(true);
       }
     }, 1000);
@@ -10332,7 +10321,7 @@ export default function App() {
         reviewedAt: null, createdAt: new Date().toISOString(),
       };
       setNotifications(prev => [notif, ...prev]);
-      if (currentRole === "admin") {
+      if (canManageUsers(currentRole)) {
         setToastNotif(notif); // admin sees their own completions too
       } else {
         setToastNotif(notif); // show toast for the person who completed it; admin will see on next load
@@ -10509,7 +10498,7 @@ export default function App() {
     if (view) trackActivity(`view_${view}`);
   }, [view]);
 
-  const navItems = [
+  const ALL_NAV_ITEMS = [
     { id: "myhub",     label: "My Hub",    icon: "⊙" },
     { id: "dashboard", label: "Dashboard", icon: "◈" },
     { id: "timeline",  label: "Timeline",  icon: "▬" },
@@ -10517,11 +10506,11 @@ export default function App() {
     { id: "status",    label: "Status",    icon: "◉" },
     { id: "workload",  label: "Workload",  icon: "▦" },
     { id: "reporting", label: "Reporting", icon: "◈" },
-    ...(currentRole === "admin" ? [
-      { id: "history", label: "History", icon: "⟳" },
-      { id: "kpi",     label: "KPI",     icon: "◉" },
-    ] : []),
+    { id: "history",   label: "History",   icon: "⟳" },
+    { id: "kpi",       label: "KPI",       icon: "◉" },
   ];
+  const _allowed = allowedNavItems(currentRole);
+  const navItems = ALL_NAV_ITEMS.filter(n => _allowed.has(n.id));
 
   // Auth gate — must be in App() so setting authSession=null triggers re-render
   if (authLoading) return (
@@ -10600,7 +10589,7 @@ export default function App() {
             // Badge: shows unread notifications FOR THE LOGGED-IN USER (ownMemberId)
             // Admin: all unread (completions to review + their own assignments)
             // Member: only their own assignment notifications
-            const badgeNotifs = currentRole === "admin"
+            const badgeNotifs = canManageUsers(currentRole)
               ? notifications.filter(x => !x.isRead)
               : notifications.filter(x => !x.isRead && x.assignedToPersonId === ownMemberId);
             const unreadCount = n.id === "myhub" ? badgeNotifs.length : 0;
@@ -10791,7 +10780,7 @@ export default function App() {
             projects={projects} people={people} holidays={holidays} pto={pto}
             currentUserId={currentUserId}
             onSetCurrentUser={(id) => {
-              if (currentRole !== "admin") return;
+              if (!canManageUsers(currentRole)) return;
               setCurrentUser(id);
             }}
             onEditItem={handleEditItem} onMarkDone={handleMarkDone} onSaveItem={handleSaveItem}
@@ -10802,7 +10791,7 @@ export default function App() {
             currentRole={currentRole}
             authMemberId={ownMemberId}
             authUUID={authUUID}
-            adminTasks={currentRole === "admin" ? adminTasks : adminTasks.filter(t => t.assignedTo === ownMemberId)}
+            adminTasks={canAccessMyHub(currentRole) ? (currentRole === "admin" ? adminTasks : adminTasks.filter(t => t.assignedTo === ownMemberId)) : []}
             onSaveAdminTask={saveAdminTask}
             onUpdateAdminTaskStatus={updateAdminTaskStatus}
             onDeleteAdminTask={deleteAdminTask}
@@ -10840,7 +10829,7 @@ export default function App() {
         {view === "workload" && (
           <WorkloadView projects={projects} people={people} onEditItem={handleEditItem} pto={pto} holidays={holidays} adminTasks={adminTasks} />
         )}
-        {view === "history" && currentRole === "admin" && (
+        {view === "history" && canAccessHistory(currentRole) && (
           <ChangeHistoryView
             people={people}
             projects={projects}
@@ -10850,7 +10839,7 @@ export default function App() {
           />
         )}
 
-        {view === "kpi" && currentRole === "admin" && (
+        {view === "kpi" && canAccessKPIDashboard(currentRole) && (
           <KPIDashboardView
             projects={projects}
             people={people}
@@ -10941,7 +10930,7 @@ export default function App() {
         }} />
       )}
       {showTeamSettings && (
-        <TeamSettingsModal people={people} sbUrl={SB_URL} sbKey={SB_KEY} onClose={() => setShowTeamSettings(false)} onSave={async (newPeople) => {
+        <TeamSettingsModal people={people} sbUrl={SB_URL} sbKey={SB_KEY} currentRole={currentRole} authToken={authSession?.access_token || ""} onClose={() => setShowTeamSettings(false)} onSave={async (newPeople) => {
             setPeople(newPeople);
             // Upsert all members
             for (let i = 0; i < newPeople.length; i++) {
