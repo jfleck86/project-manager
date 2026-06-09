@@ -1176,6 +1176,18 @@ function TaskModal({ item, projectColor, allItems, onClose, onSave, allPeople, o
                   : "→ Send to Proof Queue"}
               </button>
             )}
+            <button
+              title="Copy a shareable link to this task"
+              onClick={() => {
+                const url = window.location.origin + window.location.pathname + "#task=" + encodeURIComponent(item.id);
+                navigator.clipboard?.writeText(url).then(() => {
+                  const btn = document.activeElement;
+                  if (btn) { const t = btn.textContent; btn.textContent = "✓ Copied!"; setTimeout(() => { btn.textContent = t; }, 2000); }
+                }).catch(() => window.prompt("Copy this link:", url));
+              }}
+              style={{ ...cancelBtnStyle, fontSize: 11 }}>
+              🔗 Copy Link
+            </button>
             <button onClick={onClose} style={cancelBtnStyle}>Cancel</button>
             <button onClick={() => {
             // Strip internal tracking flag before saving
@@ -1972,6 +1984,30 @@ function TimelineView({ projects, people, onEditItem, onAddDeliverable, onAddSub
       document.removeEventListener("mouseup", onMouseUp);
     };
   }, []);
+
+  // ── Deep-link: auto-open task from URL hash (#task=ID) ──────────────────────
+  useEffect(() => {
+    const hash = window.location.hash;
+    const match = hash.match(/[#&]task=([^&]+)/);
+    if (!match || !projects.length) return;
+    const targetId = decodeURIComponent(match[1]);
+    // Search all projects for a matching subtask or deliverable
+    for (const proj of projects) {
+      for (const del of proj.deliverables) {
+        if (del.id === targetId) {
+          setView("timeline");
+          setEditItem({ item: del, projectColor: proj.color });
+          return;
+        }
+        const sub = del.subtasks?.find(s => s.id === targetId);
+        if (sub) {
+          setView("timeline");
+          setEditItem({ item: sub, projectColor: proj.color });
+          return;
+        }
+      }
+    }
+  }, [projects]); // runs once projects load
 
   // Collect all IDs for dependency lookup across whole timeline
   const allItemsFlat = projects.flatMap(p => p.deliverables.flatMap(d => [
@@ -7527,7 +7563,7 @@ function RoleManager({ people, sbUrl, sbKey, isAdmin, authToken }) {
   // Load app_users on mount
   React.useEffect(() => {
     if (!sbUrl || !sbKey) return;
-    fetch(`${sbUrl}/rest/v1/app_users?select=id,role,team_member_id`, {
+    fetch(`${sbUrl}/rest/v1/app_users?select=id,role,person_id`, {
       headers: { apikey: sbKey, Authorization: `Bearer ${authToken || sbKey}`, Accept: "application/json" },
     })
       .then(r => r.json())
@@ -7536,12 +7572,12 @@ function RoleManager({ people, sbUrl, sbKey, isAdmin, authToken }) {
   }, [sbUrl, sbKey]);
 
   const getRole = (personId) => {
-    const au = appUsers.find(u => u.team_member_id === personId);
+    const au = appUsers.find(u => u.person_id === personId);
     return au ? (au.role || "contributor") : null;
   };
 
   const handleRoleChange = async (personId, newRole) => {
-    const au = appUsers.find(u => u.team_member_id === personId);
+    const au = appUsers.find(u => u.person_id === personId);
     if (!au) return;
     setSaving(personId);
     setMsg("");
@@ -9642,7 +9678,10 @@ export default function App() {
   }
 
   // ── handlers ──────────────────────────────────────────────────────────────
-  const handleEditItem = (item) => setEditingItem(item);
+  const handleEditItem = (item, projectColor) => {
+    setEditingItem(item);
+    if (item?.id) window.history.replaceState(null, "", window.location.pathname + window.location.search + "#task=" + encodeURIComponent(item.id));
+  };
 
   // ── Send a proofreading task to the Proof Queue ───────────────────────────
   // Builds the prefill payload, stores it in sessionStorage, then navigates to /proof.
