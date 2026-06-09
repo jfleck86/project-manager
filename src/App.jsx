@@ -796,9 +796,27 @@ function ProjectDetailsModal({ proj, people, onClose, onSave, onArchive, onDelet
 }
 
 // --- TASK EDIT MODAL ──────────────────────────────────────────────────────────
-function TaskModal({ item, projectColor, allItems, onClose, onSave, allPeople, onDelete, holidays = [], statusNotes = {}, onUpdateNote, trackStatus }) {
+function TaskModal({ item, projectColor, allItems, onClose, onSave, allPeople, onDelete, holidays = [], statusNotes = {}, onUpdateNote, trackStatus, onSendToProof }) {
   const [form, setForm] = useState({ ...item });
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
+
+  // ── Proof Queue integration ───────────────────────────────────────────────
+  const isProofTask = (
+    form.department === "Proofreading" ||
+    form.department === "Proof" ||
+    form.workType   === "Proofreading" ||
+    (form.title || "").toLowerCase().includes("proof")
+  );
+  // undefined=loading, null=none, object=already linked
+  const [linkedProof, setLinkedProof] = React.useState(undefined);
+  React.useEffect(() => {
+    if (!isProofTask || !item.id) { setLinkedProof(null); return; }
+    import("./lib/proofIntegration.js")
+      .then(({ findLinkedProofRequest }) => findLinkedProofRequest(item.id))
+      .then(r => setLinkedProof(r || null))
+      .catch(() => setLinkedProof(null));
+  }, [item.id, isProofTask]);
+
 
   // Local style constants (also defined in NewProjectModal — kept separate for scope safety)
   const labelStyle  = { fontSize: 10, fontWeight: 700, color: "#6b7280", letterSpacing: "0.07em", textTransform: "uppercase", marginBottom: 5, display: "block" };
@@ -1114,6 +1132,29 @@ function TaskModal({ item, projectColor, allItems, onClose, onSave, allPeople, o
             }}>Delete</button>
           ) : <div />}
           <div style={{ display: "flex", gap: 10 }}>
+            {isProofTask && (
+              <button
+                onClick={() => {
+                  if (linkedProof) {
+                    window.location.href = "/proof";
+                  } else if (onSendToProof) {
+                    onSendToProof(form);
+                  }
+                }}
+                disabled={linkedProof === undefined}
+                style={{
+                  fontSize:11, fontWeight:700, padding:"7px 14px",
+                  background: linkedProof ? "rgba(80,192,192,0.1)" : "#50C0C0",
+                  color:      linkedProof ? "#50C0C0"              : "#fff",
+                  border:     linkedProof ? "1px solid #50C0C0"    : "none",
+                  borderRadius:6, cursor:"pointer", fontFamily:"inherit",
+                  opacity: linkedProof === undefined ? 0.5 : 1,
+                }}>
+                {linkedProof === undefined ? "⏳ Checking…"
+                  : linkedProof ? "↗ View in Proof Queue"
+                  : "→ Send to Proof Queue"}
+              </button>
+            )}
             <button onClick={onClose} style={cancelBtnStyle}>Cancel</button>
             <button onClick={() => {
             // Strip internal tracking flag before saving
@@ -9228,6 +9269,7 @@ export default function App() {
       setCurrentUser(appUser.teamMemberId);
       setOwnMemberId(appUser.teamMemberId);
       try { localStorage.setItem("planr_own_member_id", appUser.teamMemberId); } catch {}
+      try { localStorage.setItem("planr_own_member_name", appUser.name || ""); } catch {}
     }
     setSessionExpired(false);
     setSessionExpired(false); setView("myhub"); setAuthLoading(false);
@@ -9267,6 +9309,7 @@ export default function App() {
             setOwnMemberId(appUser.teamMemberId);
             try { localStorage.setItem("planr_own_member_id", appUser.teamMemberId); } catch {}
           }
+          try { localStorage.setItem("planr_own_member_name", appUser.name || ""); } catch {}
           setAuthSession(session); setAuthUser(session.user); setAuthLoading(false);
         })
         .catch(() => {
@@ -9555,6 +9598,31 @@ export default function App() {
   // ── handlers ──────────────────────────────────────────────────────────────
   const handleEditItem = (item) => setEditingItem(item);
 
+  // ── Send a proofreading task to the Proof Queue ───────────────────────────
+  // Builds the prefill payload, stores it in sessionStorage, then navigates to /proof.
+  // ProofApp.jsx reads it on mount and opens a pre-filled New Request form.
+  const handleSendToProof = (task) => {
+    // task already carries projectId and deliverableId from the timeline item shape
+    const proj = projects.find(p => p.id === (task.projectId || task.id));
+    const del  = proj?.deliverables.find(d =>
+      d.id === task.deliverableId || d.id === task.id ||
+      d.subtasks?.some(s => s.id === task.id)
+    );
+    import("./lib/proofIntegration.js").then(({ buildPrefill, storePrefill }) => {
+      const prefill = buildPrefill({
+        project:         proj || null,
+        deliverable:     del  || null,
+        task,
+        currentUserName: people.find(p => p.id === ownMemberId)?.name || "",
+        currentMemberId: ownMemberId || null,
+      });
+      storePrefill(prefill);
+      // Store people for the proofreader dropdown in the Proof Queue
+      try { localStorage.setItem("proof_queue_people", JSON.stringify(people.filter(p => p.department === "Proof" || p.department === "Proofreading").map(p => ({ id: p.id, name: p.name })))); } catch {}
+      window.open("/proof", "_blank");
+    });
+  };
+
   const handleSaveItem = (updated) => {
     // Log dependency changes explicitly
     if (updated.dependencies) {
@@ -9595,6 +9663,8 @@ export default function App() {
       for (const personId of addedPersonIds) {
         const person = people.find(p => p.id === personId);
         if (!person) continue;
+        // Skip assignment notification for proofreaders — they get notified via the Proof Queue instead
+        if (person.department === "Proof" || person.department === "Proofreading" || person.canProofread) continue;
         const notifId = "notif_" + Date.now() + "_" + personId;
         const msg = `${person.name} has been assigned to "${updated.title || oldItem?.title || "a task"}" in ${proj?.name || "a project"}`;
         const notif = {
@@ -10287,6 +10357,85 @@ export default function App() {
     }).catch(() => {});
   }, [SB_READY, ownMemberId]);
 
+  // Store the real name from the people array once both people + ownMemberId are available
+  React.useEffect(() => {
+    if (ownMemberId && people.length > 0) {
+      const me = people.find(p => p.id === ownMemberId);
+      if (me?.name) {
+        try { localStorage.setItem("planr_own_member_name", me.name); } catch {}
+      }
+    }
+  }, [ownMemberId, people]);
+
+  // Load unread notifications from Supabase — runs on login AND when the tab regains focus
+  // so notifications created in the Proof Queue show up when the user returns to PulseX.
+  React.useEffect(() => {
+    if (!SB_READY || !ownMemberId) return;
+
+    function fetchNotifs() {
+      sb.select(
+        "task_notifications",
+        `assigned_to_person_id=eq.${ownMemberId}&is_read=eq.false&order=created_at.desc&limit=50`
+      ).then(({ data, error }) => {
+        if (error) { console.warn("[PulseX] notification fetch error:", error); return; }
+        if (!data?.length) return;
+        const loaded = data.map(row => ({
+          id:                  row.id,
+          type:                row.notification_type       || "task_completed",
+          message:             row.message                 || "",
+          assignedToPersonId:  row.assigned_to_person_id  || null,
+          completedByPersonId: row.completed_by_person_id || null,
+          taskId:              row.task_id                 || null,
+          isRead:              row.is_read                 || false,
+          reviewedAt:          row.reviewed_at             || null,
+          createdAt:           row.created_at              || new Date().toISOString(),
+        }));
+        setNotifications(prev => {
+          const existingIds = new Set(prev.map(n => n.id));
+          const fresh = loaded.filter(n => !existingIds.has(n.id));
+          return fresh.length ? [...fresh, ...prev] : prev;
+        });
+      });
+    }
+
+    // Load immediately on login
+    fetchNotifs();
+
+    // Re-fetch when the user returns to this tab (e.g. from Proof Queue)
+    const onVisible = () => {
+      if (document.visibilityState !== "visible") return;
+      // 1. Re-fetch DB notifications
+      fetchNotifs();
+      // 2. Drain pending notifications written by the Proof Queue
+      try {
+        const pending = JSON.parse(localStorage.getItem("proof_pending_notifications") || "[]");
+        if (!pending.length) return;
+        localStorage.removeItem("proof_pending_notifications");
+        pending.forEach(notif => {
+          if (notif.assignedToPersonId !== ownMemberId) return;
+          setNotifications(prev => {
+            if (prev.some(n => n.id === notif.id)) return prev;
+            return [notif, ...prev];
+          });
+          setToastNotif({ id: notif.id, message: notif.message, type: "task_completed" });
+          // Persist to DB using PulseX's own auth
+          if (SB_READY) sb.upsert("task_notifications", {
+            id:                    notif.id,
+            task_id:               notif.taskId || null,
+            notification_type:     "task_completed",
+            message:               notif.message,
+            assigned_to_person_id: notif.assignedToPersonId,
+            is_read:               false,
+            created_at:            notif.createdAt,
+          });
+        });
+      } catch {}
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => document.removeEventListener("visibilitychange", onVisible);
+  }, [ownMemberId, SB_READY]);
+
+
   // Track login on initial load — once per browser session (sessionStorage flag prevents duplicates)
   React.useEffect(() => {
     if (SB_READY && ownMemberId) {
@@ -10477,6 +10626,12 @@ export default function App() {
               </div>
             )}
           </div>
+          {/* ── PROOF QUEUE SHORTCUT ── */}
+          <button onClick={() => (() => { try { localStorage.setItem("proof_queue_people", JSON.stringify(people.filter(p => p.department === "Proof" || p.department === "Proofreading").map(p => ({ id: p.id, name: p.name })))); } catch {} window.open("/proof", "_blank"); })()}
+            title="Open Proof Queue in new tab"
+            style={{ background:"rgba(80,192,192,0.15)", border:"1px solid rgba(80,192,192,0.4)", color:"#50C0C0", borderRadius:6, padding:"4px 12px", cursor:"pointer", fontSize:12, fontFamily:"inherit", fontWeight:700, flexShrink:0, display:"flex", alignItems:"center", gap:5 }}>
+            🔍 Proof Queue ↗
+          </button>
           <button onClick={handleLogout} title="Sign Out"
             style={{ background:"rgba(239,68,68,0.15)", border:"1px solid rgba(239,68,68,0.3)",
               color:"#fca5a5", borderRadius:6, padding:"4px 10px", cursor:"pointer",
@@ -10825,6 +10980,7 @@ export default function App() {
             const del    = proj?.deliverables.find(d => d.id === delId);
             return del?.trackOverride || null;
           })()}
+          onSendToProof={handleSendToProof}
         />
       )}
 

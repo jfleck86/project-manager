@@ -2,8 +2,12 @@ import React from "react";
 import { PROOF_COLORS as C, todayStr, isOverdue } from "../lib/proofTypes";
 import RequestCard from "./RequestCard";
 
-export default function MyQueueView({ requests, currentUser, onView, onEdit }) {
-  const mine     = requests.filter(r => r.assigned_proofreader === currentUser);
+export default function MyQueueView({ requests, currentUser, currentUserId, onView, onEdit }) {
+  // Match by name OR by member ID (more reliable when names have slight variations)
+  const mine = requests.filter(r =>
+    (currentUser && r.assigned_proofreader === currentUser) ||
+    (currentUserId && (r.assigned_member_id === currentUserId || r.assigned_proofreader_id === currentUserId))
+  );
   const overdue  = mine.filter(r => isOverdue(r.due_date, r.status));
   const dueToday = mine.filter(r => r.due_date === todayStr() && r.status !== "Complete");
   const inReview = mine.filter(r => r.status === "In Review");

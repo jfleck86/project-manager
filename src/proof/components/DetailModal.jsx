@@ -4,7 +4,7 @@ import StatusBadge     from "./StatusBadge";
 import DepartmentBadge from "./DepartmentBadge";
 import AssignModal     from "./AssignModal";
 
-export default function DetailModal({ req, currentUser, proofreaders, proofreadersErr, onClose, onEdit, onStatusChange, onAssign }) {
+export default function DetailModal({ req, currentUser, proofreaders, proofreadersErr, onClose, onEdit, onStatusChange, onAssign, onArchive, onUnarchive, onDelete }) {
   const [showAssign, setShowAssign] = useState(false);
 
   const m          = STATUS_META[req.status] || STATUS_META["Submitted"];
@@ -15,33 +15,29 @@ export default function DetailModal({ req, currentUser, proofreaders, proofreade
   return (
     <>
       {showAssign && (
-        <AssignModal
-          req={req}
-          currentUser={currentUser}
-          proofreaders={proofreaders}
-          proofreadersErr={proofreadersErr}
+        <AssignModal req={req} currentUser={currentUser} proofreaders={proofreaders} proofreadersErr={proofreadersErr}
           onCancel={() => setShowAssign(false)}
-          onAssign={(name, id) => { onAssign(req.id, name, id); setShowAssign(false); }}
-        />
+          onAssign={(name, id) => { onAssign(req.id, name, id); setShowAssign(false); }} />
       )}
 
-      <div
-        style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.45)", display:"flex", alignItems:"center", justifyContent:"center", zIndex:1000, padding:16 }}
-        onClick={onClose}
-      >
-        <div
-          style={{ background:C.card, borderRadius:12, padding:28, maxWidth:580, width:"100%", maxHeight:"90vh", overflowY:"auto" }}
-          onClick={e => e.stopPropagation()}
-        >
+      <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.45)", display:"flex", alignItems:"center", justifyContent:"center", zIndex:1000, padding:16 }} onClick={onClose}>
+        <div style={{ background:C.card, borderRadius:12, padding:28, maxWidth:600, width:"100%", maxHeight:"90vh", overflowY:"auto" }} onClick={e=>e.stopPropagation()}>
+
           {/* Title */}
           <div style={{ display:"flex", alignItems:"flex-start", justifyContent:"space-between", marginBottom:20 }}>
             <div>
               <h2 style={{ margin:0, fontSize:18, fontWeight:800, color:C.navy }}>{req.project_name}</h2>
-              <div style={{ fontSize:13, color:C.muted, marginTop:4 }}>
-                {req.client}{req.project_number ? ` · ${req.project_number}` : ""}
-              </div>
+              <div style={{ fontSize:13, color:C.muted, marginTop:4 }}>{req.client}{req.project_number ? ` · ${req.project_number}` : ""}</div>
+              {req.related_task_id && (
+                <div style={{ fontSize:11, color:"#0ea5e9", marginTop:4, display:"flex", alignItems:"center", gap:4 }}>
+                  🔗 Linked to PulseX task — completion will sync automatically
+                </div>
+              )}
             </div>
-            <button onClick={onClose} style={{ background:"none", border:"none", fontSize:22, color:C.muted, cursor:"pointer", padding:"0 4px" }}>×</button>
+            <div style={{ display:"flex", gap:6, alignItems:"flex-start" }}>
+              {req.is_archived && <span style={{ fontSize:10, color:"#9ca3af", background:"#f1f5f9", borderRadius:4, padding:"2px 8px" }}>ARCHIVED</span>}
+              <button onClick={onClose} style={{ background:"none", border:"none", fontSize:22, color:C.muted, cursor:"pointer", padding:"0 4px" }}>×</button>
+            </div>
           </div>
 
           {/* Badges */}
@@ -55,69 +51,65 @@ export default function DetailModal({ req, currentUser, proofreaders, proofreade
 
           {/* Details grid */}
           <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:14, marginBottom:18 }}>
-            {[
-              ["Task #",         req.task_number || "—"],
-              ["Due Date",       fmtDate(req.due_date)],
-              ["Submitted By",   req.submitted_by || "—"],
-              ["Proofreader",    req.assigned_proofreader || "⚠ Unassigned"],
-              ["Created",        fmtDate(req.created_at)],
-              ["Completed",      req.completed_at ? fmtDate(req.completed_at) : "—"],
-            ].map(([k, v]) => (
+            {[["Task #",req.task_number||"—"],["Due Date",fmtDate(req.due_date)],["Submitted By",req.submitted_by||"—"],["Proofreader",req.assigned_proofreader||"⚠ Unassigned"],["Created",fmtDate(req.created_at)],["Completed",req.completed_at?fmtDate(req.completed_at):"—"]].map(([k,v]) => (
               <div key={k}>
                 <div style={{ fontSize:11, fontWeight:600, color:C.muted }}>{k}</div>
-                <div style={{ fontSize:13, marginTop:2, color: k==="Proofreader" && !req.assigned_proofreader ? "#f59e0b" : C.text, fontWeight: k==="Proofreader" && !req.assigned_proofreader ? 600 : 400 }}>
-                  {v}
-                </div>
+                <div style={{ fontSize:13, marginTop:2, color: k==="Proofreader"&&!req.assigned_proofreader?"#f59e0b":C.text, fontWeight: k==="Proofreader"&&!req.assigned_proofreader?600:400 }}>{v}</div>
               </div>
             ))}
           </div>
 
-          {/* Audit trail */}
+          {/* Audit */}
           {(req.created_by || req.assigned_by || req.status_changed_by) && (
             <div style={{ background:"#f8fafc", borderRadius:8, padding:"10px 14px", marginBottom:16 }}>
               <div style={{ fontSize:12, fontWeight:700, color:C.text, marginBottom:6 }}>Audit Trail</div>
               <div style={{ display:"flex", flexDirection:"column", gap:4, fontSize:11, color:C.muted }}>
-                {req.created_by      && <span>📋 Submitted by <strong>{req.created_by}</strong></span>}
+                {req.created_by && <span>📋 Submitted by <strong>{req.created_by}</strong></span>}
                 {req.assigned_by && req.assigned_proofreader && <span>👤 Assigned by <strong>{req.assigned_by}</strong></span>}
                 {req.status_changed_by && <span>🔄 Last status change by <strong>{req.status_changed_by}</strong></span>}
+                {req.archived_by && <span>📦 Archived by <strong>{req.archived_by}</strong></span>}
               </div>
             </div>
           )}
 
-          {req.instructions && (
-            <div style={{ marginBottom:14 }}>
-              <div style={{ fontSize:11, fontWeight:600, color:C.muted, marginBottom:4 }}>Instructions</div>
-              <div style={{ fontSize:13, color:C.text, background:"#f8fafc", borderRadius:6, padding:"10px 12px", lineHeight:1.5 }}>{req.instructions}</div>
-            </div>
-          )}
-          {req.comments && (
-            <div style={{ marginBottom:14 }}>
-              <div style={{ fontSize:11, fontWeight:600, color:C.muted, marginBottom:4 }}>Comments</div>
-              <div style={{ fontSize:13, color:C.text, background:"#f8fafc", borderRadius:6, padding:"10px 12px", lineHeight:1.5 }}>{req.comments}</div>
-            </div>
-          )}
-          {req.sharepoint_link && (
-            <div style={{ marginBottom:18 }}>
-              <a href={req.sharepoint_link} target="_blank" rel="noopener noreferrer" style={{ fontSize:13, color:C.teal, fontWeight:600 }}>Open in SharePoint ↗</a>
-            </div>
-          )}
+          {req.instructions && <div style={{ marginBottom:14 }}><div style={{ fontSize:11, fontWeight:600, color:C.muted, marginBottom:4 }}>Instructions</div><div style={{ fontSize:13, color:C.text, background:"#f8fafc", borderRadius:6, padding:"10px 12px", lineHeight:1.5 }}>{req.instructions}</div></div>}
+          {req.comments     && <div style={{ marginBottom:14 }}><div style={{ fontSize:11, fontWeight:600, color:C.muted, marginBottom:4 }}>Comments</div><div style={{ fontSize:13, color:C.text, background:"#f8fafc", borderRadius:6, padding:"10px 12px", lineHeight:1.5 }}>{req.comments}</div></div>}
+          {req.sharepoint_link && <div style={{ marginBottom:18 }}><a href={req.sharepoint_link} target="_blank" rel="noopener noreferrer" style={{ fontSize:13, color:C.teal, fontWeight:600 }}>Open in SharePoint ↗</a></div>}
 
           {/* Actions */}
           <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
-            <button onClick={() => onEdit(req)} style={{ padding:"9px 16px", background:C.tealL, color:C.teal, border:`1px solid ${C.teal}40`, borderRadius:7, cursor:"pointer", fontSize:13, fontWeight:600, fontFamily:"inherit" }}>Edit</button>
-            {req.status === "Submitted" && (
+            {!req.is_archived && onEdit && (
+              <button onClick={() => onEdit(req)} style={{ padding:"9px 16px", background:C.tealL, color:C.teal, border:`1px solid ${C.teal}40`, borderRadius:7, cursor:"pointer", fontSize:13, fontWeight:600, fontFamily:"inherit" }}>Edit</button>
+            )}
+            {!req.is_archived && req.status==="Submitted" && (
               <button onClick={() => setShowAssign(true)} style={{ padding:"9px 16px", background:"#dbeafe", color:"#3b82f6", border:"1px solid #3b82f640", borderRadius:7, cursor:"pointer", fontSize:13, fontWeight:700, fontFamily:"inherit" }}>
                 Assign &amp; Move to Assigned →
               </button>
             )}
-            {req.status !== "Submitted" && nextStatus && (
+            {!req.is_archived && req.status!=="Submitted" && nextStatus && (
               <button onClick={() => onStatusChange(req.id, nextStatus)} style={{ padding:"9px 16px", background:m.bg, color:m.color, border:`1px solid ${m.color}40`, borderRadius:7, cursor:"pointer", fontSize:13, fontWeight:700, fontFamily:"inherit" }}>
                 Move to {nextStatus} →
               </button>
             )}
-            {req.status !== "Complete" && (
+            {!req.is_archived && req.status!=="Complete" && (
               <button onClick={() => onStatusChange(req.id, "Complete")} style={{ padding:"9px 16px", background:"#d1fae5", color:"#10b981", border:"1px solid #10b98140", borderRadius:7, cursor:"pointer", fontSize:13, fontWeight:700, fontFamily:"inherit" }}>
                 ✓ Mark Complete
+              </button>
+            )}
+            {!req.is_archived && req.status==="Complete" && onArchive && (
+              <button onClick={() => onArchive(req.id)} style={{ padding:"9px 16px", background:"#f1f5f9", color:"#6b7280", border:"1px solid #e2e8f0", borderRadius:7, cursor:"pointer", fontSize:13, fontFamily:"inherit" }}>
+                📦 Archive
+              </button>
+            )}
+            {req.is_archived && onUnarchive && (
+              <button onClick={() => onUnarchive(req.id)} style={{ padding:"9px 16px", background:"#fef3c7", color:"#92400e", border:"1px solid #fcd34d", borderRadius:7, cursor:"pointer", fontSize:13, fontFamily:"inherit" }}>
+                ↩ Unarchive
+              </button>
+            )}
+            {onDelete && (
+              <button onClick={() => onDelete(req.id)}
+                style={{ marginLeft:"auto", padding:"9px 16px", background:"rgba(239,68,68,0.08)", color:"#ef4444", border:"1px solid rgba(239,68,68,0.25)", borderRadius:7, cursor:"pointer", fontSize:13, fontFamily:"inherit" }}>
+                🗑 Delete
               </button>
             )}
           </div>
