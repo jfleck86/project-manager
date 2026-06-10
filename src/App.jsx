@@ -11879,11 +11879,13 @@ export default function App() {
                 <span style={{ fontSize: 8, fontWeight: 700, letterSpacing: "0.04em", opacity: 0.8, whiteSpace: "nowrap" }}>{n.label}</span>
                 {unreadCount > 0 && (
                   <span style={{
-                    background:"#f97316", color:"#fff",
+                    background: n.id === "timeline" ? "#e24b4a" : "#f97316",
+                    color:"#fff",
                     borderRadius:10, fontSize:10, fontWeight:900,
-                    padding:"2px 6px", lineHeight:"16px",
+                    padding:"2px 5px", lineHeight:"16px",
                     minWidth:18, textAlign:"center",
                     display:"block", width:"fit-content", margin:"0 auto",
+                    boxShadow: n.id === "timeline" ? "0 0 0 2px rgba(226,75,74,0.2)" : "none",
                   }}>
                     {unreadCount}
                   </span>
