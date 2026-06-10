@@ -2079,7 +2079,7 @@ function cascadeDates(projects, changedId, newEnd, holidays = []) {
 
 
 
-function TimelineView({ projects, people, onEditItem, onAddDeliverable, onAddSubtask, onMarkDone, onSaveItem, holidays = [], onInsertSubtask, onReorderDeliverables, onReorderSubtasks, onDeleteSubtask, statusNotes = {}, onUpdateNote, onSaveProject, onOpenProject, clipboard, onCopySubtask, onCopyDeliverable, onPasteSubtask, onPasteDeliverable }) {
+function TimelineView({ projects, people, onEditItem, onAddDeliverable, onAddSubtask, onMarkDone, onSaveItem, holidays = [], onInsertSubtask, onReorderDeliverables, onReorderSubtasks, deliverableTemplates = [], onApplyTemplate, onDeleteSubtask, statusNotes = {}, onUpdateNote, onSaveProject, onOpenProject, clipboard, onCopySubtask, onCopyDeliverable, onPasteSubtask, onPasteDeliverable }) {
   const [collapsed, setCollapsed] = useState(() => {
     try { return JSON.parse(localStorage.getItem('planr_collapsed') || '{}'); } catch { return {}; }
   });
@@ -2386,7 +2386,7 @@ function TimelineView({ projects, people, onEditItem, onAddDeliverable, onAddSub
           onAddDeliverable={onAddDeliverable} onAddSubtask={onAddSubtask}
           onMarkDone={onMarkDone} onSaveItem={onSaveItem} rowIndex={rowIndex} DAY_W={DAY_W}
           colWidths={colWidths} LEFT_W={LEFT_W} holidays={holidays}
-          onInsertSubtask={onInsertSubtask} onReorderDeliverables={onReorderDeliverables} onReorderSubtasks={onReorderSubtasks} onDeleteSubtask={onDeleteSubtask}
+          onInsertSubtask={onInsertSubtask} onReorderDeliverables={onReorderDeliverables} onReorderSubtasks={onReorderSubtasks} deliverableTemplates={deliverableTemplates} onApplyTemplate={onApplyTemplate} onDeleteSubtask={onDeleteSubtask} deliverableTemplates={deliverableTemplates} onApplyTemplate={onApplyTemplate}
           statusNotes={statusNotes} onUpdateNote={onUpdateNote}
           clipboard={clipboard} onCopySubtask={onCopySubtask} onCopyDeliverable={onCopyDeliverable}
           onPasteSubtask={onPasteSubtask} onPasteDeliverable={onPasteDeliverable}
@@ -2448,7 +2448,7 @@ function EdgeFade({ bodyRef, leftWidth }) {
   );
 }
 
-function TimelineBody({ projects, people, collapsed, toggle, weeks, todayOff, allItemsFlat, onEditItem, headerScrollRef, topScrollRef, onAddDeliverable, onAddSubtask, onMarkDone, onSaveItem, rowIndex, DAY_W, colWidths, LEFT_W, holidays = [], onInsertSubtask, onReorderDeliverables, onReorderSubtasks, onDeleteSubtask, statusNotes = {}, onUpdateNote, onSaveProject, onOpenProject, clipboard, onCopySubtask, onCopyDeliverable, onPasteSubtask, onPasteDeliverable, showGantt  }) {
+function TimelineBody({ projects, people, collapsed, toggle, weeks, todayOff, allItemsFlat, onEditItem, headerScrollRef, topScrollRef, onAddDeliverable, onAddSubtask, onMarkDone, onSaveItem, rowIndex, DAY_W, colWidths, LEFT_W, holidays = [], onInsertSubtask, onReorderDeliverables, onReorderSubtasks, deliverableTemplates = [], onApplyTemplate, onDeleteSubtask, statusNotes = {}, onUpdateNote, onSaveProject, onOpenProject, clipboard, onCopySubtask, onCopyDeliverable, onPasteSubtask, onPasteDeliverable, showGantt  }) {
   const bodyRef  = useRef(null);
   // syncScroll removed — single scroll container handles both header and body
 
@@ -2504,7 +2504,7 @@ function TimelineBody({ projects, people, collapsed, toggle, weeks, todayOff, al
   );
 }
 
-function ProjectSection({ proj, people, collapsed, toggle, weeks, todayOff, allItemsFlat, onEditItem, onAddDeliverable, onAddSubtask, onMarkDone, onSaveItem, rowIndex, DAY_W, colWidths, LEFT_W, onInsertSubtask, onReorderDeliverables, onReorderSubtasks, onDeleteSubtask, statusNotes = {}, onUpdateNote, holidays = [], clipboard, onCopySubtask, onCopyDeliverable, onPasteSubtask, onPasteDeliverable, onSaveProject, onOpenProject , showGantt  }) {
+function ProjectSection({ proj, people, collapsed, toggle, weeks, todayOff, allItemsFlat, onEditItem, onAddDeliverable, onAddSubtask, onMarkDone, onSaveItem, rowIndex, DAY_W, colWidths, LEFT_W, onInsertSubtask, onReorderDeliverables, onReorderSubtasks, deliverableTemplates = [], onApplyTemplate, onDeleteSubtask, statusNotes = {}, onUpdateNote, holidays = [], clipboard, onCopySubtask, onCopyDeliverable, onPasteSubtask, onPasteDeliverable, onSaveProject, onOpenProject , showGantt  }) {
   const isProjCollapsed = !!collapsed[proj.id];
 
   const [delDragState, setDelDragState] = useState({ dragIdx: null, overIdx: null });
@@ -2656,6 +2656,7 @@ function ProjectSection({ proj, people, collapsed, toggle, weeks, todayOff, allI
             onSaveItem={onSaveItem} rowIndex={rowIndex} DAY_W={DAY_W} colWidths={colWidths} LEFT_W={LEFT_W}
             onInsertSubtask={onInsertSubtask} onReorderSubtasks={onReorderSubtasks} onDeleteSubtask={onDeleteSubtask}
             onDragHandlePointerDown={(e) => startDelDrag(e, delIdx)}
+            deliverableTemplates={deliverableTemplates} onApplyTemplate={onApplyTemplate}
             statusNotes={statusNotes} onUpdateNote={onUpdateNote} holidays={holidays}
             clipboard={clipboard} onCopySubtask={onCopySubtask} onCopyDeliverable={onCopyDeliverable}
             onPasteSubtask={onPasteSubtask} onPasteDeliverable={onPasteDeliverable} showGantt={showGantt} />
@@ -2732,7 +2733,7 @@ function LeftCell({ width, children, center = false, last = false }) {
 }
 
 
-function DeliverableRow({ del, proj, people, collapsed, toggle, weeks, todayOff, allItemsFlat, onEditItem, onAddSubtask, onMarkDone, onSaveItem, rowIndex, DAY_W, colWidths, LEFT_W, onInsertSubtask, onReorderSubtasks, onDragHandlePointerDown, onDeleteSubtask, statusNotes = {}, onUpdateNote, holidays = [], clipboard, onCopySubtask, onCopyDeliverable, onPasteSubtask, onPasteDeliverable , showGantt  }) {
+function DeliverableRow({ del, proj, people, collapsed, toggle, weeks, todayOff, allItemsFlat, onEditItem, onAddSubtask, onMarkDone, onSaveItem, rowIndex, DAY_W, colWidths, LEFT_W, onInsertSubtask, onReorderSubtasks, onDragHandlePointerDown, deliverableTemplates = [], onApplyTemplate, onDeleteSubtask, statusNotes = {}, onUpdateNote, holidays = [], clipboard, onCopySubtask, onCopyDeliverable, onPasteSubtask, onPasteDeliverable , showGantt  }) {
   const isCollapsed = collapsed[del.id];
   const rowNum = rowIndex.index[del.id] || "?";
   const startOff = dayOffset(del.start);
@@ -2748,6 +2749,7 @@ function DeliverableRow({ del, proj, people, collapsed, toggle, weeks, todayOff,
   const [ctxMenu, setCtxMenu] = useState(null);
   const [delCtxMenu, setDelCtxMenu] = useState(null);
   const [dragState, setDragState] = useState({ dragIdx: null, overIdx: null });
+  const [showTplPicker, setShowTplPicker] = useState(false);
   const dragRef = useRef(null); // { startY, idx, rowHeight }
 
   const handleSubtaskContextMenu = (e, subIdx) => {
@@ -2992,12 +2994,42 @@ function DeliverableRow({ del, proj, people, collapsed, toggle, weeks, todayOff,
         ]} />
       )}
       {!isCollapsed && del.subtasks.length === 0 && (
-        <div style={{ display: "flex", height: 30, alignItems: "center", background: "rgba(0,0,0,0.02)", borderBottom: "1px solid rgba(0,0,0,0.03)" }}>
-          <div style={{ width: LEFT_W, flexShrink: 0, paddingLeft: 36, borderRight: "1px solid rgba(0,0,0,0.05)" }}>
-            <button onClick={onAddSubtask} style={{ background: "none", border: "1px dashed rgba(0,0,0,0.1)", borderRadius: 4, color: "#9ca3af", padding: "2px 10px", cursor: "pointer", fontSize: 10, fontFamily: "inherit" }}>+ Add subtask</button>
+          <div style={{ display: "flex", height: 34, alignItems: "center", background: "rgba(0,0,0,0.02)", borderBottom: "1px solid rgba(0,0,0,0.05)" }}>
+            <div style={{ width: LEFT_W, flexShrink: 0, paddingLeft: 36, borderRight: "1px solid rgba(0,0,0,0.05)", display: "flex", alignItems: "center", gap: 8, height: "100%" }}>
+              <button onClick={onAddSubtask} style={{ background: "none", border: "1px dashed rgba(0,0,0,0.1)", borderRadius: 4, color: "#9ca3af", padding: "2px 10px", cursor: "pointer", fontSize: 10, fontFamily: "inherit" }}>+ Add subtask</button>
+              {deliverableTemplates.length > 0 && (
+                <div style={{ position: "relative" }}>
+                  <button
+                    onClick={() => setShowTplPicker(p => !p)}
+                    style={{ background: "none", border: "1px dashed rgba(99,102,241,0.3)", borderRadius: 4,
+                      color: "#6366f1", padding: "2px 10px", cursor: "pointer", fontSize: 10, fontFamily: "inherit" }}>
+                    📋 Use template
+                  </button>
+                  {showTplPicker && (
+                    <div style={{ position: "absolute", top: "calc(100% + 4px)", left: 0, zIndex: 200,
+                      background: "#fff", border: "1px solid rgba(0,0,0,0.1)", borderRadius: 8,
+                      boxShadow: "0 6px 20px rgba(0,0,0,0.12)", minWidth: 200, overflow: "hidden", padding: "4px 0" }}>
+                      <div style={{ fontSize: 9, fontWeight: 700, color: "#9ca3af", padding: "5px 12px 3px", letterSpacing: ".06em", textTransform: "uppercase" }}>Choose template</div>
+                      {deliverableTemplates.map(tpl => (
+                        <button key={tpl.id}
+                          onClick={() => { onApplyTemplate && onApplyTemplate(del, tpl); setShowTplPicker(false); }}
+                          style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", padding: "7px 12px",
+                            background: "none", border: "none", cursor: "pointer", fontSize: 12,
+                            fontFamily: "inherit", color: "#374151", textAlign: "left" }}
+                          onMouseEnter={e => e.currentTarget.style.background = "#f9fafb"}
+                          onMouseLeave={e => e.currentTarget.style.background = "none"}>
+                          <span>{tpl.icon || "📋"}</span>
+                          <span style={{ flex: 1 }}>{tpl.name}</span>
+                          <span style={{ fontSize: 10, color: "#9ca3af" }}>{(tpl.tasks || []).length} tasks</span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+            <div style={{ flex: 1 }} />
           </div>
-          <div style={{ flex: 1 }} />
-        </div>
       )}
     </div>
   );
@@ -9488,7 +9520,7 @@ function NewDeliverableModal({ project, onClose, onAdd, allPeople, savedTemplate
 }
 
 // --- NEW SUBTASK MODAL ────────────────────────────────────────────────────────
-function NewSubtaskModal({ project, deliverable, onClose, onAdd, allPeople }) {
+function NewSubtaskModal({ project, deliverable, onClose, onAdd, allPeople, deliverableTemplates = [], onApplyTemplate }) {
   const [form, setForm] = useState({
     title: "", status: "Not Started", priority: "Medium",
     assignees: [], start: deliverable.start, end: deliverable.end, progress: 0, dependencies: [], department: "",
@@ -9572,6 +9604,28 @@ function NewSubtaskModal({ project, deliverable, onClose, onAdd, allPeople }) {
             </div>
           </div>
         </div>
+        {deliverableTemplates.length > 0 && (
+          <div style={{ padding: "0 20px 14px", borderTop: "1px solid rgba(0,0,0,0.05)" }}>
+            <div style={{ fontSize: fs(10), fontWeight: 700, color: "#9ca3af", letterSpacing: ".06em",
+              textTransform: "uppercase", margin: "10px 0 8px" }}>Or start from a template</div>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+              {deliverableTemplates.map(tpl => (
+                <button key={tpl.id}
+                  onClick={() => { onApplyTemplate && onApplyTemplate(deliverable, tpl); onClose(); }}
+                  style={{ display: "flex", alignItems: "center", gap: 6, padding: "5px 12px",
+                    background: "rgba(99,102,241,0.06)", border: "1px solid rgba(99,102,241,0.2)",
+                    borderRadius: 6, cursor: "pointer", fontSize: fs(11), color: "#6366f1",
+                    fontFamily: "inherit" }}
+                  onMouseEnter={e => e.currentTarget.style.background = "rgba(99,102,241,0.12)"}
+                  onMouseLeave={e => e.currentTarget.style.background = "rgba(99,102,241,0.06)"}>
+                  <span>{tpl.icon || "📋"}</span>
+                  <span>{tpl.name}</span>
+                  <span style={{ fontSize: fs(10), color: "#a5b4fc" }}>{(tpl.tasks||[]).length} tasks</span>
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
         <div style={{ borderTop: "1px solid rgba(0,0,0,0.07)", padding: "14px 20px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
           <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: fs(11), color: "#6b7280", cursor: "pointer" }}>
             <input type="checkbox" checked={keepOpen} onChange={e => setKeepOpen(e.target.checked)} />
@@ -11542,6 +11596,26 @@ export default function App() {
             onMarkDone={handleMarkDone} onSaveItem={handleSaveItem} holidays={holidays}
             onInsertSubtask={handleInsertSubtask}
             onReorderDeliverables={handleReorderDeliverables} onReorderSubtasks={handleReorderSubtasks}
+              deliverableTemplates={deliverableTemplates}
+              onApplyTemplate={(del, tpl) => {
+                const today = new Date().toISOString().slice(0,10);
+                const delObj = applyDeliverableTemplate(tpl, del.projectId, del.start || today);
+                const newSubs = delObj.subtasks || [];
+                if (!newSubs.length) return;
+                optimistic(
+                  () => setProjects(projs => projs.map(p => p.id !== del.projectId ? p : {
+                    ...p, deliverables: p.deliverables.map(d => d.id !== del.id ? d : {
+                      ...d, subtasks: [...(d.subtasks||[]), ...newSubs]
+                    })
+                  })),
+                  async () => {
+                    await Promise.all(newSubs.map((s, i) =>
+                      sb.upsert("subtasks", subToRow(s, del.id, del.projectId, i), { prefer:"resolution=merge-duplicates" })
+                    ));
+                    return null;
+                  }
+                );
+              }}
             onDeleteSubtask={handleDeleteSubtask}
             statusNotes={statusNotes}
             onUpdateNote={handleUpdateNote}
@@ -11728,6 +11802,26 @@ export default function App() {
           allPeople={people}
           onClose={() => setNewSubtask(null)}
           onAdd={handleAddSubtask}
+          deliverableTemplates={deliverableTemplates}
+          onApplyTemplate={(del, tpl) => {
+            const today = new Date().toISOString().slice(0,10);
+            const delObj = applyDeliverableTemplate(tpl, newSubtask.project.id, del.start || today);
+            const newSubs = delObj.subtasks || [];
+            if (!newSubs.length) return;
+            optimistic(
+              () => setProjects(projs => projs.map(p => p.id !== newSubtask.project.id ? p : {
+                ...p, deliverables: p.deliverables.map(d => d.id !== del.id ? d : {
+                  ...d, subtasks: [...(d.subtasks||[]), ...newSubs]
+                })
+              })),
+              async () => {
+                await Promise.all(newSubs.map((s, i) =>
+                  sb.upsert("subtasks", subToRow(s, del.id, newSubtask.project.id, i), { prefer:"resolution=merge-duplicates" })
+                ));
+                return null;
+              }
+            );
+          }}
         />
       )}
       {projectDetailsId && projects.concat(archivedProjects).find(p => p.id === projectDetailsId) && (
