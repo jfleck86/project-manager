@@ -5776,7 +5776,7 @@ function ReportExportCenter({ projects, people, pto, adminTasks, holidays }) {
   const [error,        setError]        = React.useState("");
   const [success,      setSuccess]      = React.useState(false);
 
-  const DEPARTMENTS = ["Editorial","Design","Proof","Strategy","Account","Production","Client Review"];
+  const DEPARTMENTS = ["Editorial","Design","Proof","Strategy","Account","Project Management","Production","Client Review"];
 
   const REPORT_TYPES = [
     { value:"person",     label:"Person Report",              icon:"◎", desc:"Individual workload & forecast for 1:1s" },
@@ -8208,7 +8208,7 @@ function RoleManager({ people, sbUrl, sbKey, isAdmin, authToken }) {
   // Load app_users on mount
   React.useEffect(() => {
     if (!sbUrl || !sbKey) return;
-    fetch(`${sbUrl}/rest/v1/app_users?select=id,role,person_id`, {
+    fetch(`${sbUrl}/rest/v1/app_users?select=id,role,team_member_id`, {
       headers: { apikey: sbKey, Authorization: `Bearer ${authToken || sbKey}`, Accept: "application/json" },
     })
       .then(r => r.json())
@@ -8217,12 +8217,12 @@ function RoleManager({ people, sbUrl, sbKey, isAdmin, authToken }) {
   }, [sbUrl, sbKey]);
 
   const getRole = (personId) => {
-    const au = appUsers.find(u => u.person_id === personId);
-    return au ? (au.role || "contributor") : null;
+    const au = appUsers.find(u => u.team_member_id === personId);
+    return au?.role || (au ? "contributor" : null);
   };
 
   const handleRoleChange = async (personId, newRole) => {
-    const au = appUsers.find(u => u.person_id === personId);
+    const au = appUsers.find(u => u.team_member_id === personId);
     if (!au) return;
     setSaving(personId);
     setMsg("");
@@ -8260,7 +8260,7 @@ function RoleManager({ people, sbUrl, sbKey, isAdmin, authToken }) {
       )}
       {people.length === 0 && <div style={{ fontSize: 12, color: "#9ca3af" }}>No team members yet.</div>}
       {people.map(p => {
-        const role = getRole(p.id);
+        const role = getRole(p.id);  // matches via team_member_id
         const roleInfo = ROLE_OPTIONS.find(r => r.value === role) || ROLE_OPTIONS[4];
         return (
           <div key={p.id} style={{ display: "flex", alignItems: "center", gap: 10,
@@ -9319,6 +9319,431 @@ function DeliverableTemplateManager({ onClose, deliverableTemplates, onSave, onD
 
 
 // --- NEW PROJECT MODAL ────────────────────────────────────────────────────────
+// ── Brief HTML Generator ──────────────────────────────────────────────────────
+function generateBriefHtml(proj, deliverables, people) {
+  const fmtDate = d => d ? new Date(d + "T00:00:00").toLocaleDateString("en-US", { month:"short", day:"numeric", year:"numeric" }) : "—";
+  const person = id => people.find(p => p.id === id)?.name || "—";
+  const delRows = deliverables.map(d => `
+    <tr>
+      <td>${d.title || d.name || ""}</td>
+      <td>${fmtDate(d.requestedDeliveryDate || d.end)}</td>
+    </tr>`).join("");
+
+  const prebuiltRow = (label) => deliverables.map(d =>
+    `<tr><td>${d.title || d.name || ""}</td><td></td><td></td><td></td><td></td>${
+      label === "inputs" ? "<td></td><td></td>" :
+      label === "risks"  ? "<td></td><td></td>" :
+      label === "questions" ? "<td></td><td></td>" : ""
+    }</tr>`
+  ).join("") + `<tr><td><em>Project-Wide</em></td><td></td><td></td><td></td><td></td>${
+      label === "inputs" ? "<td></td><td></td>" :
+      label === "risks"  ? "<td></td><td></td>" :
+      label === "questions" ? "<td></td><td></td>" : ""
+  }</tr>`;
+
+  return `<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>Project Brief — ${proj.name}</title>
+<style>
+  body { font-family: Calibri, Arial, sans-serif; margin: 0; padding: 0; color: #1f2937; font-size: 11pt; }
+  .page { max-width: 900px; margin: 0 auto; padding: 48px 56px; }
+  h1 { font-size: 22pt; color: #002A4E; margin: 0 0 4px; }
+  .subtitle { font-size: 12pt; color: #6b7280; margin-bottom: 32px; }
+  h2 { font-size: 13pt; font-weight: 700; color: #002A4E; margin: 32px 0 10px;
+       padding-bottom: 6px; border-bottom: 2px solid #00B5B5; }
+  h3 { font-size: 11pt; font-weight: 700; color: #374151; margin: 16px 0 6px; }
+  table { width: 100%; border-collapse: collapse; margin-bottom: 16px; font-size: 10pt; }
+  th { background: #002A4E; color: white; padding: 7px 10px; text-align: left; font-weight: 600; }
+  td { border: 1px solid #e5e7eb; padding: 7px 10px; vertical-align: top; min-height: 28px; }
+  tr:nth-child(even) td { background: #f9fafb; }
+  .meta-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 24px; margin-bottom: 20px; }
+  .meta-item { display: flex; gap: 8px; font-size: 10.5pt; }
+  .meta-label { font-weight: 700; color: #374151; min-width: 130px; }
+  .meta-value { color: #1f2937; }
+  .blank-section { background: #f9fafb; border: 1px dashed #d1d5db; border-radius: 4px;
+    padding: 16px 20px; color: #9ca3af; font-style: italic; min-height: 80px; margin-bottom: 8px; }
+  .section-num { color: #00B5B5; font-weight: 700; margin-right: 8px; }
+  .status-badge { display: inline-block; background: #dbeafe; color: #1e40af; font-weight: 700;
+    padding: 2px 10px; border-radius: 12px; font-size: 10pt; }
+  .generated-note { font-size: 9pt; color: #9ca3af; margin-top: 48px; border-top: 1px solid #e5e7eb; padding-top: 12px; }
+  @media print { body { margin: 0; } .page { padding: 32px; } }
+</style>
+</head>
+<body>
+<div class="page">
+
+  <h1>${proj.name}</h1>
+  <div class="subtitle">Project Brief &nbsp;·&nbsp; Generated ${new Date().toLocaleDateString("en-US", { month:"long", day:"numeric", year:"numeric" })} &nbsp;·&nbsp; <span class="status-badge">${proj.projectStatus || "Needs Timeline"}</span></div>
+
+  <h2><span class="section-num">1</span> Project Overview</h2>
+  <div class="meta-grid">
+    <div class="meta-item"><span class="meta-label">Project Name</span><span class="meta-value">${proj.name}</span></div>
+    <div class="meta-item"><span class="meta-label">Client</span><span class="meta-value">${proj.client || "—"}</span></div>
+    <div class="meta-item"><span class="meta-label">Project Number</span><span class="meta-value">${proj.projectNumber || "—"}</span></div>
+    <div class="meta-item"><span class="meta-label">Priority</span><span class="meta-value">${proj.priority || "—"}</span></div>
+    <div class="meta-item"><span class="meta-label">Account Lead</span><span class="meta-value">${person(proj.accountLeadId)}</span></div>
+    <div class="meta-item"><span class="meta-label">Project Manager</span><span class="meta-value">${person(proj.projectManagerId)}</span></div>
+    <div class="meta-item"><span class="meta-label">Earliest Launch Date</span><span class="meta-value">${fmtDate(proj.earliestLaunchDate)}</span></div>
+  </div>
+  ${proj.objective ? `<h3>Overall Project Objective</h3><p>${proj.objective}</p>` : ""}
+  <table>
+    <thead><tr><th>Deliverable</th><th>Requested Delivery Date</th></tr></thead>
+    <tbody>${delRows}</tbody>
+  </table>
+
+  <h2><span class="section-num">2</span> Audience &amp; Brand</h2>
+  <div class="blank-section">Complete during Start of Work meeting</div>
+
+  <h2><span class="section-num">3</span> Stakeholders</h2>
+  <table>
+    <thead><tr><th>Role</th><th>Name</th><th>Responsibility</th></tr></thead>
+    <tbody>
+      <tr><td>Client Owner</td><td>${proj.client || ""}</td><td></td></tr>
+      <tr><td>Account Lead</td><td>${person(proj.accountLeadId)}</td><td></td></tr>
+      <tr><td>Project Manager</td><td>${person(proj.projectManagerId)}</td><td></td></tr>
+      <tr><td>SME</td><td></td><td></td></tr>
+      <tr><td>Approver</td><td></td><td></td></tr>
+      <tr><td>Partner</td><td></td><td></td></tr>
+    </tbody>
+  </table>
+
+  <h2><span class="section-num">4</span> Deliverables</h2>
+  <table>
+    <thead><tr><th>Deliverable</th><th>Format</th><th>Platform / Placement</th><th>Audience</th><th>Requested Delivery Date</th><th>Dependencies</th><th>Notes</th></tr></thead>
+    <tbody>${deliverables.map(d => `<tr>
+      <td>${d.title||d.name||""}</td><td></td><td></td><td></td>
+      <td>${fmtDate(d.requestedDeliveryDate||d.end)}</td><td></td><td></td>
+    </tr>`).join("")}</tbody>
+  </table>
+
+  <h2><span class="section-num">5</span> Business Objective</h2>
+  <div class="blank-section">Complete during Start of Work meeting</div>
+
+  <h2><span class="section-num">6</span> Audience Insight</h2>
+  <div class="blank-section">Complete during Start of Work meeting</div>
+
+  <h2><span class="section-num">7</span> Desired Outcome</h2>
+  <div class="blank-section">Complete during Start of Work meeting</div>
+
+  <h2><span class="section-num">8</span> Behavioral Science Diagnostic</h2>
+  <table>
+    <thead><tr><th>Category</th><th>Selection</th></tr></thead>
+    <tbody>
+      <tr><td>Outcome Type</td><td></td></tr>
+      <tr><td>Primary Friction</td><td></td></tr>
+      <tr><td>Secondary Friction</td><td></td></tr>
+      <tr><td>Creative Emphasis</td><td></td></tr>
+    </tbody>
+  </table>
+  <h3>One-Sentence Diagnosis</h3>
+  <div class="blank-section">&nbsp;</div>
+
+  <h2><span class="section-num">9</span> Creative Direction</h2>
+  <h3>Key Messages</h3><div class="blank-section">&nbsp;</div>
+  <h3>Mandatory Copy</h3><div class="blank-section">&nbsp;</div>
+  <h3>Required Claims</h3><div class="blank-section">&nbsp;</div>
+  <h3>Tone Guidance</h3><div class="blank-section">&nbsp;</div>
+  <h3>What To Avoid</h3><div class="blank-section">&nbsp;</div>
+
+  <h2><span class="section-num">10</span> Deliverable Strategy <em style="font-weight:400;font-size:10pt;color:#9ca3af">(optional)</em></h2>
+  <table>
+    <thead><tr><th>Deliverable</th><th>Purpose</th><th>Primary Takeaway</th><th>Desired Action</th><th>Special Considerations</th></tr></thead>
+    <tbody>${deliverables.map(d => `<tr><td>${d.title||d.name||""}</td><td></td><td></td><td></td><td></td></tr>`).join("")}</tbody>
+  </table>
+
+  <h2><span class="section-num">11</span> Inputs &amp; Assets</h2>
+  <table>
+    <thead><tr><th>Deliverable</th><th>Resource</th><th>Type</th><th>Owner</th><th>Status</th><th>Notes</th></tr></thead>
+    <tbody>${prebuiltRow("inputs")}</tbody>
+  </table>
+
+  <h2><span class="section-num">12</span> Risks &amp; Dependencies</h2>
+  <table>
+    <thead><tr><th>Deliverable</th><th>Risk / Dependency</th><th>Impact</th><th>Mitigation</th><th>Owner</th><th>Notes</th></tr></thead>
+    <tbody>${prebuiltRow("risks")}</tbody>
+  </table>
+
+  <h2><span class="section-num">13</span> Open Questions</h2>
+  <table>
+    <thead><tr><th>Deliverable</th><th>Question</th><th>Owner</th><th>Due By</th><th>Resolution</th><th>Notes</th></tr></thead>
+    <tbody>${prebuiltRow("questions")}</tbody>
+  </table>
+
+  <h2><span class="section-num">14</span> Files</h2>
+  <h3>SharePoint Folder</h3><div class="blank-section">&nbsp;</div>
+  <h3>Reference Documents</h3><div class="blank-section">&nbsp;</div>
+  <h3>Creative Files</h3><div class="blank-section">&nbsp;</div>
+  <h3>Supporting Materials</h3><div class="blank-section">&nbsp;</div>
+  <h3>Additional Links</h3><div class="blank-section">&nbsp;</div>
+
+  <div class="generated-note">Generated by PulseX · ${new Date().toISOString()} · Source of truth: PulseX project "${proj.name}"</div>
+</div>
+</body>
+</html>`;
+}
+
+function downloadBrief(proj, deliverables, people) {
+  const innerHtml = generateBriefHtml(proj, deliverables, people);
+  // Word HTML format — opens natively in Microsoft Word
+  const wordHtml = `<html xmlns:o='urn:schemas-microsoft-com:office:office'
+    xmlns:w='urn:schemas-microsoft-com:office:word'
+    xmlns='http://www.w3.org/TR/REC-html40'>
+    <head>
+      <meta charset="utf-8">
+      <meta name=ProgId content=Word.Document>
+      <meta name=Generator content=PulseX>
+      <title>${proj.name} — Project Brief</title>
+      <!--[if gte mso 9]><xml><w:WordDocument><w:View>Print</w:View></w:WordDocument></xml><![endif]-->
+    </head>` + innerHtml.replace('<html>', '').replace('</html>', '').replace(/<head>[\s\S]*?<\/head>/, '') + '</html>';
+  const blob = new Blob([wordHtml], { type: "application/msword;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `Brief — ${(proj.name||"Project").replace(/[^a-zA-Z0-9 ]/g, "")} — ${new Date().toISOString().slice(0,10)}.doc`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+// ── ProjectInitiationModal ────────────────────────────────────────────────────
+const PROJECT_PRIORITIES = ["Critical", "High", "Medium", "Low"];
+const PROJECT_STATUSES   = ["Needs Timeline", "Timeline In Progress", "Ready for Start of Work", "Active", "Complete", "Archived"];
+
+function ProjectInitiationModal({ people, onClose, onSubmit, existingProj = null }) {
+  const isEdit = !!existingProj;
+  const [step, setStep] = React.useState(1); // 1 = project info, 2 = deliverables
+  const [form, setForm] = React.useState({
+    name:              existingProj?.name             || "",
+    client:            existingProj?.client           || "",
+    projectNumber:     existingProj?.projectNumber    || "",
+    color:             existingProj?.color            || "#f59e0b",
+    priority:          existingProj?.priority         || "Medium",
+    accountLeadId:     existingProj?.accountLeadId    || "",
+    projectManagerId:  existingProj?.projectManagerId || "",
+    objective:         existingProj?.objective        || "",
+    projectStatus:     existingProj?.projectStatus    || "Needs Timeline",
+  });
+  const [deliverables, setDeliverables] = React.useState(
+    existingProj?.deliverables?.map(d => ({
+      id: d.id, name: d.title, requestedDate: d.requestedDeliveryDate || d.end || "",
+    })) || [{ id: null, name: "", requestedDate: "" }]
+  );
+  const [saving, setSaving] = React.useState(false);
+  const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
+
+  const addDel = () => setDeliverables(ds => [...ds, { id: null, name: "", requestedDate: "" }]);
+  const updateDel = (i, k, v) => setDeliverables(ds => ds.map((d, idx) => idx === i ? { ...d, [k]: v } : d));
+  const removeDel = (i) => setDeliverables(ds => ds.filter((_, idx) => idx !== i));
+
+  const earliestDate = deliverables
+    .map(d => d.requestedDate).filter(Boolean).sort()[0] || null;
+
+  const canNext = form.name.trim() && form.client.trim();
+  const canSubmit = deliverables.some(d => d.name.trim());
+
+  const handleSubmit = async () => {
+    if (!canSubmit || saving) return;
+    setSaving(true);
+    const validDels = deliverables.filter(d => d.name.trim());
+    await onSubmit({ ...form, earliestLaunchDate: earliestDate }, validDels);
+    setSaving(false);
+    onClose();
+  };
+
+  const COLORS = ["#f59e0b","#ef4444","#0ea5e9","#10b981","#8b5cf6","#ec4899","#f97316","#14b8a6","#6366f1","#84cc16"];
+
+  const inputStyle = { width:"100%", border:"1px solid rgba(0,0,0,0.12)", borderRadius:6,
+    padding:"9px 12px", fontSize:12, fontFamily:"inherit", outline:"none",
+    boxSizing:"border-box", background:"#fff" };
+  const labelStyle2 = { fontSize:10, fontWeight:700, color:"#6b7280", letterSpacing:".06em",
+    textTransform:"uppercase", marginBottom:5, display:"block" };
+
+  return (
+    <Overlay onClose={onClose}>
+      <ModalShell
+        title={isEdit ? "Edit Project" : "New Project"}
+        subtitle={step === 1 ? "Step 1 of 2 — Project details" : "Step 2 of 2 — Deliverables"}
+        onClose={onClose}
+        accentColor={form.color}
+        width={660}>
+
+        {/* Progress bar */}
+        <div style={{ height:3, background:"rgba(0,0,0,0.06)", margin:"0 -20px 24px" }}>
+          <div style={{ height:"100%", background:form.color, width: step===1?"50%":"100%", transition:"width .25s" }} />
+        </div>
+
+        {step === 1 && (
+          <div style={{ display:"flex", flexDirection:"column", gap:16, padding:"8px 0 4px" }}>
+            {/* Name + Color */}
+            <div style={{ display:"flex", gap:10, alignItems:"flex-end" }}>
+              <div style={{ flex:1 }}>
+                <label style={labelStyle2}>Project Name *</label>
+                <input value={form.name} onChange={e => set("name", e.target.value)}
+                  placeholder="e.g. TPL Launch Communications"
+                  autoFocus style={inputStyle} />
+              </div>
+              <div>
+                <label style={labelStyle2}>Color</label>
+                <div style={{ display:"flex", gap:5, flexWrap:"wrap", width:130 }}>
+                  {COLORS.map(c => (
+                    <div key={c} onClick={() => set("color", c)}
+                      style={{ width:20, height:20, borderRadius:"50%", background:c, cursor:"pointer",
+                        outline: form.color===c ? `2.5px solid ${c}` : "none",
+                        outlineOffset: form.color===c ? 2 : 0, transition:"outline .1s" }} />
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            {/* Client + Project Number */}
+            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12 }}>
+              <div>
+                <label style={labelStyle2}>Client *</label>
+                <input value={form.client} onChange={e => set("client", e.target.value)}
+                  placeholder="e.g. Acme Corp" style={inputStyle} />
+              </div>
+              <div>
+                <label style={labelStyle2}>Project Number</label>
+                <input value={form.projectNumber} onChange={e => set("projectNumber", e.target.value)}
+                  placeholder="e.g. 12345" style={inputStyle} />
+              </div>
+            </div>
+
+            {/* Account Lead + PM */}
+            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12 }}>
+              <div>
+                <label style={labelStyle2}>Account Lead</label>
+                <select value={form.accountLeadId} onChange={e => set("accountLeadId", e.target.value)}
+                  style={inputStyle}>
+                  <option value="">— Select —</option>
+                  {people.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+                </select>
+              </div>
+              <div>
+                <label style={labelStyle2}>Project Manager</label>
+                <select value={form.projectManagerId} onChange={e => set("projectManagerId", e.target.value)}
+                  style={inputStyle}>
+                  <option value="">— Select —</option>
+                  {people.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+                </select>
+              </div>
+            </div>
+
+            {/* Priority + Status */}
+            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12 }}>
+              <div>
+                <label style={labelStyle2}>Priority</label>
+                <select value={form.priority} onChange={e => set("priority", e.target.value)} style={inputStyle}>
+                  {PROJECT_PRIORITIES.map(p => <option key={p}>{p}</option>)}
+                </select>
+              </div>
+              <div>
+                <label style={labelStyle2}>Project Status</label>
+                <select value={form.projectStatus} onChange={e => set("projectStatus", e.target.value)} style={inputStyle}>
+                  {PROJECT_STATUSES.map(s => <option key={s}>{s}</option>)}
+                </select>
+              </div>
+            </div>
+
+            {/* Objective */}
+            <div>
+              <label style={labelStyle2}>Overall Project Objective</label>
+              <textarea value={form.objective} onChange={e => set("objective", e.target.value)}
+                rows={3} placeholder="What is this project trying to achieve?"
+                style={{ ...inputStyle, resize:"vertical" }} />
+            </div>
+          </div>
+        )}
+
+        {step === 2 && (
+          <div>
+            <div style={{ fontSize:11, color:"#6b7280", marginBottom:12 }}>
+              Add each deliverable and its requested date. The earliest date becomes the launch target.
+            </div>
+            <table style={{ width:"100%", borderCollapse:"collapse", marginBottom:10 }}>
+              <thead>
+                <tr>
+                  {["Deliverable Name", "Requested Delivery Date", ""].map(h => (
+                    <th key={h} style={{ textAlign:"left", fontSize:10, fontWeight:700, color:"#6b7280",
+                      padding:"6px 8px", letterSpacing:".05em", textTransform:"uppercase",
+                      borderBottom:"1px solid rgba(0,0,0,0.08)" }}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {deliverables.map((del, i) => (
+                  <tr key={i}>
+                    <td style={{ padding:"4px 4px" }}>
+                      <input value={del.name} onChange={e => updateDel(i, "name", e.target.value)}
+                        placeholder={`Deliverable ${i + 1}`}
+                        style={{ ...inputStyle, fontSize:11 }} />
+                    </td>
+                    <td style={{ padding:"4px 4px", width:160 }}>
+                      <input type="date" value={del.requestedDate} onChange={e => updateDel(i, "requestedDate", e.target.value)}
+                        style={{ ...inputStyle, fontSize:11 }} />
+                    </td>
+                    <td style={{ padding:"4px 4px", width:32 }}>
+                      {deliverables.length > 1 && (
+                        <button onClick={() => removeDel(i)}
+                          style={{ background:"none", border:"none", color:"#9ca3af", cursor:"pointer", fontSize:16 }}>×</button>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            <button onClick={addDel}
+              style={{ background:"none", border:"1px dashed rgba(0,0,0,0.15)", borderRadius:5,
+                color:"#6b7280", padding:"4px 14px", cursor:"pointer", fontSize:11, fontFamily:"inherit" }}>
+              + Add deliverable
+            </button>
+
+            {earliestDate && (
+              <div style={{ marginTop:14, padding:"8px 12px", background:"rgba(14,165,233,0.06)",
+                border:"1px solid rgba(14,165,233,0.2)", borderRadius:6, fontSize:11, color:"#0ea5e9" }}>
+                📅 Earliest requested launch: <strong>
+                  {new Date(earliestDate + "T00:00:00").toLocaleDateString("en-US", { month:"short", day:"numeric", year:"numeric" })}
+                </strong>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Footer */}
+        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginTop:20, paddingTop:16, paddingBottom:8, borderTop:"1px solid rgba(0,0,0,0.07)" }}>
+          <button onClick={onClose} style={cancelBtnStyle}>Cancel</button>
+          <div style={{ display:"flex", gap:10 }}>
+            {step === 2 && (
+              <button onClick={() => setStep(1)} style={cancelBtnStyle}>← Back</button>
+            )}
+            {step === 1 && (
+              <button onClick={() => canNext && setStep(2)}
+                disabled={!canNext}
+                style={{ ...cancelBtnStyle, background: canNext ? BRAND_TEAL : "#e5e7eb",
+                  color: canNext ? "#fff" : "#9ca3af", border:"none", cursor: canNext ? "pointer" : "not-allowed" }}>
+                Next: Deliverables →
+              </button>
+            )}
+            {step === 2 && (
+              <button onClick={handleSubmit}
+                disabled={!canSubmit || saving}
+                style={{ ...cancelBtnStyle, background: canSubmit ? BRAND_TEAL : "#e5e7eb",
+                  color: canSubmit ? "#fff" : "#9ca3af", border:"none",
+                  cursor: canSubmit ? "pointer" : "not-allowed" }}>
+                {saving ? "Creating…" : isEdit ? "Save Changes" : "Create Project + Download Brief"}
+              </button>
+            )}
+          </div>
+        </div>
+      </ModalShell>
+    </Overlay>
+  );
+}
+
+
 function NewProjectModal({ onClose, onAdd, existingColors }) {
   const defaultColor = PROJECT_COLORS.find(c => !existingColors.includes(c)) || PROJECT_COLORS[0];
   const [name, setName] = useState("");
@@ -9658,7 +10083,9 @@ function ModalShell({ title, onClose, children, accentColor = BRAND_TEAL, width 
         <span style={{ flex: 1, fontSize: 15, fontWeight: 700, color: "#111827" }}>{title}</span>
         <button onClick={onClose} style={{ background: "none", border: "none", color: "#6b7280", cursor: "pointer", fontSize: 20, lineHeight: 1, padding: "0 2px" }}>×</button>
       </div>
-      {children}
+      <div style={{ padding: "0 24px 4px" }}>
+        {children}
+      </div>
     </div>
   );
 }
@@ -10119,6 +10546,7 @@ export default function App() {
   const [editingItem, setEditingItem] = useState(null);
 
   const [showNewProject, setShowNewProject] = useState(false);
+  const [showInitiation, setShowInitiation] = useState(false);
   const [showSearch,     setShowSearch]     = useState(false);
 
   // ⌘K / Ctrl+K opens global search
@@ -10660,10 +11088,76 @@ export default function App() {
   const handleAddProject = (proj) => optimistic(
     () => setProjects(ps => [...ps, { ...proj, deliverables: [] }]),
     async () => {
-      const { error } = await sb.upsert("projects", { id: proj.id, name: proj.name, client: proj.client || "", color: proj.color, project_number: proj.projectNumber || "", archived: false, position: projects.length });
+      const { error } = await sb.upsert("projects", {
+        id: proj.id, name: proj.name, client: proj.client || "", color: proj.color,
+        project_number: proj.projectNumber || "", archived: false, position: projects.length,
+        priority: proj.priority || "Medium",
+        account_lead_id: proj.accountLeadId || null,
+        project_manager_id: proj.projectManagerId || null,
+        objective: proj.objective || "",
+        earliest_launch_date: proj.earliestLaunchDate || null,
+        project_status: proj.projectStatus || "Needs Timeline",
+      });
       return error;
     }
   );
+
+  const handleProjectInitiation = async (formData, deliverableList) => {
+    const projId = "proj_" + Date.now();
+    const proj = {
+      id: projId, name: formData.name, client: formData.client, color: formData.color,
+      projectNumber: formData.projectNumber, priority: formData.priority,
+      accountLeadId: formData.accountLeadId, projectManagerId: formData.projectManagerId,
+      objective: formData.objective, earliestLaunchDate: formData.earliestLaunchDate,
+      projectStatus: formData.projectStatus || "Needs Timeline",
+      ownerId: formData.accountLeadId || null, teamMemberIds: [], notes: "", meta: {},
+    };
+
+    // Create project
+    handleAddProject(proj);
+
+    // Create deliverables
+    const newDels = deliverableList.map((d, i) => ({
+      id: "d_" + Date.now() + "_" + i,
+      title: d.name, status: "Not Started", priority: "Medium", department: "",
+      start: null, end: d.requestedDate || null, requestedDeliveryDate: d.requestedDate || null,
+      progress: 0, dependencies: [], assignees: [], effort: "M",
+      file_url: "", isWaiting: false, subtasks: [],
+    }));
+
+    if (newDels.length) {
+      setProjects(ps => ps.map(p => p.id !== projId ? p : { ...p, deliverables: newDels }));
+      if (SB_READY) {
+        await Promise.all(newDels.map((d, i) =>
+          sb.upsert("deliverables", {
+            ...delToRow(d, projId, i),
+            requested_delivery_date: d.requestedDeliveryDate || null,
+          })
+        ));
+      }
+    }
+
+    // PM notification via admin_task
+    if (formData.projectManagerId && SB_READY) {
+      const pmName = people.find(p => p.id === formData.projectManagerId)?.name || "PM";
+      const notifId = "at_" + Date.now();
+      await sb.upsert("admin_tasks", {
+        id: notifId,
+        assigned_to: formData.projectManagerId,
+        assigned_by: ownMemberId || formData.accountLeadId || null,
+        title: `New project requires timeline planning: ${formData.name}`,
+        status: "Not Started", priority: "High",
+        due_date: formData.earliestLaunchDate || null,
+        notes: `Client: ${formData.client}\nDeliverables: ${newDels.length}\nEarliest Launch: ${formData.earliestLaunchDate || "TBD"}\nObjective: ${formData.objective || "—"}`,
+        created_at: new Date().toISOString(),
+      });
+      setToastNotif({ message: `Notification sent to ${pmName}`, type: "success" });
+    }
+
+    // Download brief
+    const projWithDels = { ...proj, deliverables: newDels };
+    downloadBrief(projWithDels, newDels, people);
+  };
 
   const handleArchiveProject = (id) => {
     const proj = projects.find(p => p.id === id);
@@ -11468,7 +11962,7 @@ export default function App() {
             ⎋
           </button>
           {/* ── NEW PROJECT BUTTON ── */}
-          <button onClick={() => setShowNewProject(true)} style={{
+          <button onClick={() => setShowInitiation(true)} style={{
             display: "flex", alignItems: "center", gap: 6,
             background: BRAND_TEAL_L, border: `1px solid ${BRAND_TEAL}80`,
             color: BRAND_TEAL_D, borderRadius: 6, padding: "5px 13px", cursor: "pointer",
@@ -11513,7 +12007,7 @@ export default function App() {
               </div>
             );
           })}
-          <button onClick={() => setShowNewProject(true)} style={{
+          <button onClick={() => setShowInitiation(true)} style={{
             background: "none", border: "1px dashed rgba(0,0,0,0.1)", borderRadius: 16,
             color: "#9ca3af", padding: "5px 12px", cursor: "pointer", fontSize: 11, fontWeight: 700,
             fontFamily: "inherit", transition: "all 0.12s",
@@ -11588,7 +12082,7 @@ export default function App() {
             }}
           />
         )}
-        {view === "dashboard" && <DashboardView projects={projects} people={people} holidays={holidays} pto={pto} savePto={savePto} onEditItem={handleEditItem} onAddDeliverable={(proj) => setNewDeliverable(proj)} onAddSubtask={(proj, del) => setNewSubtask({ project: proj, deliverable: del })} onNewProject={() => setShowNewProject(true)} onOpenProject={id => setProjectDetailsId(id)} />}
+        {view === "dashboard" && <DashboardView projects={projects} people={people} holidays={holidays} pto={pto} savePto={savePto} onEditItem={handleEditItem} onAddDeliverable={(proj) => setNewDeliverable(proj)} onAddSubtask={(proj, del) => setNewSubtask({ project: proj, deliverable: del })} onNewProject={() => setShowInitiation(true)} onOpenProject={id => setProjectDetailsId(id)} />}
         {view === "timeline"  && (
           <TimelineView projects={projects} people={people} onEditItem={handleEditItem}
             onAddDeliverable={(proj) => setNewDeliverable(proj)}
@@ -11778,7 +12272,14 @@ export default function App() {
             }}
           />
         )}
-        {showNewProject && (
+        {showInitiation && (
+        <ProjectInitiationModal
+          people={people}
+          onClose={() => setShowInitiation(false)}
+          onSubmit={handleProjectInitiation}
+        />
+      )}
+      {showNewProject && (
         <NewProjectModal
           existingColors={projects.map(p => p.color)}
           onClose={() => setShowNewProject(false)}

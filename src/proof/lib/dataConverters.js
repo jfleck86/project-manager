@@ -19,6 +19,7 @@ export function rowToDeliverable(r, subs) {
     effort: r.effort || "M",
     file_url: r.file_url || "",
     isWaiting: r.is_waiting ?? false,
+    requestedDeliveryDate: r.requested_delivery_date || null,
     subtasks: (subs || []).filter(s => s.deliverable_id != null && s.deliverable_id === r.id)
       .sort((a, b) => a.position - b.position).map(rowToSubtask),
   };
@@ -32,6 +33,13 @@ export function rowToProject(r, dels, subs) {
     teamMemberIds: r.team_member_ids || [],
     notes: r.notes || "",
     meta: r.meta || {},
+    // Phase 1 initiation fields
+    priority: r.priority || "Medium",
+    accountLeadId: r.account_lead_id || null,
+    projectManagerId: r.project_manager_id || null,
+    objective: r.objective || "",
+    earliestLaunchDate: r.earliest_launch_date || null,
+    projectStatus: r.project_status || "Active",
     deliverables: (dels || []).filter(d => d.project_id === r.id)
       .sort((a, b) => (a.position ?? 0) - (b.position ?? 0)).map(d => rowToDeliverable(d, subs)),
   };
@@ -44,6 +52,7 @@ export function delToRow(d, projectId, pos = 0) {
     track_override: d.trackOverride || null, effort: d.effort || "M",
     file_url: d.file_url || null, position: pos,
     is_waiting: d.isWaiting ?? false,
+    requested_delivery_date: d.requestedDeliveryDate || null,
   };
 }
 export function subToRow(s, delId, projId, pos = 0) {
