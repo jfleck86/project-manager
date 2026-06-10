@@ -570,6 +570,54 @@ function StatusBadge({ status, small }) {
 }
 
 
+// ── InlineNoteCell — editable notes cell, last column in timeline rows ────────
+function InlineNoteCell({ width, note = "", onChange, color, last = false }) {
+  const [editing, setEditing] = React.useState(false);
+  const [val, setVal] = React.useState(note);
+  const inputRef = React.useRef(null);
+
+  React.useEffect(() => { setVal(note); }, [note]);
+  React.useEffect(() => { if (editing) inputRef.current?.focus(); }, [editing]);
+
+  const commit = () => {
+    setEditing(false);
+    if (val !== note && onChange) onChange(val);
+  };
+
+  return (
+    <div style={{
+      width, minWidth: width, flexShrink: 0, flexGrow: last ? 1 : 0,
+      display: "flex", alignItems: "center",
+      padding: "0 6px",
+      borderRight: last ? "none" : "1px solid rgba(0,0,0,0.06)",
+      overflow: "hidden",
+    }}>
+      {editing ? (
+        <input
+          ref={inputRef}
+          value={val}
+          onChange={e => setVal(e.target.value)}
+          onBlur={commit}
+          onKeyDown={e => { if (e.key === "Enter") commit(); if (e.key === "Escape") { setVal(note); setEditing(false); } }}
+          style={{ width: "100%", border: "none", outline: "none", fontSize: 10,
+            background: "transparent", fontFamily: "inherit", color: "#374151" }}
+        />
+      ) : (
+        <span
+          onClick={() => onChange && setEditing(true)}
+          title={onChange ? "Click to edit note" : note}
+          style={{ fontSize: 10, color: val ? "#374151" : "#d1d5db",
+            overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+            cursor: onChange ? "text" : "default", width: "100%" }}
+        >
+          {val || (onChange ? "+ note" : "")}
+        </span>
+      )}
+    </div>
+  );
+}
+
+
 // ── InlineStatusPill — click to cycle through statuses without opening modal ──
 function InlineStatusPill({ item, onSave, small }) {
   const [open, setOpen] = React.useState(false);
@@ -2295,6 +2343,8 @@ function TimelineView({ projects, people, onEditItem, onAddDeliverable, onAddSub
             position: showGantt ? "sticky" : "static",
             left: 0, zIndex: showGantt ? 2 : "auto",
           }}>
+            {/* 18px spacer matching deliverable drag handle width */}
+            <div style={{ width: 18, flexShrink: 0 }} />
             {[["#","num"],["Title","title"],["Start","start"],["End","end"],["Dur","dur"],["Deps","deps"],["Assigned To","assignees"],["Notes","notes"]].map(([label, key]) => (
               <div key={key} style={{ width: colWidths[key], position: "relative", padding: "0 8px", fontSize: 10, fontWeight: 700, color: "#374151", letterSpacing: "0.07em", flexShrink: 0, borderRight: "1px solid rgba(0,0,0,0.06)", whiteSpace: "nowrap", overflow: "hidden", userSelect: "none", display: "flex", alignItems: "center", height: "100%" }}>
                 {label.toUpperCase()}
@@ -2457,6 +2507,44 @@ function TimelineBody({ projects, people, collapsed, toggle, weeks, todayOff, al
 function ProjectSection({ proj, people, collapsed, toggle, weeks, todayOff, allItemsFlat, onEditItem, onAddDeliverable, onAddSubtask, onMarkDone, onSaveItem, rowIndex, DAY_W, colWidths, LEFT_W, onInsertSubtask, onReorderDeliverables, onReorderSubtasks, onDeleteSubtask, statusNotes = {}, onUpdateNote, holidays = [], clipboard, onCopySubtask, onCopyDeliverable, onPasteSubtask, onPasteDeliverable, onSaveProject, onOpenProject , showGantt  }) {
   const isProjCollapsed = !!collapsed[proj.id];
 
+  const [delDragState, setDelDragState] = useState({ dragIdx: null, overIdx: null });
+  const delDragRef = useRef(null);
+  const startDelDrag = (e, idx) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const rowH = D_ROW || 40;
+    delDragRef.current = { startY: e.clientY, idx, rowH };
+    setDelDragState({ dragIdx: idx, overIdx: idx });
+    const onMove = (ev) => {
+      if (!delDragRef.current) return;
+      const dy = ev.clientY - delDragRef.current.startY;
+      const newOver = Math.max(0, Math.min(proj.deliverables.length - 1,
+        delDragRef.current.idx + Math.round(dy / delDragRef.current.rowH)));
+      setDelDragState(s => s.overIdx !== newOver ? { ...s, overIdx: newOver } : s);
+    };
+    const onUp = () => {
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+      if (delDragRef.current) {
+        const { idx: from } = delDragRef.current;
+        setDelDragState(s => {
+          const to = s.overIdx;
+          if (to !== null && to !== from) {
+            const newOrder = [...proj.deliverables];
+            const [moved] = newOrder.splice(from, 1);
+            newOrder.splice(to, 0, moved);
+            onReorderDeliverables && onReorderDeliverables(proj.id, newOrder);
+          }
+          return { dragIdx: null, overIdx: null };
+        });
+        delDragRef.current = null;
+      }
+    };
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
+  };
+
   // Span the whole project across the chart for the summary bar
   const allDates = proj.deliverables.flatMap(d => [d.start, d.end]);
   const projStart = allDates.length ? allDates.reduce((a, b) => a < b ? a : b) : null;
@@ -2548,17 +2636,32 @@ function ProjectSection({ proj, people, collapsed, toggle, weeks, todayOff, allI
       </div>
 
       {/* Deliverables — hidden when project is collapsed */}
-      {!isProjCollapsed && proj.deliverables.map(del => (
-        <DeliverableRow key={del.id} del={del} proj={proj} people={people}
-          collapsed={collapsed} toggle={toggle} weeks={weeks} todayOff={todayOff}
-          allItemsFlat={allItemsFlat} onEditItem={onEditItem}
-          onAddSubtask={() => onAddSubtask(proj, del)} onMarkDone={onMarkDone}
-          onSaveItem={onSaveItem} rowIndex={rowIndex} DAY_W={DAY_W} colWidths={colWidths} LEFT_W={LEFT_W}
-          onInsertSubtask={onInsertSubtask} onReorderSubtasks={onReorderSubtasks} onDeleteSubtask={onDeleteSubtask}
-          statusNotes={statusNotes} onUpdateNote={onUpdateNote} holidays={holidays}
-          clipboard={clipboard} onCopySubtask={onCopySubtask} onCopyDeliverable={onCopyDeliverable}
-          onPasteSubtask={onPasteSubtask} onPasteDeliverable={onPasteDeliverable} showGantt={showGantt} />
+      {/* Deliverables — hidden when project is collapsed */}
+      {!isProjCollapsed && (
+      <div data-deliverable-list>
+      {proj.deliverables.map((del, delIdx) => (
+        <div key={del.id}
+          data-deliverable-row
+          style={{
+            opacity: delDragState.dragIdx === delIdx ? 0.35 : 1,
+            outline: delDragState.overIdx === delIdx && delDragState.dragIdx !== null && delDragState.dragIdx !== delIdx
+              ? `2px solid ${proj.color || BRAND_TEAL}` : 'none',
+            outlineOffset: -2,
+            transition: 'opacity 0.1s',
+          }}>
+          <DeliverableRow key={del.id} del={del} proj={proj} people={people}
+            collapsed={collapsed} toggle={toggle} weeks={weeks} todayOff={todayOff}
+            allItemsFlat={allItemsFlat} onEditItem={onEditItem}
+            onAddSubtask={() => onAddSubtask(proj, del)} onMarkDone={onMarkDone}
+            onSaveItem={onSaveItem} rowIndex={rowIndex} DAY_W={DAY_W} colWidths={colWidths} LEFT_W={LEFT_W}
+            onInsertSubtask={onInsertSubtask} onReorderSubtasks={onReorderSubtasks} onDeleteSubtask={onDeleteSubtask}
+            onDragHandlePointerDown={(e) => startDelDrag(e, delIdx)}
+            statusNotes={statusNotes} onUpdateNote={onUpdateNote} holidays={holidays}
+            clipboard={clipboard} onCopySubtask={onCopySubtask} onCopyDeliverable={onCopyDeliverable}
+            onPasteSubtask={onPasteSubtask} onPasteDeliverable={onPasteDeliverable} showGantt={showGantt} />
+        </div>
       ))}
+      </div>)}
 
       {/* Empty state */}
       {!isProjCollapsed && proj.deliverables.length === 0 && (
@@ -2612,7 +2715,24 @@ function ContextMenu({ x, y, items, onClose }) {
   );
 }
 
-function DeliverableRow({ del, proj, people, collapsed, toggle, weeks, todayOff, allItemsFlat, onEditItem, onAddSubtask, onMarkDone, onSaveItem, rowIndex, DAY_W, colWidths, LEFT_W, onInsertSubtask, onReorderSubtasks, onDeleteSubtask, statusNotes = {}, onUpdateNote, holidays = [], clipboard, onCopySubtask, onCopyDeliverable, onPasteSubtask, onPasteDeliverable , showGantt  }) {
+// ── LeftCell — sticky frozen column cell used in timeline rows ────────────────
+function LeftCell({ width, children, center = false, last = false }) {
+  return (
+    <div style={{
+      width, minWidth: width, flexShrink: 0,
+      display: "flex", alignItems: "center",
+      justifyContent: center ? "center" : "flex-start",
+      padding: "0 6px",
+      borderRight: last ? "none" : "1px solid rgba(0,0,0,0.06)",
+      overflow: "hidden", position: "relative",
+    }}>
+      {children}
+    </div>
+  );
+}
+
+
+function DeliverableRow({ del, proj, people, collapsed, toggle, weeks, todayOff, allItemsFlat, onEditItem, onAddSubtask, onMarkDone, onSaveItem, rowIndex, DAY_W, colWidths, LEFT_W, onInsertSubtask, onReorderSubtasks, onDragHandlePointerDown, onDeleteSubtask, statusNotes = {}, onUpdateNote, holidays = [], clipboard, onCopySubtask, onCopyDeliverable, onPasteSubtask, onPasteDeliverable , showGantt  }) {
   const isCollapsed = collapsed[del.id];
   const rowNum = rowIndex.index[del.id] || "?";
   const startOff = dayOffset(del.start);
@@ -2700,7 +2820,19 @@ function DeliverableRow({ del, proj, people, collapsed, toggle, weeks, todayOff,
         onContextMenu={e => { e.preventDefault(); setDelCtxMenu({ x: e.clientX, y: e.clientY }); }}
         onMouseEnter={e => e.currentTarget.style.background = "rgba(245,158,11,0.06)"}
         onMouseLeave={e => e.currentTarget.style.background = "rgba(245,158,11,0.03)"}>
-        <div onMouseEnter={e => e.currentTarget.style.background="#fff8ed"} onMouseLeave={e => e.currentTarget.style.background="#fff"} style={{ display:"flex", width:LEFT_W, flexShrink:0, alignSelf:"stretch", position: showGantt ? "sticky" : "static", left:0, zIndex: showGantt ? 20 : "auto", background:"#fff", width: showGantt ? LEFT_W : "100%", boxShadow: showGantt ? "2px 0 4px rgba(0,0,0,0.07)" : "none", width: showGantt ? LEFT_W : "100%" }}>
+        {/* Deliverable drag handle — outside sticky wrapper so it doesn't affect LEFT_W */}
+        <div
+          onPointerDown={onDragHandlePointerDown}
+          title="Drag to reorder deliverable"
+          style={{ width:18, display:"flex", alignItems:"center", justifyContent:"center",
+            cursor:"grab", color:"#9ca3af", fontSize:14, flexShrink:0,
+            touchAction:"none", userSelect:"none", alignSelf:"stretch",
+            position: showGantt ? "sticky" : "static", left:0, zIndex: showGantt ? 21 : "auto",
+            background:"transparent" }}
+          onMouseEnter={e => e.currentTarget.style.color="#374151"}
+          onMouseLeave={e => e.currentTarget.style.color="#9ca3af"}
+        >⠿</div>
+        <div onMouseEnter={e => e.currentTarget.style.background="#fff8ed"} onMouseLeave={e => e.currentTarget.style.background="#fff"} style={{ display:"flex", width:LEFT_W, flexShrink:0, alignSelf:"stretch", position: showGantt ? "sticky" : "static", left:18, zIndex: showGantt ? 20 : "auto", background:"#fff", width: showGantt ? LEFT_W : "100%", boxShadow: showGantt ? "2px 0 4px rgba(0,0,0,0.07)" : "none" }}>
         {/* Row # */}
         <LeftCell width={colWidths.num} center>
           <span style={{ fontSize: 10, fontWeight: 700, color: "#9ca3af" }}>{rowNum}</span>
@@ -2710,13 +2842,15 @@ function DeliverableRow({ del, proj, people, collapsed, toggle, weeks, todayOff,
         <LeftCell width={colWidths.title}>
           <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
             <CheckButton isDone={del.status === "Done"} onClick={() => onMarkDone(proj.id, del.id, null)} />
-            {/* Auto-derive display status from subtasks if deliverable not yet started */}
-            {del.status === "Not Started" && del.subtasks?.some(s => s.status === "Done" || s.status === "In Progress") && (
-              <span style={{ fontSize: fs(9), color: "#0ea5e9", fontWeight: 700, background: "rgba(14,165,233,0.1)", borderRadius: 4, padding: "1px 5px", whiteSpace: "nowrap" }}>In Progress</span>
+
+            {del.status === "Not Started" && !(del.subtasks?.some(s => s.status === "In Progress" || s.status === "Done")) && (
+              <button onClick={e => { e.stopPropagation(); save({ status: "In Progress" }); }}
+                title="Click to start" style={{ background:"none", border:"none", cursor:"pointer",
+                color:"#34d399", fontSize:10, padding:0, lineHeight:1, flexShrink:0, fontFamily:"inherit" }}>▶</button>
             )}
-            {del.status === "Not Started" && !del.subtasks?.some(s => s.status === "Done" || s.status === "In Progress") && (
-              <button onClick={e => { e.stopPropagation(); save({ status: "In Progress" }); }} title="Start task"
-                style={{ background: "none", border: "none", cursor: "pointer", color: "#34d399", fontSize: 11, padding: 0, lineHeight: 1, flexShrink: 0 }}>▶</button>
+            {(del.status === "In Progress" || (del.status === "Not Started" && del.subtasks?.some(s => s.status === "In Progress" || s.status === "Done"))) && (
+              <span title={del.status === "In Progress" ? "In Progress" : "Subtasks underway"}
+                style={{ color:"#0ea5e9", fontSize:10, flexShrink:0, lineHeight:1 }}>◑</span>
             )}
             <button onClick={() => toggle(del.id)} style={{ background: "none", border: "none", cursor: "pointer", color: "#6b7280", fontSize: 11, padding: 0, lineHeight: 1, flexShrink: 0 }}>
               {isCollapsed ? "▸" : "▾"}
@@ -2759,6 +2893,8 @@ function DeliverableRow({ del, proj, people, collapsed, toggle, weeks, todayOff,
             : <InlineAssignees assignees={del.assignees || []} people={people} onChange={v => save({ assignees: v })} />
           }
         </LeftCell>
+
+        </div>
         <InlineNoteCell
           width={colWidths.notes}
           note={statusNotes[`${proj.id}::${del.id}`] || ""}
@@ -2766,8 +2902,6 @@ function DeliverableRow({ del, proj, people, collapsed, toggle, weeks, todayOff,
           color={proj.color}
           last
         />
-
-        </div>
         {/* Chart */}
         {showGantt && (
         <div style={{ flex: 1, height: "100%", position: "relative", width: totalDays * DAY_W }}>
@@ -2868,7 +3002,7 @@ function DeliverableRow({ del, proj, people, collapsed, toggle, weeks, todayOff,
     </div>
   );
 }
-function SubtaskRow({ sub, del, proj, people, weeks, todayOff, allItemsFlat, onEditItem, onMarkDone, onSaveItem, rowIndex, DAY_W, colWidths, LEFT_W, onInsertSubtask, onReorderSubtasks, onDeleteSubtask, onDragHandlePointerDown, holidays = [] , showGantt  }) {
+function SubtaskRow({ sub, del, proj, people, weeks, todayOff, allItemsFlat, onEditItem, onMarkDone, onSaveItem, rowIndex, DAY_W, colWidths, LEFT_W, totalDays, onInsertSubtask, onReorderSubtasks, onDeleteSubtask, statusNotes = {}, onUpdateNote, onDragHandlePointerDown, holidays = [] , showGantt  }) {
   const m = statusMeta[sub.status] || statusMeta["Not Started"];
   const rowNum = rowIndex.index[sub.id] || "?";
   const startOff = dayOffset(sub.start);
@@ -2887,14 +3021,15 @@ function SubtaskRow({ sub, del, proj, people, weeks, todayOff, allItemsFlat, onE
   }).filter(Boolean);
 
   return (
-    <div style={{ display: "flex", height: S_ROW, borderBottom: "1px solid rgba(0,0,0,0.03)", alignItems: "center",
+    <div style={{ display: "flex", height: S_ROW, borderBottom: "1px solid rgba(0,0,0,0.03)", alignItems: "center", width: showGantt ? undefined : "100%",
         background: (() => { const t=new Date().toLocaleDateString('en-CA'); return sub.end&&sub.end<t&&sub.status==="In Progress"?"rgba(239,68,68,0.18)":sub.end&&sub.end<t&&sub.status!=="Done"?"rgba(239,68,68,0.09)":sub.end&&sub.end===t&&sub.status!=="Done"?"rgba(251,146,60,0.16)":"rgba(0,0,0,0.025)"; })(),
         borderLeft: (() => { const t=new Date().toLocaleDateString('en-CA'); return sub.end&&sub.end<t&&sub.status==="In Progress"?"3px solid #ef4444":sub.end&&sub.end===t&&sub.status!=="Done"?"3px solid #f97316":"none"; })(),
       }}
       onMouseEnter={e => { const t=new Date().toLocaleDateString('en-CA'); e.currentTarget.style.background=sub.end&&sub.end<t&&sub.status==="In Progress"?"rgba(239,68,68,0.24)":sub.end&&sub.end<t&&sub.status!=="Done"?"rgba(239,68,68,0.13)":"rgba(0,0,0,0.04)"; }}
       onMouseLeave={e => { const t=new Date().toLocaleDateString('en-CA'); e.currentTarget.style.background=sub.end&&sub.end<t&&sub.status==="In Progress"?"rgba(239,68,68,0.18)":sub.end&&sub.end<t&&sub.status!=="Done"?"rgba(239,68,68,0.09)":sub.end&&sub.end===t&&sub.status!=="Done"?"rgba(251,146,60,0.16)":"rgba(0,0,0,0.025)"; }}>
 
-      <div style={{ display:"flex", width:LEFT_W, flexShrink:0, alignSelf:"stretch", position: showGantt ? "sticky" : "static", left:0, zIndex: showGantt ? 20 : "auto", background:"#fff", boxShadow:"2px 0 4px rgba(0,0,0,0.07)" }}>
+      <div style={{ width:18, flexShrink:0 }} />{/* spacer matching deliverable drag handle */}
+      <div style={{ display:"flex", width:LEFT_W, flexShrink:0, alignSelf:"stretch", position: showGantt ? "sticky" : "static", left:18, zIndex: showGantt ? 20 : "auto", background:"#fff", boxShadow:"2px 0 4px rgba(0,0,0,0.07)" }}>
       {/* Row # */}
       <LeftCell width={colWidths.num} center>
         <span style={{ fontSize: 9, color: "#9ca3af" }}>{rowNum}</span>
@@ -2907,6 +3042,15 @@ function SubtaskRow({ sub, del, proj, people, weeks, todayOff, allItemsFlat, onE
           {/* Drag handle */}
           <span onPointerDown={onDragHandlePointerDown} style={{ cursor: "grab", color: "#9ca3af", fontSize: 13, flexShrink: 0, lineHeight: 1, paddingRight: 2, touchAction: "none", userSelect: "none" }} title="Drag to reorder">⠿</span>
           <CheckButton isDone={sub.status === "Done"} onClick={() => onMarkDone(proj.id, del.id, sub.id)} />
+          {sub.status === "Not Started" && (
+            <button onClick={e => { e.stopPropagation(); save({ status: "In Progress" }); }}
+              title="Click to start"
+              style={{ background:"none", border:"none", cursor:"pointer", color:"#34d399",
+                fontSize:10, padding:0, lineHeight:1, flexShrink:0, fontFamily:"inherit" }}>▶</button>
+          )}
+          {sub.status === "In Progress" && (
+            <span title="In Progress" style={{ color:"#0ea5e9", fontSize:10, flexShrink:0, lineHeight:1 }}>◑</span>
+          )}
           <span
             onClick={() => onEditItem({ ...sub, projectId: proj.id, projectName: proj.name, projectColor: proj.color, deliverableId: del.id })}
             style={{ fontSize: fs(11), fontWeight: 400, color: sub.status === "Done" ? "#9ca3af" : "#374151",
@@ -2927,7 +3071,7 @@ function SubtaskRow({ sub, del, proj, people, weeks, todayOff, allItemsFlat, onE
       </LeftCell>
       {/* Duration */}
       <LeftCell width={colWidths.dur}>
-        <span style={{ fontSize: 10, color: "#6b7280", padding: "2px 3px" }} title="Business days">{busyDays(sub.start, sub.end, holidays)}</span>
+        <span style={{ fontSize: 10, color: "#6b7280", padding: "2px 3px" }} title="Business days">{busyDays(sub.start, sub.end, new Set((holidays||[]).map(h=>h.date)))}</span>
       </LeftCell>
       {/* Dependencies */}
       <LeftCell width={colWidths.deps}>
@@ -2937,6 +3081,7 @@ function SubtaskRow({ sub, del, proj, people, weeks, todayOff, allItemsFlat, onE
       <LeftCell width={colWidths.assignees}>
         <InlineAssignees assignees={sub.assignees || []} people={people} onChange={v => save({ assignees: v })} />
       </LeftCell>
+      </div>{/* end sticky left */}
       <InlineNoteCell
         width={colWidths.notes}
         note={statusNotes[`${proj.id}::${sub.id}`] || ""}
@@ -2944,7 +3089,6 @@ function SubtaskRow({ sub, del, proj, people, weeks, todayOff, allItemsFlat, onE
         color={proj.color}
         last
       />
-      </div>{/* end sticky left */}
 
       {/* Gantt bar */}
       {showGantt && (
@@ -10329,6 +10473,18 @@ export default function App() {
           }
           } // end forward-only guard
         }
+      }
+      // ── Auto-promote parent deliverable when subtask starts ───────────────────
+      const _parentDel = newProjs.flatMap(p => p.deliverables).find(d =>
+        d.subtasks?.some(s => s.id === sanitized.id)
+      );
+      if (_parentDel && _parentDel.status === "Not Started" &&
+          (sanitized.status === "In Progress" || sanitized.status === "Done")) {
+        newProjs = newProjs.map(p => ({
+          ...p, deliverables: p.deliverables.map(d =>
+            d.id !== _parentDel.id ? d : { ...d, status: "In Progress" }
+          )
+        }));
       }
       return newProjs;
     };
