@@ -10796,47 +10796,12 @@ export default function App() {
   useEffect(() => { loadAll(); }, [loadAll]);
 
   // ── Due-soon and overdue notification check ─────────────────────────────────
-  // Runs when projects + notifications are both populated.
-  // Fires once per session per date — suppressed if already sent for a task.
-  useEffect(() => {
-    if (!projects.length || !SB_READY) return;
-    const todayStr = new Date().toLocaleDateString("en-CA");
-    // localStorage guard — survives page reloads so we never re-generate the same day
-    const lsKey = `pulsex_notif_check_${ownMemberId}`;
-    if (localStorage.getItem(lsKey) === todayStr) return;
-    localStorage.setItem(lsKey, todayStr);
-
-    // Only check tasks assigned to the current user — not all users
-    if (!ownMemberId) return;
-    const myDueSoonTasks = getDueSoonTasks(projects, notifications, todayStr, 3)
-      .filter(t => (t.assignees || []).includes(ownMemberId));
-    const myOverdueTasks = getOverdueTasks(projects, notifications, todayStr)
-      .filter(t => (t.assignees || []).includes(ownMemberId));
-
-    // Build notifications only for self — one notif per task for the current user
-    const dueSoonNotifs  = buildDueSoonNotifications({ tasks: myDueSoonTasks, people: people.filter(p => p.id === ownMemberId), notifications });
-    const overdueNotifs  = buildOverdueNotifications({ tasks: myOverdueTasks, people: people.filter(p => p.id === ownMemberId), notifications });
-    const allNew = [...dueSoonNotifs, ...overdueNotifs];
-
-    if (!allNew.length) return;
-
-    setNotifications(prev => [...allNew, ...prev]);
-    // No toast for ambient checks — these go silently to the notification bell.
-    // Toasts are reserved for real-time events (task assigned, ready to start, completed).
-
-    // Persist to Supabase
-    allNew.forEach(n => {
-      sb.upsert("task_notifications", {
-        id: n.id, task_id: n.taskId, notification_type: n.type,
-        message: n.message, assigned_to_person_id: n.assignedToPersonId,
-        project_id: n.projectId, deliverable_id: n.deliverableId,
-        is_read: false, created_at: n.createdAt,
-      }).then(r => { if (r?.error) console.error("[PulseX] notif save failed:", n.type, r.error); });
-    });
-
-    if (dueSoonNotifs.length)  console.log(`[PulseX] due-soon: ${dueSoonNotifs.length} notification(s) fired`);
-    if (overdueNotifs.length)  console.log(`[PulseX] overdue: ${overdueNotifs.length} notification(s) fired`);
-  }, [projects, notifications, SB_READY]); // eslint-disable-line react-hooks/exhaustive-deps
+  // ── Due-soon / overdue ambient check ─────────────────────────────────────────
+  // DISABLED: dedup relies on notifications being present in DB, but if they're
+  // ever cleared the app regenerates them on every load. Needs a dedicated
+  // notification_sent_log table before re-enabling.
+  // Functions (getDueSoonTasks, getOverdueTasks, etc.) remain in workflowEngine.js
+  // and are ready to use once the architecture is in place.
 
   // Load personal tasks separately — needs authUser.id which isn't available during loadAll
   useEffect(() => {
@@ -11737,13 +11702,7 @@ export default function App() {
             const parentDel = afterDone.flatMap(p => p.deliverables).find(d => d.id === deliverableId);
             const idx = (parentDel?.subtasks||[]).findIndex(s => s.id === subtaskId);
             const nextSub = idx >= 0 ? parentDel?.subtasks[idx+1] : null;
-            const _ns = nextSub;
-            console.log("[PulseX] up-next | next task:", _ns?.title || "NONE (last task)");
-            console.log("[PulseX] up-next | next status:", _ns?.status);
-            console.log("[PulseX] up-next | next assignees:", JSON.stringify(_ns?.assignees));
-            console.log("[PulseX] up-next | next deps:", JSON.stringify(_ns?.dependencies));
-            console.log("[PulseX] up-next | already notified:", _ns ? notifications.some(n => n.type==="task_ready" && n.taskId===_ns.id) : "n/a");
-            console.log("[PulseX] up-next | readyTasks found:", readyTasks.length);
+
           }
           // ────────────────────────────────────────────────────────────────
 
