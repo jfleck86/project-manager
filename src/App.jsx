@@ -569,6 +569,207 @@ function StatusBadge({ status, small }) {
   );
 }
 
+
+// ── InlineStatusPill — click to cycle through statuses without opening modal ──
+function InlineStatusPill({ item, onSave, small }) {
+  const [open, setOpen] = React.useState(false);
+  const [hovered, setHovered] = React.useState(false);
+  const ref = React.useRef(null);
+  const m = statusMeta[item.status] || statusMeta["Not Started"];
+  React.useEffect(() => {
+    if (!open) return;
+    const handler = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [open]);
+  return (
+    <div ref={ref} style={{ position:"relative", display:"inline-flex", flexShrink:0 }}>
+      <button
+        onClick={(e) => { e.stopPropagation(); setOpen(o => !o); }}
+        onMouseEnter={() => setHovered(true)}
+        onMouseLeave={() => setHovered(false)}
+        title="Click to change status"
+        style={{
+          background: open || hovered ? m.color + "18" : m.bg,
+          color: m.color,
+          border: `1px solid ${open ? m.color + "90" : hovered ? m.color + "70" : m.color + "35"}`,
+          borderRadius: 3, padding: "1px 4px",
+          fontSize: fs(11), fontWeight: 400, letterSpacing: 0,
+          whiteSpace: "nowrap", display: "inline-flex", alignItems: "center", gap: 3,
+          cursor: "pointer", userSelect: "none", fontFamily: "inherit",
+          lineHeight: 1.5, transition: "background 0.1s, border-color 0.1s", outline: "none",
+        }}>
+        <span style={{ fontSize: fs(9), lineHeight: 1 }}>{m.icon}</span>
+        {item.status}
+        <span style={{
+          fontSize: fs(8), opacity: hovered || open ? 0.8 : 0.3,
+          marginLeft: 1, display: "inline-block",
+          transform: open ? "rotate(180deg)" : "rotate(0deg)",
+          transition: "transform 0.15s, opacity 0.1s",
+        }}>▾</span>
+      </button>
+      {open && (
+        <div style={{
+          position:"absolute", top:"calc(100% + 5px)", left:0, zIndex:1200,
+          background:"#fff", border:"1px solid rgba(0,0,0,0.1)", borderRadius:9,
+          boxShadow:"0 8px 24px rgba(0,0,0,0.18)", minWidth:155, overflow:"hidden",
+          padding:"4px 0",
+        }}>
+          <div style={{ fontSize:9, fontWeight:700, color:"#9ca3af", letterSpacing:"0.08em",
+            padding:"6px 12px 4px", textTransform:"uppercase" }}>Change Status</div>
+          {STATUSES.map(s => {
+            const sm = statusMeta[s] || statusMeta["Not Started"];
+            const isCurrent = s === item.status;
+            return (
+              <button key={s}
+                onClick={(e) => { e.stopPropagation(); onSave({ ...item, status: s }); setOpen(false); }}
+                style={{
+                  display:"flex", alignItems:"center", gap:9, width:"100%",
+                  padding:"7px 12px",
+                  background: isCurrent ? sm.color + "15" : "none",
+                  border:"none", cursor:"pointer", fontSize:12,
+                  fontWeight: isCurrent ? 700 : 500,
+                  color: isCurrent ? sm.color : "#374151",
+                  fontFamily:"inherit", textAlign:"left",
+                  borderLeft: isCurrent ? `3px solid ${sm.color}` : "3px solid transparent",
+                }}
+                onMouseEnter={e => { if (!isCurrent) { e.currentTarget.style.background="#f9fafb"; } }}
+                onMouseLeave={e => { if (!isCurrent) { e.currentTarget.style.background="none"; } }}>
+                <span style={{ fontSize:12 }}>{sm.icon}</span>
+                <span style={{ flex:1 }}>{s}</span>
+                {isCurrent && <span style={{ fontSize:11, color:sm.color }}>✓</span>}
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── GlobalSearch — ⌘K search across all projects, deliverables, tasks ─────────
+function GlobalSearch({ projects, people, onOpen, onClose }) {
+  const [query, setQuery] = React.useState("");
+  const inputRef = React.useRef(null);
+
+  React.useEffect(() => {
+    inputRef.current?.focus();
+  }, []);
+
+  const allItems = React.useMemo(() => {
+    const items = [];
+    projects.filter(p => !p.archived).forEach(proj => {
+      proj.deliverables.forEach(del => {
+        items.push({ type:"deliverable", id:del.id, title:del.title, status:del.status,
+          proj, del, sub:null, label: proj.name });
+        del.subtasks.forEach(sub => {
+          items.push({ type:"subtask", id:sub.id, title:sub.title, status:sub.status,
+            proj, del, sub, label:`${proj.name} › ${del.title}` });
+        });
+      });
+    });
+    return items;
+  }, [projects]);
+
+  const results = React.useMemo(() => {
+    if (!query.trim()) return [];
+    const q = query.toLowerCase();
+    return allItems.filter(r =>
+      r.title?.toLowerCase().includes(q) ||
+      r.label?.toLowerCase().includes(q)
+    ).slice(0, 20);
+  }, [query, allItems]);
+
+  return (
+    <div style={{ position:"fixed", inset:0, zIndex:9999, display:"flex", alignItems:"flex-start",
+      justifyContent:"center", paddingTop:80, background:"rgba(0,0,0,0.45)" }}
+      onMouseDown={e => { if (e.target === e.currentTarget) onClose(); }}>
+      <div style={{ background:"#fff", borderRadius:12, width:"100%", maxWidth:560, margin:"0 16px",
+        boxShadow:"0 20px 60px rgba(0,0,0,0.3)", overflow:"hidden" }}>
+        {/* Search input */}
+        <div style={{ display:"flex", alignItems:"center", padding:"12px 16px", gap:10,
+          borderBottom:"1px solid rgba(0,0,0,0.08)" }}>
+          <span style={{ fontSize:16, color:"#9ca3af" }}>🔍</span>
+          <input ref={inputRef} value={query} onChange={e => setQuery(e.target.value)}
+            placeholder="Search tasks, deliverables, projects…"
+            onKeyDown={e => { if (e.key === "Escape") onClose(); }}
+            style={{ flex:1, border:"none", outline:"none", fontSize:15, fontFamily:"inherit",
+              color:"#1f2937", background:"transparent" }} />
+          {query && <button onClick={() => setQuery("")}
+            style={{ background:"none", border:"none", color:"#9ca3af", cursor:"pointer", fontSize:16 }}>×</button>}
+          <kbd style={{ fontSize:11, color:"#9ca3af", background:"#f3f4f6", borderRadius:4,
+            padding:"2px 6px", border:"1px solid rgba(0,0,0,0.1)" }}>Esc</kbd>
+        </div>
+        {/* Results */}
+        {query.trim() && (
+          <div style={{ maxHeight:400, overflowY:"auto" }}>
+            {results.length === 0 ? (
+              <div style={{ padding:"24px 16px", textAlign:"center", color:"#9ca3af", fontSize:13 }}>
+                No results for "{query}"
+              </div>
+            ) : results.map(r => {
+              const sm = statusMeta[r.status] || statusMeta["Not Started"];
+              return (
+                <button key={r.id}
+                  onClick={() => { onOpen(r); onClose(); }}
+                  style={{ display:"flex", alignItems:"center", gap:10, width:"100%",
+                    padding:"10px 16px", background:"none", border:"none", cursor:"pointer",
+                    fontFamily:"inherit", textAlign:"left", borderBottom:"1px solid rgba(0,0,0,0.04)" }}
+                  onMouseEnter={e => e.currentTarget.style.background="#f9fafb"}
+                  onMouseLeave={e => e.currentTarget.style.background="none"}>
+                  <span style={{ fontSize:9, width:6, height:6, borderRadius:"50%",
+                    background:r.proj.color, flexShrink:0, marginTop:1 }} />
+                  <div style={{ flex:1, minWidth:0 }}>
+                    <div style={{ fontSize:13, fontWeight:600, color:"#1f2937",
+                      whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>
+                      {r.title}
+                    </div>
+                    <div style={{ fontSize:11, color:"#6b7280", marginTop:1 }}>{r.label}</div>
+                  </div>
+                  <span style={{ fontSize:10, fontWeight:600, color:sm.color, background:sm.bg,
+                    borderRadius:4, padding:"1px 6px", flexShrink:0 }}>{r.status}</span>
+                  <span style={{ fontSize:10, color:"#9ca3af", flexShrink:0 }}>
+                    {r.type === "subtask" ? "Task" : "Deliverable"}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        )}
+        {!query.trim() && (
+          <div style={{ padding:"20px 16px", color:"#9ca3af", fontSize:12 }}>
+            Start typing to search across all tasks and deliverables.
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ── ConfirmPopover — inline confirmation, replaces window.confirm() ──────────
+function ConfirmPopover({ message, onConfirm, onCancel, danger = true }) {
+  return (
+    <div style={{ position:"absolute", zIndex:800, background:"#fff",
+      border:"1px solid rgba(0,0,0,0.12)", borderRadius:8,
+      boxShadow:"0 4px 20px rgba(0,0,0,0.15)", padding:"12px 14px",
+      minWidth:200, top:"100%", left:0, marginTop:4 }}>
+      <div style={{ fontSize:12, color:"#374151", marginBottom:10, fontWeight:500 }}>{message}</div>
+      <div style={{ display:"flex", gap:6, justifyContent:"flex-end" }}>
+        <button onClick={onCancel}
+          style={{ fontSize:11, padding:"4px 10px", borderRadius:5, border:"1px solid rgba(0,0,0,0.15)",
+            background:"none", cursor:"pointer", fontFamily:"inherit", color:"#6b7280" }}>
+          Cancel
+        </button>
+        <button onClick={onConfirm}
+          style={{ fontSize:11, padding:"4px 10px", borderRadius:5, border:"none",
+            background: danger ? "#ef4444" : "#3b82f6",
+            color:"#fff", cursor:"pointer", fontFamily:"inherit", fontWeight:600 }}>
+          {danger ? "Delete" : "Confirm"}
+        </button>
+      </div>
+    </div>
+  );
+}
 function PriorityDot({ priority }) {
   const m = priorityMeta[priority] || priorityMeta["Low"];
   return <span style={{ color: m.color, fontWeight: 700, fontSize: 10, letterSpacing: "0.03em" }}>● {priority}</span>;
@@ -781,13 +982,13 @@ function ProjectDetailsModal({ proj, people, onClose, onSave, onArchive, onDelet
                   cursor: "pointer", fontFamily: "inherit" }}>📋 Save as Template</button>
             )}
             {onArchive && !proj.archived && (
-              <button onClick={() => window.confirm(`Archive "${proj.name}"?`) && onArchive(proj.id)}
+              <button onClick={() => (() => { const c = window.confirm(`Archive "${proj.name}"? It will be hidden from active views.`); if(c) onArchive(proj.id); })()}
                 style={{ padding: "7px 14px", borderRadius: 7, border: "1px solid rgba(251,191,36,0.4)",
                   background: "rgba(251,191,36,0.08)", color: "#b45309", fontSize: 11, fontWeight: 600,
                   cursor: "pointer", fontFamily: "inherit" }}>⊡ Archive</button>
             )}
             {onDelete && (
-              <button onClick={() => window.confirm(`Permanently delete "${proj.name}"? This cannot be undone.`) && onDelete(proj.id)}
+              <button onClick={() => window.confirm(`DELETE "${proj.name}"?\n\nThis permanently removes all ${proj.deliverables?.length || 0} deliverables and tasks and cannot be undone.`) && onDelete(proj.id)}
                 style={{ padding: "7px 14px", borderRadius: 7, border: "1px solid rgba(239,68,68,0.3)",
                   background: "rgba(239,68,68,0.06)", color: "#dc2626", fontSize: 11, fontWeight: 600,
                   cursor: "pointer", fontFamily: "inherit" }}>🗑 Delete</button>
@@ -1147,7 +1348,16 @@ function TaskModal({ item, projectColor, allItems, onClose, onSave, allPeople, o
         {/* Footer */}
         <div style={{ borderTop: "1px solid rgba(0,0,0,0.07)", padding: "14px 22px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
           {onDelete ? (
-            <button onClick={() => { if (window.confirm("Delete this item?")) { onDelete(); onClose(); } }} style={{
+            <button data-confirm-delete onClick={function(e) {
+                const btn = e.currentTarget;
+                if (btn.dataset.confirming === "1") { onDelete(); onClose(); }
+                else {
+                  btn.dataset.confirming = "1";
+                  btn.textContent = "⚠ Confirm delete?";
+                  btn.style.color = "#ef4444";
+                  setTimeout(() => { btn.dataset.confirming = ""; btn.textContent = "🗑 Delete task"; btn.style.color = ""; }, 3000);
+                }
+              }} style={{
               background: "none", border: "1px solid rgba(248,113,113,0.3)", borderRadius: 6,
               color: "#f87171", padding: "7px 14px", cursor: "pointer", fontSize: 12, fontFamily: "inherit",
             }}>Delete</button>
@@ -1989,6 +2199,13 @@ function TimelineView({ projects, people, onEditItem, onAddDeliverable, onAddSub
   }, []);
 
   // Collect all IDs for dependency lookup across whole timeline
+  const todayForBadge = new Date().toLocaleDateString("en-CA");
+  const overdueCount = projects.flatMap(p => p.deliverables.flatMap(d =>
+    [d, ...(d.subtasks||[])].filter(t =>
+      t.status !== "Done" && t.end && t.end < todayForBadge
+    )
+  )).length;
+
   const allItemsFlat = projects.flatMap(p => p.deliverables.flatMap(d => [
     { ...d, projectColor: p.color, projectName: p.name },
     ...d.subtasks.map(s => ({ ...s, projectColor: p.color, projectName: p.name }))
@@ -2493,7 +2710,7 @@ function DeliverableRow({ del, proj, people, collapsed, toggle, weeks, todayOff,
         <LeftCell width={colWidths.title}>
           <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
             <CheckButton isDone={del.status === "Done"} onClick={() => onMarkDone(proj.id, del.id, null)} />
-            {/* Auto-derive display status from subtasks if not overridden */}
+            {/* Auto-derive display status from subtasks if deliverable not yet started */}
             {del.status === "Not Started" && del.subtasks?.some(s => s.status === "Done" || s.status === "In Progress") && (
               <span style={{ fontSize: fs(9), color: "#0ea5e9", fontWeight: 700, background: "rgba(14,165,233,0.1)", borderRadius: 4, padding: "1px 5px", whiteSpace: "nowrap" }}>In Progress</span>
             )}
@@ -2511,7 +2728,6 @@ function DeliverableRow({ del, proj, people, collapsed, toggle, weeks, todayOff,
               onMouseLeave={e => e.currentTarget.style.color = "#9ca3af"}
             >+</button>
           </div>
-          <StatusBadge status={del.status} small />
         </LeftCell>
 
 
@@ -2637,7 +2853,7 @@ function DeliverableRow({ del, proj, people, collapsed, toggle, weeks, todayOff,
           'divider',
           { icon: '⊗', label: 'Delete subtask', danger: true, action: () => {
             const sub = del.subtasks[ctxMenu.subIdx];
-            if (sub && window.confirm('Delete "' + sub.title + '"?')) onDeleteSubtask(proj.id, del.id, sub.id);
+            if (sub) onDeleteSubtask(proj.id, del.id, sub.id);
           }},
         ]} />
       )}
@@ -2652,7 +2868,6 @@ function DeliverableRow({ del, proj, people, collapsed, toggle, weeks, todayOff,
     </div>
   );
 }
-
 function SubtaskRow({ sub, del, proj, people, weeks, todayOff, allItemsFlat, onEditItem, onMarkDone, onSaveItem, rowIndex, DAY_W, colWidths, LEFT_W, onInsertSubtask, onReorderSubtasks, onDeleteSubtask, onDragHandlePointerDown, holidays = [] , showGantt  }) {
   const m = statusMeta[sub.status] || statusMeta["Not Started"];
   const rowNum = rowIndex.index[sub.id] || "?";
@@ -2692,161 +2907,108 @@ function SubtaskRow({ sub, del, proj, people, weeks, todayOff, allItemsFlat, onE
           {/* Drag handle */}
           <span onPointerDown={onDragHandlePointerDown} style={{ cursor: "grab", color: "#9ca3af", fontSize: 13, flexShrink: 0, lineHeight: 1, paddingRight: 2, touchAction: "none", userSelect: "none" }} title="Drag to reorder">⠿</span>
           <CheckButton isDone={sub.status === "Done"} onClick={() => onMarkDone(proj.id, del.id, sub.id)} />
-          {sub.status === "Not Started" && (
-            <button onClick={e => { e.stopPropagation(); save({ status: "In Progress" }); }} title="Start task"
-              style={{ background: "none", border: "none", cursor: "pointer", color: "#34d399", fontSize: 10, padding: 0, lineHeight: 1, flexShrink: 0 }}>▶</button>
-          )}
-          <span onClick={() => onEditItem({ ...sub, projectId: proj.id, projectName: proj.name, projectColor: proj.color, deliverableId: del.id, delTitle: del.title })} style={{ fontSize: fs(11), color: sub.status === "Done" ? "#9ca3af" : "#374151", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", textDecoration: sub.status === "Done" ? "line-through" : "none", flex: 1, cursor: "pointer" }} title={"Click to edit · Right-click for options"}>{sub.title}</span>
+          <span
+            onClick={() => onEditItem({ ...sub, projectId: proj.id, projectName: proj.name, projectColor: proj.color, deliverableId: del.id })}
+            style={{ fontSize: fs(11), fontWeight: 400, color: sub.status === "Done" ? "#9ca3af" : "#374151",
+              overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1,
+              textDecoration: sub.status === "Done" ? "line-through" : "none", cursor: "pointer" }}
+            title={"Click to edit: " + sub.title}
+          >{sub.title}</span>
         </div>
       </LeftCell>
 
       {/* Start */}
       <LeftCell width={colWidths.start}>
-        <InlineDate value={sub.start} onChange={v => save({ start: v })} small />
+        <InlineDate value={sub.start} onChange={v => save({ start: v })} />
       </LeftCell>
-
       {/* End */}
       <LeftCell width={colWidths.end}>
-        <InlineDate value={sub.end} onChange={v => save({ end: v })} small />
+        <InlineDate value={sub.end} onChange={v => save({ end: v })} />
       </LeftCell>
-
       {/* Duration */}
       <LeftCell width={colWidths.dur}>
-        <span style={{ fontSize: 10, color: "#9ca3af", padding: "2px 3px" }} title="Business days">{busyDays(sub.start, sub.end, new Set((holidays||[]).map(h=>h.date)))}d</span>
+        <span style={{ fontSize: 10, color: "#6b7280", padding: "2px 3px" }} title="Business days">{busyDays(sub.start, sub.end, holidays)}</span>
       </LeftCell>
-
       {/* Dependencies */}
       <LeftCell width={colWidths.deps}>
         <InlineDeps deps={sub.dependencies || []} rowIndex={rowIndex} onChange={ids => save({ dependencies: ids })} />
       </LeftCell>
-
       {/* Assignees */}
       <LeftCell width={colWidths.assignees}>
-        <InlineAssignees assignees={sub.assignees} people={people} onChange={v => save({ assignees: v })} />
+        <InlineAssignees assignees={sub.assignees || []} people={people} onChange={v => save({ assignees: v })} />
       </LeftCell>
       <InlineNoteCell
         width={colWidths.notes}
-        note={""}
-        onChange={null}
+        note={statusNotes[`${proj.id}::${sub.id}`] || ""}
+        onChange={onUpdateNote ? (text) => onUpdateNote(`${proj.id}::${sub.id}`, text) : null}
         color={proj.color}
         last
-        small
       />
+      </div>{/* end sticky left */}
 
-        </div>
-      {/* Chart */}
+      {/* Gantt bar */}
       {showGantt && (
       <div style={{ flex: 1, height: "100%", position: "relative", width: totalDays * DAY_W }}>
-        {weeks.map(w => <div key={w} style={{ position: "absolute", left: w * DAY_W, top: 0, bottom: 0, width: 1, background: "rgba(0,0,0,0.025)" }} />)}
-        <div style={{ position: "absolute", left: todayOff * DAY_W, top: 0, bottom: 0, width: 2, background: `${BRAND_TEAL}15` }} />
-        {depArrows.map(({ depEndOff, thisStartOff, key }) => {
-          const x1 = depEndOff * DAY_W; const x2 = thisStartOff * DAY_W;
-          const midY = S_ROW / 2;
-          return (
-            <svg key={key} style={{ position: "absolute", left: 0, top: 0, width: totalDays * DAY_W, height: S_ROW, pointerEvents: "none", overflow: "visible" }}>
-              <path d={`M ${x1} ${midY} C ${(x1+x2)/2} ${midY}, ${(x1+x2)/2} ${midY}, ${x2} ${midY}`} stroke="#6b7280" strokeWidth={1.2} fill="none" strokeDasharray="3 3" />
-              <polygon points={`${x2},${midY} ${x2-4},${midY-2.5} ${x2-4},${midY+2.5}`} fill="#6b7280" />
-            </svg>
-          );
-        })}
-        <div style={{ position: "absolute", left: startOff * DAY_W + 2, top: "50%", transform: "translateY(-50%)",
-          width: barW - 4, height: 16, borderRadius: 3, overflow: "hidden", cursor: "pointer",
-          background: m.color + "30", border: `1px solid ${m.color}bb` }}
-          onClick={() => onEditItem({ ...sub, projectId: proj.id, projectName: proj.name, projectColor: proj.color, deliverableId: del.id })}>
-          <div style={{ position: "absolute", left: 0, top: 0, height: "100%", width: `${sub.progress}%`, background: "rgba(0,0,0,0.15)" }} />
-          <div style={{ position: "relative", padding: "0 5px", fontSize: 9, fontWeight: 600, color: "#374151", lineHeight: "16px", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-            {sub.title}
-          </div>
-        </div>
+        {weeks.map(w => <div key={w} style={{ position: "absolute", left: w * DAY_W, top: 0, bottom: 0, width: 1, background: "rgba(0,0,0,0.04)" }} />)}
+        <div style={{ position: "absolute", left: todayOff * DAY_W, top: 0, bottom: 0, width: 2, background: "rgba(14,165,233,0.25)", zIndex: 1 }} />
+        {depArrows.map(a => (
+          <svg key={a.key} style={{ position:"absolute", top:0, left:0, width:"100%", height:"100%", overflow:"visible", pointerEvents:"none", zIndex:2 }}>
+            <line x1={a.depEndOff * DAY_W} y1={S_ROW/2} x2={a.thisStartOff * DAY_W} y2={S_ROW/2}
+              stroke="#f59e0b" strokeWidth={1.5} strokeDasharray="4 3" />
+            <polygon points={`${a.thisStartOff*DAY_W},${S_ROW/2} ${a.thisStartOff*DAY_W-5},${S_ROW/2-3} ${a.thisStartOff*DAY_W-5},${S_ROW/2+3}`} fill="#f59e0b" />
+          </svg>
+        ))}
+        {sub.start && sub.end && (
+          <div style={{ position:"absolute", left: startOff * DAY_W, top:"50%", transform:"translateY(-50%)",
+            width: barW, height: 12, borderRadius: 6,
+            background: sub.status === "Done" ? "#34d399" : m.color + "cc",
+            opacity: sub.status === "Done" ? 0.5 : 0.85 }} />
+        )}
       </div>
-      )}  {/* end showGantt */}
+      )}{/* end showGantt */}
     </div>
   );
 }
 
-// ─── INLINE NOTE CELL ────────────────────────────────────────────────────────
-function InlineNoteCell({ width, note, onChange, color, last, small }) {
+// ─── InlineDate — click-to-edit date cell ────────────────────────────────────
+function InlineDate({ value, onChange }) {
   const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState(note);
-  const ref = useRef(null);
-
-  useEffect(() => { setDraft(note); }, [note]);
-
-  const commit = () => {
-    setEditing(false);
-    if (onChange && draft !== note) onChange(draft);
+  const fmt = (d) => {
+    if (!d) return "—";
+    return d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
   };
-
-  const fontSize = small ? 9 : 10;
-
-  return (
-    <div style={{
-      width, flexShrink: 0, padding: "0 8px", display: "flex", alignItems: "center",
-      borderRight: last ? "1px solid rgba(0,0,0,0.08)" : "1px solid rgba(0,0,0,0.04)",
-      height: "100%", overflow: "hidden", minWidth: 0,
-    }}>
-      {editing ? (
-        <textarea
-          ref={ref}
-          autoFocus
-          value={draft}
-          onChange={e => setDraft(e.target.value)}
-          onBlur={commit}
-          onKeyDown={e => { if (e.key === "Escape") { setDraft(note); setEditing(false); } if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); commit(); } }}
-          style={{
-            width: "100%", border: `1px solid ${color}60`, borderRadius: 4, padding: "3px 6px",
-            fontSize, fontFamily: "inherit", resize: "none", height: 48, outline: "none",
-            background: "#fff", color: "#1f2937", lineHeight: 1.4,
-          }}
-        />
-      ) : (
-        <div
-          onClick={() => onChange && setEditing(true)}
-          style={{
-            fontSize, color: note ? "#374151" : "#c4c9d4", lineHeight: 1.4,
-            overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
-            cursor: onChange ? "pointer" : "default", width: "100%",
-            padding: "2px 4px", borderRadius: 3,
-            background: note ? "transparent" : "transparent",
-          }}
-          title={note || (onChange ? "Click to add note" : "")}
-        >
-          {note || (onChange ? <span style={{ color: "#d1d5db", fontSize: fontSize - 1 }}>+ note</span> : null)}
-        </div>
-      )}
-    </div>
-  );
-}
-
-function LeftCell({ width, children, last, center }) {
-  return (
-    <div style={{
-      width, flexShrink: 0, padding: "0 4px", display: "flex", flexDirection: "column",
-      justifyContent: "center", gap: 2,
-      borderRight: last ? "1px solid rgba(0,0,0,0.07)" : "1px solid rgba(0,0,0,0.05)",
-      height: "100%", alignItems: center ? "center" : "flex-start", overflow: "visible",
-    }}>{children}</div>
-  );
-}
-
-function InlineDate({ value, onChange, small }) {
-  const [editing, setEditing] = useState(false);
+  const parseDate = (s) => {
+    if (!s) return null;
+    const d = new Date(s + "T00:00:00");
+    return isNaN(d.getTime()) ? null : d;
+  };
   if (editing) return (
-    <input type="date" defaultValue={value} autoFocus
-      onBlur={e => { onChange(e.target.value); setEditing(false); }}
-      style={{ fontSize: 10, border: `1px solid ${BRAND_TEAL}`, borderRadius: 3, padding: "1px 3px",
-        background: "#fff8f0", color: "#111827", fontFamily: "inherit", width: "100%", outline: "none" }} />
+    <input
+      autoFocus
+      type="date"
+      defaultValue={value || ""}
+      onBlur={e => { onChange(e.target.value || ""); setEditing(false); }}
+      onKeyDown={e => {
+        if (e.key === "Enter") { onChange(e.target.value || ""); setEditing(false); }
+        if (e.key === "Escape") { setEditing(false); }
+      }}
+      style={{ fontSize: 10, border: `2px solid ${BRAND_TEAL}`, borderRadius: 3,
+        padding: "2px 4px", background: "#fffbf0", color: "#111827",
+        fontFamily: "inherit", outline: "none", width: "100%", boxSizing: "border-box" }}
+    />
   );
   return (
     <span onClick={() => setEditing(true)} title="Click to edit"
-      style={{ fontSize: small ? 10 : 11, color: "#374151", cursor: "text", padding: "2px 3px",
-        borderRadius: 3, border: "1px solid transparent", display: "block", width: "100%",
-        whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}
+      style={{ fontSize: 10, color: value ? "#374151" : "#9ca3af", cursor: "text",
+        padding: "2px 3px", borderRadius: 3, border: "1px solid transparent",
+        display: "block", width: "100%", whiteSpace: "nowrap",
+        overflow: "hidden", textOverflow: "ellipsis" }}
       onMouseEnter={e => e.currentTarget.style.borderColor = BRAND_TEAL}
       onMouseLeave={e => e.currentTarget.style.borderColor = "transparent"}
     >{value ? fmt(parseDate(value)) : "—"}</span>
   );
 }
+
 
 function InlineDeps({ deps = [], rowIndex, onChange }) {
   const toDisplay = (ids) => (ids || [])
@@ -4492,6 +4654,10 @@ function MyHubView({ projects, people, holidays, pto = [], currentUserId, onSetC
     return filtered; // already date-sorted from `all`
   };
 
+  const tomorrowISO     = new Date(todayD.getTime() + 86400000).toISOString().slice(0,10);
+  const dueTodayItems   = thisWeekItems.filter(t => t._due === todayISO);
+  const dueTomorrowItems= thisWeekItems.filter(t => t._due === tomorrowISO);
+  const restOfWeekItems = thisWeekItems.filter(t => t._due > tomorrowISO);
   const activeNow   = [...overdueItems, ...thisWeekItems]; // for the "urgent" count badge
   const totalActive = all.length;
   const overdueCount = overdueItems.length;
@@ -4981,23 +5147,111 @@ function MyHubView({ projects, people, holidays, pto = [], currentUserId, onSetC
               )}
             </div>
 
-            {/* ── This Week (overdue + due by Sunday) ── */}
-            <div style={{ padding:"0 16px" }}>
-              <div style={{ fontSize:10, fontWeight:700, color:"#9ca3af", textTransform:"uppercase", letterSpacing:"0.07em", marginBottom:6, marginTop:6, display:"flex", alignItems:"center", gap:6 }}>
-                This Week
-                {overdueItems.length > 0 && <span style={{ fontSize:9, fontWeight:700, color:"#f87171", background:"rgba(248,113,113,0.1)", borderRadius:4, padding:"1px 6px" }}>{overdueItems.length} overdue</span>}
-                {activeNow.length > 0 && <span style={{ color:"#9ca3af", fontWeight:500, textTransform:"none", letterSpacing:0 }}>({activeNow.length})</span>}
+            {/* ── Overdue ── */}
+            {sortItems(overdueItems).length > 0 && (
+              <div style={{ padding:"0 16px" }}>
+                <div style={{
+                  fontSize:10, fontWeight:700, color:"#f87171",
+                  textTransform:"uppercase", letterSpacing:"0.07em",
+                  padding:"8px 0 6px", marginBottom:2,
+                  position:"sticky", top:0, zIndex:10,
+                  background:"#fff", borderBottom:"1px solid rgba(248,113,113,0.15)",
+                  display:"flex", alignItems:"center", gap:6,
+                }}>
+                  <span style={{ width:6, height:6, borderRadius:"50%", background:"#f87171", display:"inline-block" }} />
+                  Overdue
+                  <span style={{ fontSize:9, fontWeight:700, color:"#fff", background:"#f87171", borderRadius:8, padding:"1px 6px" }}>
+                    {sortItems(overdueItems).length}
+                  </span>
+                </div>
+                <div style={{ display:"grid", gridTemplateColumns:"repeat(2,1fr)", gap:8, marginBottom:8, marginTop:4 }}>
+                  {sortItems(overdueItems).map(item => <HubTaskTile key={item._key} item={item}
+                    statusC={statusC} onOpenItem={handleOpenItem} onSaveStatus={handleSaveStatus} />)}
+                </div>
               </div>
-              {activeNow.length === 0 && (
-                <div style={{ fontSize:11, color:"#9ca3af", padding:"8px 0", marginBottom:8 }}>All clear this week.</div>
-              )}
-              <div style={{ display:"grid", gridTemplateColumns:"repeat(2,1fr)", gap:8, marginBottom:8 }}>
-                {sortItems(activeNow).map(item => <HubTaskTile key={item._key} item={item}
-                  statusC={statusC} onOpenItem={handleOpenItem} onSaveStatus={handleSaveStatus} />)}
-              </div>
-            </div>
+            )}
 
-            {/* ── Next 2–4 Weeks ── */}
+            {/* ── Due Today ── */}
+            {sortItems(dueTodayItems).length > 0 && (
+              <div style={{ padding:"0 16px" }}>
+                <div style={{
+                  fontSize:10, fontWeight:700, color:"#f97316",
+                  textTransform:"uppercase", letterSpacing:"0.07em",
+                  padding:"8px 0 6px", marginBottom:2,
+                  position:"sticky", top:0, zIndex:10,
+                  background:"#fff", borderBottom:"1px solid rgba(249,115,22,0.15)",
+                  display:"flex", alignItems:"center", gap:6,
+                }}>
+                  <span style={{ width:6, height:6, borderRadius:"50%", background:"#f97316", display:"inline-block" }} />
+                  Due today
+                  <span style={{ fontSize:9, fontWeight:700, color:"#fff", background:"#f97316", borderRadius:8, padding:"1px 6px" }}>
+                    {sortItems(dueTodayItems).length}
+                  </span>
+                </div>
+                <div style={{ display:"grid", gridTemplateColumns:"repeat(2,1fr)", gap:8, marginBottom:8, marginTop:4 }}>
+                  {sortItems(dueTodayItems).map(item => <HubTaskTile key={item._key} item={item}
+                    statusC={statusC} onOpenItem={handleOpenItem} onSaveStatus={handleSaveStatus} />)}
+                </div>
+              </div>
+            )}
+
+            {/* ── Due Tomorrow ── */}
+            {sortItems(dueTomorrowItems).length > 0 && (
+              <div style={{ padding:"0 16px" }}>
+                <div style={{
+                  fontSize:10, fontWeight:700, color:"#d97706",
+                  textTransform:"uppercase", letterSpacing:"0.07em",
+                  padding:"8px 0 6px", marginBottom:2,
+                  position:"sticky", top:0, zIndex:10,
+                  background:"#fff", borderBottom:"1px solid rgba(217,119,6,0.15)",
+                  display:"flex", alignItems:"center", gap:6,
+                }}>
+                  <span style={{ width:6, height:6, borderRadius:"50%", background:"#d97706", display:"inline-block" }} />
+                  Due tomorrow
+                  <span style={{ fontSize:9, fontWeight:700, color:"#fff", background:"#d97706", borderRadius:8, padding:"1px 6px" }}>
+                    {sortItems(dueTomorrowItems).length}
+                  </span>
+                </div>
+                <div style={{ display:"grid", gridTemplateColumns:"repeat(2,1fr)", gap:8, marginBottom:8, marginTop:4 }}>
+                  {sortItems(dueTomorrowItems).map(item => <HubTaskTile key={item._key} item={item}
+                    statusC={statusC} onOpenItem={handleOpenItem} onSaveStatus={handleSaveStatus} />)}
+                </div>
+              </div>
+            )}
+
+            {/* ── This Week ── */}
+            {sortItems(restOfWeekItems).length > 0 && (
+              <div style={{ padding:"0 16px" }}>
+                <div style={{
+                  fontSize:10, fontWeight:700, color:"#6b7280",
+                  textTransform:"uppercase", letterSpacing:"0.07em",
+                  padding:"8px 0 6px", marginBottom:2,
+                  position:"sticky", top:0, zIndex:10,
+                  background:"#fff", borderBottom:"1px solid rgba(0,0,0,0.06)",
+                  display:"flex", alignItems:"center", gap:6,
+                }}>
+                  <span style={{ width:6, height:6, borderRadius:"50%", background:"#6b7280", display:"inline-block" }} />
+                  This week
+                  <span style={{ fontSize:9, color:"#9ca3af", fontWeight:500 }}>
+                    ends {new Date(weekEndStr+"T00:00:00").toLocaleDateString("en-US",{weekday:"short",month:"short",day:"numeric"})}
+                  </span>
+                </div>
+                {sortItems(restOfWeekItems).length === 0 && (
+                  <div style={{ fontSize:11, color:"#9ca3af", padding:"8px 0", marginBottom:8 }}>All clear this week 🎉</div>
+                )}
+                <div style={{ display:"grid", gridTemplateColumns:"repeat(2,1fr)", gap:8, marginBottom:8, marginTop:4 }}>
+                  {sortItems(restOfWeekItems).map(item => <HubTaskTile key={item._key} item={item}
+                    statusC={statusC} onOpenItem={handleOpenItem} onSaveStatus={handleSaveStatus} />)}
+                </div>
+              </div>
+            )}
+
+            {/* show All clear if nothing in overdue/today/this week */}
+            {sortItems(activeNow).length === 0 && (
+              <div style={{ fontSize:11, color:"#9ca3af", padding:"12px 16px" }}>All clear this week 🎉</div>
+            )}
+
+                        {/* ── Next 2–4 Weeks ── */}
             <CollapsibleBucket label="Next 2–4 Weeks" items={sortItems(week4Items)} accent="#6366f1" renderItem={item =>
               <HubTaskTile key={item._key} item={item} statusC={statusC} onOpenItem={handleOpenItem} onSaveStatus={handleSaveStatus} />} />
 
@@ -9557,6 +9811,19 @@ export default function App() {
   const [editingItem, setEditingItem] = useState(null);
 
   const [showNewProject, setShowNewProject] = useState(false);
+  const [showSearch,     setShowSearch]     = useState(false);
+
+  // ⌘K / Ctrl+K opens global search
+  useEffect(() => {
+    const handler = (e) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === "k") {
+        e.preventDefault();
+        setShowSearch(s => !s);
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, []);
   const [showImport, setShowImport] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(null);
   const [showTeamSettings, setShowTeamSettings] = useState(false);
@@ -9914,7 +10181,10 @@ export default function App() {
         while (d.getDay() === 0 || d.getDay() === 6 || holidaySet.has(d.toISOString().slice(0,10))) d = new Date(d.getTime() + 86400000);
         return d.toISOString().slice(0,10);
       };
-      const sanitized = { ...updated, start: nextWorkDay(updated.start), end: nextWorkDay(updated.end) };
+      const _sStart = nextWorkDay(updated.start);
+      const _sEnd   = nextWorkDay(updated.end);
+      // If end moved before start, pull start back to match end
+      const sanitized = { ...updated, start: _sEnd && _sStart && _sEnd < _sStart ? _sEnd : _sStart, end: _sEnd };
       let newProjs = projs.map(proj => {
         if (proj.id !== sanitized.projectId) return proj;
         return { ...proj, deliverables: proj.deliverables.map(del => {
@@ -10769,7 +11039,16 @@ export default function App() {
             const badgeNotifs = canManageUsers(currentRole)
               ? notifications.filter(x => !x.isRead)
               : notifications.filter(x => !x.isRead && x.assignedToPersonId === ownMemberId);
-            const unreadCount = n.id === "myhub" ? badgeNotifs.length : 0;
+            const _todayStr = new Date().toLocaleDateString("en-CA");
+            const _overdueCount = projects.flatMap(p => p.deliverables.flatMap(d =>
+              [...(d.subtasks.length ? d.subtasks : [d])]
+            )).filter(t =>
+              t.status !== "Done" && t.end && t.end < _todayStr &&
+              (t.assignees || []).includes(ownMemberId)
+            ).length;
+            const unreadCount = n.id === "myhub" ? badgeNotifs.length
+                              : n.id === "timeline" && _overdueCount > 0 ? _overdueCount
+                              : 0;
             return (
               <button key={n.id} onClick={() => setView(n.id)} title={n.label} style={{
                 background: view === n.id ? BRAND_TEAL_L : "none",
@@ -10809,6 +11088,13 @@ export default function App() {
 
           {/* ── SETTINGS MENU ── */}
           <div style={{ position: "relative" }}>
+            <button onClick={() => setShowSearch(true)} title="Search tasks (⌘K)" style={{
+              display: "flex", alignItems: "center",
+              background: "rgba(255,255,255,0.08)",
+              border: "1px solid rgba(255,255,255,0.15)", color: "rgba(255,255,255,0.75)",
+              borderRadius: 6, padding: "5px 10px", cursor: "pointer",
+              fontSize: 14, fontFamily: "inherit",
+            }}>🔍</button>
             <button onClick={() => setShowSettingsMenu(m => !m)} style={{
               display: "flex", alignItems: "center", gap: 5,
               background: showSettingsMenu ? "rgba(255,255,255,0.15)" : "rgba(255,255,255,0.08)",
@@ -11141,7 +11427,18 @@ export default function App() {
           onImport={handleAddProject}
         />
       )}
-      {showNewProject && (
+      {showSearch && (
+          <GlobalSearch
+            projects={projects}
+            people={people}
+            onClose={() => setShowSearch(false)}
+            onOpen={(r) => {
+              setView("timeline");
+              setEditingItem(r.sub || r.del);
+            }}
+          />
+        )}
+        {showNewProject && (
         <NewProjectModal
           existingColors={projects.map(p => p.color)}
           onClose={() => setShowNewProject(false)}
