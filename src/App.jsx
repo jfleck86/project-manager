@@ -14,7 +14,7 @@ import {
 } from "./lib/permissions.js";
 import { MIN_DAY_W, MAX_DAY_W, D_ROW, S_ROW, COL_DEFAULTS } from "./constants/columns.js";
 import { PROJECT_COLORS } from "./constants/colors.js";
-import { getReadyTasks, buildReadyNotifications } from "./lib/workflowEngine.js";
+import { getReadyTasks, buildReadyNotifications, getDueSoonTasks, getOverdueTasks, buildDueSoonNotifications, buildOverdueNotifications } from "./lib/workflowEngine.js";
 import { parseDate, fmt, durDays, dayOffset, busyDays, addWorkingDays } from "./utils/dates.js";
 import { effortHours, classifyLoad, ptoDaysInWeek, availableHours } from "./utils/workload.js";
 import { getInitials } from "./utils/formatting.js";
@@ -5197,9 +5197,9 @@ function MyHubView({ projects, people, holidays, pto = [], currentUserId, onSetC
           ? [...completions, ...assignments, ...readyToStart]
           : [...assignments, ...readyToStart];
         if (!visibleNotifs.length) return null;
-        const typeIcon  = { task_completed:"✓", task_assigned:"+", task_ready:"▶" };
-        const typeColor = { task_completed:"#f97316", task_assigned:BRAND_TEAL, task_ready:"#6366f1" };
-        const typeLabel = { task_completed:"Task Completed", task_assigned:"Assigned to You", task_ready:"Ready to Start" };
+        const typeIcon  = { task_completed:"✓", task_assigned:"+", task_ready:"▶", due_soon:"⏰", overdue:"🔴" };
+        const typeColor = { task_completed:"#f97316", task_assigned:BRAND_TEAL, task_ready:"#6366f1", due_soon:"#d97706", overdue:"#e24b4a" };
+        const typeLabel = { task_completed:"Task Completed", task_assigned:"Assigned to You", task_ready:"Up Next", due_soon:"Due Soon", overdue:"Overdue" };
         return (
           <div style={{ background:"#fff", border:"1px solid rgba(0,0,0,0.08)", borderRadius:10, overflow:"hidden" }}>
             <div style={{ padding:"12px 16px", background:"#f8fafc", borderBottom:"1px solid rgba(0,0,0,0.07)", display:"flex", alignItems:"center", justifyContent:"space-between", gap:10 }}>
@@ -6852,11 +6852,11 @@ function KPIDashboardView({ projects, people, notifications, adminTasks = [], sb
         <div style={{ marginTop:8 }}>
           <div style={{ fontSize:12, fontWeight:700, color:NAVY, marginBottom:8 }}>Notification Engagement</div>
           <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:10 }}>
-            {["task_assigned","task_completed","task_ready"].map(type => {
+            {["task_assigned","task_completed","task_ready","due_soon","overdue"].map(type => {
               const sent   = notifications.filter(n => n.type === type).length;
               const opened = notifications.filter(n => n.type === type && n.isRead).length;
               const rate   = sent > 0 ? Math.round(opened/sent*100) : 0;
-              const label  = { task_assigned:"Assigned to You", task_completed:"Task Completed", task_ready:"Ready to Start" }[type];
+              const label  = { task_assigned:"Assigned to You", task_completed:"Task Completed", task_ready:"Up Next", due_soon:"Due Soon", overdue:"Overdue" }[type] || type;
               return (
                 <div key={type} style={{ background:"#f8fafc", borderRadius:7, padding:"10px 14px" }}>
                   <div style={{ fontSize:10, fontWeight:600, color:"#6b7280" }}>{label}</div>
@@ -10795,6 +10795,49 @@ export default function App() {
 
   useEffect(() => { loadAll(); }, [loadAll]);
 
+  // ── Due-soon and overdue notification check ─────────────────────────────────
+  // Runs when projects + notifications are both populated.
+  // Fires once per session per date — suppressed if already sent for a task.
+  useEffect(() => {
+    if (!projects.length || !SB_READY) return;
+    const todayStr = new Date().toLocaleDateString("en-CA");
+    // localStorage guard — survives page reloads so we never re-generate the same day
+    const lsKey = `pulsex_notif_check_${ownMemberId}`;
+    if (localStorage.getItem(lsKey) === todayStr) return;
+    localStorage.setItem(lsKey, todayStr);
+
+    // Only check tasks assigned to the current user — not all users
+    if (!ownMemberId) return;
+    const myDueSoonTasks = getDueSoonTasks(projects, notifications, todayStr, 3)
+      .filter(t => (t.assignees || []).includes(ownMemberId));
+    const myOverdueTasks = getOverdueTasks(projects, notifications, todayStr)
+      .filter(t => (t.assignees || []).includes(ownMemberId));
+
+    // Build notifications only for self — one notif per task for the current user
+    const dueSoonNotifs  = buildDueSoonNotifications({ tasks: myDueSoonTasks, people: people.filter(p => p.id === ownMemberId), notifications });
+    const overdueNotifs  = buildOverdueNotifications({ tasks: myOverdueTasks, people: people.filter(p => p.id === ownMemberId), notifications });
+    const allNew = [...dueSoonNotifs, ...overdueNotifs];
+
+    if (!allNew.length) return;
+
+    setNotifications(prev => [...allNew, ...prev]);
+    // No toast for ambient checks — these go silently to the notification bell.
+    // Toasts are reserved for real-time events (task assigned, ready to start, completed).
+
+    // Persist to Supabase
+    allNew.forEach(n => {
+      sb.upsert("task_notifications", {
+        id: n.id, task_id: n.taskId, notification_type: n.type,
+        message: n.message, assigned_to_person_id: n.assignedToPersonId,
+        project_id: n.projectId, deliverable_id: n.deliverableId,
+        is_read: false, created_at: n.createdAt,
+      }).then(r => { if (r?.error) console.error("[PulseX] notif save failed:", n.type, r.error); });
+    });
+
+    if (dueSoonNotifs.length)  console.log(`[PulseX] due-soon: ${dueSoonNotifs.length} notification(s) fired`);
+    if (overdueNotifs.length)  console.log(`[PulseX] overdue: ${overdueNotifs.length} notification(s) fired`);
+  }, [projects, notifications, SB_READY]); // eslint-disable-line react-hooks/exhaustive-deps
+
   // Load personal tasks separately — needs authUser.id which isn't available during loadAll
   useEffect(() => {
     // [PT] load effect
@@ -10957,35 +11000,10 @@ export default function App() {
       p.deliverables.some(d => d.id === updated.id || d.subtasks.some(s => s.id === updated.id))
     );
 
-    if (addedPersonIds.length > 0) {
-      for (const personId of addedPersonIds) {
-        const person = people.find(p => p.id === personId);
-        if (!person) continue;
-        // Skip assignment notification for proofreaders — they get notified via the Proof Queue instead
-        if (person.department === "Proof" || person.department === "Proofreading" || person.canProofread) continue;
-        const notifId = "notif_" + Date.now() + "_" + personId;
-        const msg = `${person.name} has been assigned to "${updated.title || oldItem?.title || "a task"}" in ${proj?.name || "a project"}`;
-        const notif = {
-          id: notifId, type: "task_assigned", message: msg,
-          assignedToPersonId: personId, completedByPersonId: null,
-          taskId: updated.id,
-          isRead: false, reviewedAt: null, createdAt: new Date().toISOString(),
-        };
-        setNotifications(prev => [notif, ...prev]);
-        setToastNotif({ ...notif });
-        console.log("[PulseX] assignment notification fired →", person.name);
-        // Persist to Supabase asynchronously (non-blocking)
-        if (SB_READY) {
-          sb.upsert("task_notifications", {
-            id: notifId, task_id: updated.id, notification_type: "task_assigned",
-            message: msg, assigned_to_person_id: personId,
-            is_read: false, created_at: notif.createdAt,
-          }).then(r => {
-            if (r?.error) console.error("[PulseX] assignee notif save failed:", r.error);
-          });
-        }
-      }
-    }
+    // ── Assignment notifications suppressed for project tasks ──────────────────
+    // Users should be notified when work is actionable (task_ready, due_soon, overdue),
+    // not when a PM is building a timeline weeks in advance.
+    // Standalone task assignments still fire via handleAssignAdminTask.}
 
     // Stub so the two call sites below still compile
     const fireAssigneeNotifications = () => {};
@@ -11061,12 +11079,26 @@ export default function App() {
     const wasJustCompleted = updated.status === "Done" && prevStatus !== "Done";
 
     if (wasJustCompleted) {
+      // Auto-dismiss due_soon / overdue notifications for the completed task
+      setNotifications(prev => prev.map(n =>
+        (n.taskId === updated.id && (n.type === 'due_soon' || n.type === 'overdue') && !n.isRead)
+          ? { ...n, isRead: true, reviewedAt: new Date().toISOString() }
+          : n
+      ));
+      if (SB_READY) {
+        // Mark stale notifications as read in DB
+        ['due_soon', 'overdue'].forEach(type => {
+          const stale = notifications.filter(n => n.taskId === updated.id && n.type === type && !n.isRead);
+          stale.forEach(n => sb.update('task_notifications', n.id, { is_read: true, reviewed_at: new Date().toISOString() }));
+        });
+      }
+
       const nextProjs = doSave(projects); // post-completion tree
       const readyTasks = getReadyTasks(nextProjs, updated.id);
       const readyNotifs = buildReadyNotifications({
         readyTasks,
         people,
-        completedByPersonId: authMemberId || currentUserId,
+        completedByPersonId: ownMemberId || currentUserId,
         notifications,
       });
       if (readyNotifs.length > 0) {
@@ -11683,7 +11715,59 @@ export default function App() {
       const sub  = del?.subtasks.find(s => s.id === subtaskId);
       const next = sub?.status === "Done" ? "In Progress" : "Done";
       const newProg = next === "Done" ? 100 : 0;
-      if (next === "Done") createNotification(sub?.title || "Task", del?.title || "", sub?.status);
+      if (next === "Done") {
+        createNotification(sub?.title || "Task", del?.title || "", sub?.status);
+        // ── Up Next workflow — wrapped in try/catch so a failure never blocks mark-done ──
+        try {
+          const afterDone = projects.map(p => p.id !== projectId ? p : {
+            ...p, deliverables: p.deliverables.map(d => d.id !== deliverableId ? d : {
+              ...d, subtasks: d.subtasks.map(s => s.id !== subtaskId ? s : { ...s, status: "Done" })
+            })
+          });
+          const readyTasks = getReadyTasks(afterDone, subtaskId);
+
+          // ── Diagnostics: log why no tasks are ready ──────────────────────
+          if (readyTasks.length === 0) {
+            const { flattenItems: _fi } = { flattenItems: (ps) => ps.flatMap(p => p.deliverables.flatMap(d =>
+              [{ ...d, _projId:p.id, _isSubtask:false, _parentDelId:null },
+               ...(d.subtasks||[]).map(s => ({ ...s, _projId:p.id, _isSubtask:true, _parentDelId:d.id }))]
+            ))};
+            const allItems = _fi(afterDone);
+            const completedItem = allItems.find(x => x.id === subtaskId);
+            const parentDel = afterDone.flatMap(p => p.deliverables).find(d => d.id === deliverableId);
+            const idx = (parentDel?.subtasks||[]).findIndex(s => s.id === subtaskId);
+            const nextSub = idx >= 0 ? parentDel?.subtasks[idx+1] : null;
+            const _ns = nextSub;
+            console.log("[PulseX] up-next | next task:", _ns?.title || "NONE (last task)");
+            console.log("[PulseX] up-next | next status:", _ns?.status);
+            console.log("[PulseX] up-next | next assignees:", JSON.stringify(_ns?.assignees));
+            console.log("[PulseX] up-next | next deps:", JSON.stringify(_ns?.dependencies));
+            console.log("[PulseX] up-next | already notified:", _ns ? notifications.some(n => n.type==="task_ready" && n.taskId===_ns.id) : "n/a");
+            console.log("[PulseX] up-next | readyTasks found:", readyTasks.length);
+          }
+          // ────────────────────────────────────────────────────────────────
+
+          const readyNotifs = buildReadyNotifications({
+            readyTasks, people,
+            completedByPersonId: ownMemberId || currentUserId,
+            notifications,
+          });
+          if (readyNotifs.length > 0) {
+            console.log(`[PulseX] up-next — ${readyTasks.length} task(s) ready:`, readyTasks.map(t => t.title));
+            setNotifications(prev => [...readyNotifs, ...prev]);
+            setToastNotif({ ...readyNotifs[0] });
+            if (SB_READY) readyNotifs.forEach(n => sb.upsert("task_notifications", {
+              id: n.id, task_id: n.taskId, notification_type: "task_ready",
+              message: n.message, assigned_to_person_id: n.assignedToPersonId,
+              completed_by_person_id: n.completedByPersonId,
+              project_id: n.projectId, deliverable_id: n.deliverableId,
+              is_read: false, created_at: n.createdAt,
+            }));
+          }
+        } catch (e) {
+          console.error("[PulseX] up-next workflow error (task still marked done):", e);
+        }
+      }
       optimistic(
         () => setProjects(ps => ps.map(p => p.id !== projectId ? p : { ...p, deliverables: p.deliverables.map(d => d.id !== deliverableId ? d : { ...d, subtasks: d.subtasks.map(s => s.id !== subtaskId ? s : { ...s, status: next, progress: newProg }) }) })),
         async () => { const { error } = await sb.update("subtasks", subtaskId, { status: next, progress: newProg }); return error; }

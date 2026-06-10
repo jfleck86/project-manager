@@ -4,35 +4,16 @@
  * Pure functions — no React state, no API calls.
  * All side effects (setNotifications, Supabase writes) are handled by the caller.
  *
- * Currently supported triggers:
- *   task_ready       — a task's predecessor(s) just completed
+ * Notification philosophy: notify when action is needed, not when data changes.
  *
- * Designed for future extension:
- *   deliverable_ready, proof_ready, review_required, approval_required
- */
-
-// ── Types (JSDoc only — no TypeScript required) ─────────────────────────────
-/**
- * @typedef {Object} FlatItem — a deliverable or subtask with project context
- * @property {string}   id
- * @property {string}   title
- * @property {string}   status
- * @property {string[]} assignees
- * @property {string[]} dependencies   IDs of tasks that must complete first
- * @property {string}   _projId
- * @property {string}   _projName
- * @property {string}   _projColor
- * @property {boolean}  _isSubtask
- * @property {string|null} _parentDelId
- * @property {string|null} _parentDelTitle
+ * Supported triggers:
+ *   task_ready   — a task's predecessor(s) just completed ("It's your turn to start")
+ *   due_soon     — task due within 3 days, not complete, not yet notified
+ *   overdue      — task past due date, not complete, not yet notified
  */
 
 /**
- * Flatten all deliverables and subtasks across all projects,
- * stamping each with project/deliverable context.
- *
- * @param {Array} projects
- * @returns {FlatItem[]}
+ * Flatten all deliverables and subtasks across all projects with context.
  */
 export function flattenItems(projects) {
   const items = [];
@@ -40,11 +21,11 @@ export function flattenItems(projects) {
     for (const d of (p.deliverables || [])) {
       items.push({
         ...d,
-        _projId:        p.id,
-        _projName:      p.name,
-        _projColor:     p.color,
-        _isSubtask:     false,
-        _parentDelId:   null,
+        _projId:         p.id,
+        _projName:       p.name,
+        _projColor:      p.color,
+        _isSubtask:      false,
+        _parentDelId:    null,
         _parentDelTitle: null,
       });
       for (const s of (d.subtasks || [])) {
@@ -64,18 +45,21 @@ export function flattenItems(projects) {
 }
 
 /**
- * Given an updated project tree (post-completion), return all tasks that
- * have just become "ready to start" because completedItemId was marked Done.
- *
- * A task is Ready when:
- *   1. It has at least one assignee
- *   2. Its status is Not Started (not In Progress, Done, or Blocked)
- *   3. ALL of its declared dependencies are now Done
- *      — OR — (no dependencies) it is the next subtask in sequence
- *
- * @param {Array}  projects        — project tree AFTER the completion is applied
- * @param {string} completedItemId — the task that was just marked Done
- * @returns {FlatItem[]}
+ * Check if a notification of a given type was already sent for a task.
+ * Prevents duplicate notifications.
+ */
+export function hasSentNotif(taskId, type, notifications) {
+  return (notifications || []).some(n => n.type === type && n.taskId === taskId);
+}
+
+/** Backwards compat alias */
+export function hasPendingReadyNotif(taskId, notifications) {
+  return hasSentNotif(taskId, 'task_ready', notifications);
+}
+
+/**
+ * Return tasks that just became unblocked because completedItemId was marked Done.
+ * A task is ready when all its dependencies are Done, or it is the next in sequence.
  */
 export function getReadyTasks(projects, completedItemId) {
   const allItems = flattenItems(projects);
@@ -85,121 +69,187 @@ export function getReadyTasks(projects, completedItemId) {
   const candidates = [];
   const seen = new Set();
 
-  // ── Strategy 1: dependency graph ───────────────────────────────────────────
+  // Strategy 1: explicit dependency graph
   for (const item of allItems) {
     if (item.id === completedItemId) continue;
-    if (item.status !== "Not Started") continue;            // only trigger for Not Started
+    if (item.status !== 'Not Started') continue;
     const deps = item.dependencies || [];
-    if (!deps.includes(completedItemId)) continue;          // must depend on completed task
-
-    // All other dependencies must also be Done
+    if (!deps.includes(completedItemId)) continue;
     const allReady = deps.every(depId => {
       const dep = allItems.find(x => x.id === depId);
-      return dep?.status === "Done";
+      return dep?.status === 'Done';
     });
-
     if (allReady && !seen.has(item.id)) {
       candidates.push(item);
       seen.add(item.id);
     }
   }
 
-  // ── Strategy 2: sequential fallback (no explicit deps declared) ────────────
-  // Only fires for subtasks, only when the completed task has no explicit
-  // dependents found above (avoids double-firing on mixed projects).
+  // Strategy 2: sequential fallback (no explicit deps)
   if (completedItem._isSubtask && completedItem._parentDelId) {
     for (const p of (projects || [])) {
       const parentDel = p.deliverables.find(d => d.id === completedItem._parentDelId);
       if (!parentDel) continue;
-
       const subtasks = parentDel.subtasks || [];
       const idx = subtasks.findIndex(s => s.id === completedItemId);
       if (idx < 0 || idx + 1 >= subtasks.length) continue;
-
       const next = subtasks[idx + 1];
-      const hasDeps     = (next.dependencies || []).length > 0;
-      const alreadySeen = seen.has(next.id);
-      const readyStatus = next.status === "Not Started";
-
-      if (!hasDeps && !alreadySeen && readyStatus) {
-        candidates.push({
-          ...next,
-          _projId:         p.id,
-          _projName:       p.name,
-          _projColor:      p.color,
-          _isSubtask:      true,
-          _parentDelId:    parentDel.id,
-          _parentDelTitle: parentDel.title,
-        });
+      if (!(next.dependencies || []).length && !seen.has(next.id) && next.status === 'Not Started') {
+        candidates.push({ ...next, _projId: p.id, _projName: p.name, _projColor: p.color,
+          _isSubtask: true, _parentDelId: parentDel.id, _parentDelTitle: parentDel.title });
         seen.add(next.id);
       }
-      break; // only check one project per parent deliverable
+      break;
     }
   }
 
-  // Only notify for tasks that actually have someone assigned
   return candidates.filter(t => (t.assignees || []).length > 0);
 }
 
 /**
- * Check if there is already an unread "task_ready" notification for a task.
- * Prevents duplicate notifications while a task is still pending action.
- *
- * @param {string} taskId
- * @param {Array}  notifications — current notification array from state
- * @returns {boolean}
- */
-export function hasPendingReadyNotif(taskId, notifications) {
-  return (notifications || []).some(
-    n => n.type === "task_ready" && n.taskId === taskId && !n.isRead
-  );
-}
-
-/**
- * Build notification objects for newly-ready tasks.
- * Returns one notification per assignee per task.
- *
- * @param {Object} params
- * @param {FlatItem[]} params.readyTasks
- * @param {Array}      params.people              — people array from state
- * @param {string}     params.completedByPersonId — who just completed the predecessor
- * @param {Array}      params.notifications        — existing notifications for dup check
- * @returns {Array}    array of notification objects ready to push into state
+ * Build "It's your turn to start" notifications for newly-unblocked tasks.
+ * One notification per assignee per task. Deduped against existing notifications.
  */
 export function buildReadyNotifications({ readyTasks, people, completedByPersonId, notifications }) {
   const results = [];
-
   for (const task of readyTasks) {
-    if (hasPendingReadyNotif(task.id, notifications)) continue;  // skip duplicates
-
+    if (hasSentNotif(task.id, 'task_ready', notifications)) continue;
     for (const personId of (task.assignees || [])) {
       const person = (people || []).find(p => p.id === personId);
       if (!person) continue;
-
-      const notifId  = `notif_ready_${task.id}_${personId}_${Date.now()}`;
-      const projPart = task._projName ? ` in "${task._projName}"` : "";
-      const message  = `"${task.title || "A task"}"${projPart} is now ready for you to begin.`;
-
+      const notifId = `notif_ready_${task.id}_${personId}_${Date.now()}`;
+      const duePart = task.end
+        ? ` · Due ${new Date(task.end + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`
+        : '';
       results.push({
         id:                  notifId,
-        type:                "task_ready",
-        message,
+        type:                'task_ready',
+        message:             `It's your turn to start "${task.title || 'a task'}"${duePart}`,
         assignedToPersonId:  personId,
         completedByPersonId: completedByPersonId || null,
         taskId:              task.id,
-        projectId:           task._projId          || null,
-        deliverableId:       task._parentDelId      || null,
+        projectId:           task._projId       || null,
+        deliverableId:       task._parentDelId  || null,
         isRead:              false,
         reviewedAt:          null,
         createdAt:           new Date().toISOString(),
-        // Metadata for the UI
         _taskTitle:          task.title,
         _projName:           task._projName,
         _projColor:          task._projColor,
         _isSubtask:          task._isSubtask,
+        _dueDate:            task.end || null,
       });
     }
   }
+  return results;
+}
 
+/**
+ * Find tasks due within the next dueDays days that haven't had a due_soon notif sent.
+ *
+ * @param {Array}  projects
+ * @param {Array}  notifications  — current loaded notifications
+ * @param {string} todayStr       — YYYY-MM-DD
+ * @param {number} dueDays        — default 3
+ */
+export function getDueSoonTasks(projects, notifications, todayStr, dueDays = 3) {
+  const allItems = flattenItems(projects);
+  const today = new Date(todayStr + 'T00:00:00');
+  const cutoff = new Date(today.getTime() + dueDays * 86400000);
+  const cutoffStr = cutoff.toISOString().slice(0, 10);
+
+  return allItems.filter(t =>
+    t.status !== 'Done' &&
+    t.status !== 'Cancelled' &&
+    t.end &&
+    t.end >= todayStr &&
+    t.end <= cutoffStr &&
+    (t.assignees || []).length > 0 &&
+    !hasSentNotif(t.id, 'due_soon', notifications)
+  );
+}
+
+/**
+ * Find tasks that are overdue (past due date, not done) with no overdue notif yet.
+ */
+export function getOverdueTasks(projects, notifications, todayStr) {
+  const allItems = flattenItems(projects);
+  return allItems.filter(t =>
+    t.status !== 'Done' &&
+    t.status !== 'Cancelled' &&
+    t.end &&
+    t.end < todayStr &&
+    (t.assignees || []).length > 0 &&
+    !hasSentNotif(t.id, 'overdue', notifications)
+  );
+}
+
+/**
+ * Build due-soon notification objects. One per assignee per task.
+ */
+export function buildDueSoonNotifications({ tasks, people, notifications }) {
+  const results = [];
+  for (const task of tasks) {
+    if (hasSentNotif(task.id, 'due_soon', notifications)) continue;
+    const dueDate = task.end
+      ? new Date(task.end + 'T00:00:00').toLocaleDateString('en-US',
+          { weekday: 'long', month: 'short', day: 'numeric' })
+      : 'soon';
+    for (const personId of (task.assignees || [])) {
+      const person = (people || []).find(p => p.id === personId);
+      if (!person) continue;
+      const notifId = `notif_soon_${task.id}_${personId}_${Date.now()}`;
+      results.push({
+        id:                  notifId,
+        type:                'due_soon',
+        message:             `"${task.title}" is due ${dueDate}`,
+        assignedToPersonId:  personId,
+        completedByPersonId: null,
+        taskId:              task.id,
+        projectId:           task._projId      || null,
+        deliverableId:       task._parentDelId || null,
+        isRead:              false,
+        reviewedAt:          null,
+        createdAt:           new Date().toISOString(),
+        _taskTitle:          task.title,
+        _projName:           task._projName,
+        _projColor:          task._projColor,
+        _dueDate:            task.end || null,
+      });
+    }
+  }
+  return results;
+}
+
+/**
+ * Build overdue notification objects. One per assignee per task.
+ */
+export function buildOverdueNotifications({ tasks, people, notifications }) {
+  const results = [];
+  for (const task of tasks) {
+    if (hasSentNotif(task.id, 'overdue', notifications)) continue;
+    for (const personId of (task.assignees || [])) {
+      const person = (people || []).find(p => p.id === personId);
+      if (!person) continue;
+      const notifId = `notif_overdue_${task.id}_${personId}_${Date.now()}`;
+      results.push({
+        id:                  notifId,
+        type:                'overdue',
+        message:             `"${task.title}" is now overdue`,
+        assignedToPersonId:  personId,
+        completedByPersonId: null,
+        taskId:              task.id,
+        projectId:           task._projId      || null,
+        deliverableId:       task._parentDelId || null,
+        isRead:              false,
+        reviewedAt:          null,
+        createdAt:           new Date().toISOString(),
+        _taskTitle:          task.title,
+        _projName:           task._projName,
+        _projColor:          task._projColor,
+        _dueDate:            task.end || null,
+      });
+    }
+  }
   return results;
 }
