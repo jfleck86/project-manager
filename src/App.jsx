@@ -2079,7 +2079,83 @@ function cascadeDates(projects, changedId, newEnd, holidays = []) {
 
 
 
-function TimelineView({ projects, people, onEditItem, onAddDeliverable, onAddSubtask, onMarkDone, onSaveItem, holidays = [], onInsertSubtask, onReorderDeliverables, onReorderSubtasks, deliverableTemplates = [], onApplyTemplate, onDeleteSubtask, statusNotes = {}, onUpdateNote, onSaveProject, onOpenProject, clipboard, onCopySubtask, onCopyDeliverable, onPasteSubtask, onPasteDeliverable }) {
+// ── OverdueTray — collapsible overdue task list at top of Timeline ────────────
+function OverdueTray({ items, onOpen, todayStr }) {
+  const [open, setOpen] = React.useState(true);
+  const fmtDate = d => d ? new Date(d + "T00:00:00").toLocaleDateString("en-US", { month:"short", day:"numeric" }) : "—";
+  const daysOverdue = d => {
+    const diff = Math.round((new Date(todayStr) - new Date(d + "T00:00:00")) / 86400000);
+    return diff === 1 ? "1d overdue" : `${diff}d overdue`;
+  };
+
+  return (
+    <div style={{ background:"#fff", border:"1px solid rgba(226,75,74,0.25)", borderRadius:8,
+      overflow:"hidden", boxShadow:"0 1px 4px rgba(226,75,74,0.08)" }}>
+      {/* Header */}
+      <div onClick={() => setOpen(o => !o)} style={{
+        display:"flex", alignItems:"center", gap:8, padding:"8px 14px",
+        background:"rgba(226,75,74,0.04)", cursor:"pointer",
+        borderBottom: open ? "1px solid rgba(226,75,74,0.12)" : "none" }}>
+        <span style={{ fontSize:13 }}>🔴</span>
+        <span style={{ fontSize:12, fontWeight:700, color:"#a32d2d" }}>
+          {items.length} overdue task{items.length !== 1 ? "s" : ""} assigned to you
+        </span>
+        <span style={{ fontSize:10, color:"#c0392b", background:"rgba(226,75,74,0.1)",
+          borderRadius:8, padding:"1px 7px", fontWeight:600 }}>
+          Needs attention
+        </span>
+        <span style={{ marginLeft:"auto", fontSize:10, color:"#9ca3af" }}>{open ? "▲ Collapse" : "▼ Show"}</span>
+      </div>
+      {/* Task list */}
+      {open && (
+        <div>
+          {items.map((t, i) => (
+            <div key={t.id} style={{
+              display:"flex", alignItems:"center", gap:10, padding:"9px 14px",
+              borderBottom: i < items.length - 1 ? "1px solid rgba(0,0,0,0.04)" : "none",
+              background: i % 2 === 0 ? "rgba(0,0,0,0.005)" : "transparent" }}>
+              {/* Color bar */}
+              <div style={{ width:3, height:32, borderRadius:2, background:t._projColor, flexShrink:0 }} />
+              {/* Info */}
+              <div style={{ flex:1, minWidth:0 }}>
+                <div style={{ fontSize:12, fontWeight:600, color:"#1f2937",
+                  overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>
+                  {t.title}
+                </div>
+                <div style={{ fontSize:11, color:"#6b7280", marginTop:1,
+                  display:"flex", gap:6, alignItems:"center", flexWrap:"wrap" }}>
+                  <span style={{ color: t._projColor, fontWeight:600 }}>{t._projName}</span>
+                  {t._isSub && <><span style={{ color:"#d1d5db" }}>›</span><span>{t._delTitle}</span></>}
+                </div>
+              </div>
+              {/* Due date + overdue badge */}
+              <div style={{ textAlign:"right", flexShrink:0 }}>
+                <div style={{ fontSize:10, fontWeight:700, color:"#fff",
+                  background:"#e24b4a", borderRadius:5, padding:"2px 8px", marginBottom:2 }}>
+                  {daysOverdue(t.end)}
+                </div>
+                <div style={{ fontSize:10, color:"#9ca3af" }}>due {fmtDate(t.end)}</div>
+              </div>
+              {/* Open button */}
+              <button
+                onClick={() => onOpen({ ...t, projectId: t._projId, projectName: t._projName,
+                  projectColor: t._projColor, deliverableId: t._delId })}
+                style={{ fontSize:11, fontWeight:600, color:"#0ea5e9",
+                  background:"rgba(14,165,233,0.08)", border:"1px solid rgba(14,165,233,0.2)",
+                  borderRadius:6, padding:"4px 12px", cursor:"pointer", flexShrink:0,
+                  fontFamily:"inherit", whiteSpace:"nowrap" }}>
+                Open →
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+
+function TimelineView({ projects, people, onEditItem, onAddDeliverable, onAddSubtask, onMarkDone, onSaveItem, holidays = [], onInsertSubtask, onReorderDeliverables, onReorderSubtasks, deliverableTemplates = [], onApplyTemplate, ownMemberId = "", onDeleteSubtask, statusNotes = {}, onUpdateNote, onSaveProject, onOpenProject, clipboard, onCopySubtask, onCopyDeliverable, onPasteSubtask, onPasteDeliverable }) {
   const [collapsed, setCollapsed] = useState(() => {
     try { return JSON.parse(localStorage.getItem('planr_collapsed') || '{}'); } catch { return {}; }
   });
@@ -2248,11 +2324,16 @@ function TimelineView({ projects, people, onEditItem, onAddDeliverable, onAddSub
 
   // Collect all IDs for dependency lookup across whole timeline
   const todayForBadge = new Date().toLocaleDateString("en-CA");
-  const overdueCount = projects.flatMap(p => p.deliverables.flatMap(d =>
-    [d, ...(d.subtasks||[])].filter(t =>
-      t.status !== "Done" && t.end && t.end < todayForBadge
-    )
-  )).length;
+  const overdueItems = projects.flatMap(p => p.deliverables.flatMap(d => {
+    const tasks = d.subtasks?.length
+      ? d.subtasks.filter(s => s.status !== "Done" && s.end && s.end < todayForBadge)
+          .map(s => ({ ...s, _projName: p.name, _projColor: p.color, _delTitle: d.title, _projId: p.id, _delId: d.id, _isSub: true }))
+      : (d.status !== "Done" && d.end && d.end < todayForBadge
+          ? [{ ...d, _projName: p.name, _projColor: p.color, _delTitle: d.title, _projId: p.id, _delId: d.id, _isSub: false }]
+          : []);
+    return tasks;
+  }));
+  const overdueCount = overdueItems.length;
 
   const allItemsFlat = projects.flatMap(p => p.deliverables.flatMap(d => [
     { ...d, projectColor: p.color, projectName: p.name },
@@ -2287,6 +2368,7 @@ function TimelineView({ projects, people, onEditItem, onAddDeliverable, onAddSub
         </button>
       </div>
 
+      {overdueItems.length > 0 && <OverdueTray items={overdueItems} onOpen={onEditItem} todayStr={todayForBadge} />}
       {/*
         ── TIMELINE BOX ──────────────────────────────────────────────────────
         This is a self-contained scroll region. It fills remaining viewport
@@ -12092,6 +12174,7 @@ export default function App() {
             onMarkDone={handleMarkDone} onSaveItem={handleSaveItem} holidays={holidays}
             onInsertSubtask={handleInsertSubtask}
             onReorderDeliverables={handleReorderDeliverables} onReorderSubtasks={handleReorderSubtasks}
+              ownMemberId={ownMemberId}
               deliverableTemplates={deliverableTemplates}
               onApplyTemplate={(del, tpl) => {
                 const today = new Date().toISOString().slice(0,10);
