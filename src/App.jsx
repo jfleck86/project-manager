@@ -4379,6 +4379,107 @@ function WorkReportModal({ meId, meName, projects, adminTasks, people, onClose }
 }
 
 
+// ── AssignedTasksManager — shows tasks the current admin has sent to others ────
+function AssignedTasksManager({ tasks, people, onEdit, onDelete, onAssign }) {
+  const [open, setOpen] = React.useState(false);
+  const [confirmId, setConfirmId] = React.useState(null);
+  const personName = (id) => people.find(p => p.id === id)?.name || "Someone";
+  const fmtDate = (ds) => ds ? new Date(ds + "T00:00:00").toLocaleDateString("en-US", { month:"short", day:"numeric" }) : null;
+  const statusColor = { "Not Started":"#64748b", "In Progress":"#0ea5e9", "Blocked":"#ef4444" };
+
+  return (
+    <div style={{ background:"#fff", border:"1px solid rgba(0,0,0,0.08)", borderRadius:10, overflow:"hidden" }}>
+      <div
+        onClick={() => setOpen(o => !o)}
+        style={{ padding:"12px 16px", background:"#f8fafc", borderBottom: open ? "1px solid rgba(0,0,0,0.07)" : "none",
+          display:"flex", alignItems:"center", justifyContent:"space-between", cursor:"pointer" }}>
+        <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+          <span style={{ fontSize:13 }}>📤</span>
+          <span style={{ fontSize:12, fontWeight:800, color:"#1f2937" }}>Tasks I've Assigned</span>
+          {tasks.length > 0 && (
+            <span style={{ fontSize:10, color:"#6b7280", background:"rgba(0,0,0,0.05)", borderRadius:10, padding:"1px 7px" }}>
+              {tasks.length} open
+            </span>
+          )}
+        </div>
+        <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+          <button
+            onClick={e => { e.stopPropagation(); onAssign && onAssign(); }}
+            style={{ fontSize:11, fontWeight:700, color:"#fff", background:BRAND_TEAL, border:"none",
+              borderRadius:6, padding:"4px 12px", cursor:"pointer", fontFamily:"inherit", lineHeight:1.4 }}>
+            + Assign Task
+          </button>
+          <span style={{ fontSize:10, color:"#9ca3af" }}>{open ? "▲" : "▼"}</span>
+        </div>
+      </div>
+
+      {open && (
+        <div>
+          {tasks.length === 0 && (
+            <div style={{ padding:"20px 16px", textAlign:"center", color:"#9ca3af", fontSize:12 }}>
+              No open assigned tasks. Use + Assign Task to send a task to a team member.
+            </div>
+          )}
+          {tasks.map(task => {
+            const assignee = personName(task.assignedTo);
+            const due = fmtDate(task.dueDate);
+            const sc = statusColor[task.status] || "#64748b";
+            const isConfirming = confirmId === task.id;
+            return (
+              <div key={task.id} style={{ display:"flex", alignItems:"center", gap:10, padding:"10px 16px",
+                borderBottom:"1px solid rgba(0,0,0,0.04)" }}
+                onMouseEnter={e => e.currentTarget.style.background = "rgba(0,0,0,0.01)"}
+                onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
+                <div style={{ flex:1, minWidth:0 }}>
+                  <div style={{ fontSize:12, fontWeight:600, color:"#1f2937", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>
+                    {task.title}
+                  </div>
+                  <div style={{ fontSize:10, color:"#6b7280", marginTop:2, display:"flex", gap:8, alignItems:"center" }}>
+                    <span>→ {assignee}</span>
+                    {due && <span style={{ color:"#9ca3af" }}>{due}</span>}
+                    <span style={{ color:sc, fontWeight:600 }}>{task.status}</span>
+                  </div>
+                </div>
+                {isConfirming ? (
+                  <div style={{ display:"flex", gap:5, alignItems:"center", flexShrink:0 }}>
+                    <span style={{ fontSize:10, color:"#6b7280" }}>Cancel this task?</span>
+                    <button onClick={() => { onDelete(task.id); setConfirmId(null); }}
+                      style={{ fontSize:10, fontWeight:700, color:"#fff", background:"#ef4444",
+                        border:"none", borderRadius:5, padding:"3px 10px", cursor:"pointer", fontFamily:"inherit" }}>
+                      Yes, cancel
+                    </button>
+                    <button onClick={() => setConfirmId(null)}
+                      style={{ fontSize:10, color:"#6b7280", background:"none", border:"1px solid rgba(0,0,0,0.1)",
+                        borderRadius:5, padding:"3px 8px", cursor:"pointer", fontFamily:"inherit" }}>
+                      Keep
+                    </button>
+                  </div>
+                ) : (
+                  <div style={{ display:"flex", gap:5, flexShrink:0 }}>
+                    <button onClick={() => onEdit(task)}
+                      style={{ fontSize:10, fontWeight:600, color:"#0ea5e9", background:"rgba(14,165,233,0.08)",
+                        border:"1px solid rgba(14,165,233,0.2)", borderRadius:5, padding:"3px 10px",
+                        cursor:"pointer", fontFamily:"inherit" }}>
+                      Edit
+                    </button>
+                    <button onClick={() => setConfirmId(task.id)}
+                      style={{ fontSize:10, fontWeight:600, color:"#ef4444", background:"rgba(239,68,68,0.06)",
+                        border:"1px solid rgba(239,68,68,0.2)", borderRadius:5, padding:"3px 10px",
+                        cursor:"pointer", fontFamily:"inherit" }}>
+                      Cancel
+                    </button>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+
 function MyHubView({ projects, people, holidays, pto = [], currentUserId, onSetCurrentUser, onEditItem, onMarkDone, onSaveItem, savePto, deletePto, personalTasks = [], onSavePersonalTask, onDeletePersonalTask, currentRole = "member", authMemberId = "", authUUID = "", adminTasks = [], onSaveAdminTask, onUpdateAdminTaskStatus, onDeleteAdminTask, notifications = [], onDismissNotification, onOpenNotifTask, setToastNotif }) {
   const TODAY = new Date(); TODAY.setHours(0,0,0,0);
 
@@ -5060,6 +5161,21 @@ function MyHubView({ projects, people, holidays, pto = [], currentUserId, onSetC
       </div>
     )}
 
+      {/* ── Tasks I've Assigned (admin only) ─────────────────────────────────── */}
+      {currentRole === "admin" && (() => {
+        const sentTasks = adminTasks.filter(t =>
+          t.assignedBy === authMemberId && t.status !== "Done"
+        );
+        return (
+          <AssignedTasksManager
+            tasks={sentTasks}
+            people={people}
+            onEdit={(task) => { setEditingAdminTask(task); setShowAssignModal(true); }}
+            onDelete={(id) => onDeleteAdminTask && onDeleteAdminTask(id)}
+            onAssign={() => { setEditingAdminTask(null); setShowAssignModal(true); }}
+          />
+        );
+      })()}
 
       {/* ── Assigned to Me ── */}
       <div style={{ background:"#fff", border:"1px solid rgba(0,0,0,0.08)", borderRadius:10, overflow:"hidden" }}>
@@ -5079,12 +5195,6 @@ function MyHubView({ projects, people, holidays, pto = [], currentUserId, onSetC
               </span>
             )}
           </div>
-          {currentRole === "admin" && (
-            <button onClick={() => { setEditingAdminTask(null); setShowAssignModal(true); }}
-              style={{ fontSize:11, fontWeight:700, color:"#fff", background:BRAND_TEAL, border:"none", borderRadius:6, padding:"6px 14px", cursor:"pointer", fontFamily:"inherit" }}>
-              + Assign Task
-            </button>
-          )}
         </div>
 
         {/* Dependency awareness */}
@@ -10010,7 +10120,7 @@ export default function App() {
         }
       }).catch(() => {});
     // Load admin-assigned tasks — graceful if table doesn't exist yet
-    sb.select("admin_tasks", "order=created_at.desc")  // deleted_at filter added after SQL migration
+    sb.select("admin_tasks", "deleted_at=is.null&order=created_at.desc")
       .then(r => {
         if (r?.error) {
           console.warn("[PulseX] admin_tasks not available — run the setup SQL:", r.error);
@@ -10569,7 +10679,7 @@ export default function App() {
   const deleteAdminTask = async (id) => {
     setAdminTasks(prev => prev.filter(t => t.id !== id));
     logChange("admin_task", id, "delete", {});
-    if (SB_READY) await sb.softDelete("admin_tasks", id, currentUserId);
+    if (SB_READY) await sb.delete("admin_tasks", id);
   };
 
   // Auto-dismiss toast after 8s using useEffect (not in render)
