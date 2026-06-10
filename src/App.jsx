@@ -867,12 +867,19 @@ function CheckButton({ isDone, onClick }) {
 // ─── PROJECT DETAILS MODAL ───────────────────────────────────────────────────
 function ProjectDetailsModal({ proj, people, onClose, onSave, onArchive, onDelete, onSaveAsTemplate }) {
   const [form, setForm] = useState({
-    name:           proj.name,
-    client:         proj.client || "",
-    projectNumber:  proj.projectNumber || "",
-    ownerId:        proj.ownerId || "",
-    teamMemberIds:  proj.teamMemberIds || [],
-    notes:          proj.notes || "",
+    name:             proj.name,
+    client:           proj.client || "",
+    projectNumber:    proj.projectNumber || "",
+    ownerId:          proj.ownerId || "",
+    teamMemberIds:    proj.teamMemberIds || [],
+    notes:            proj.notes || "",
+    // Phase 1 initiation fields
+    priority:         proj.priority         || "Medium",
+    accountLeadId:    proj.accountLeadId    || proj.ownerId || "",
+    projectManagerId: proj.projectManagerId || "",
+    objective:        proj.objective        || "",
+    projectStatus:    proj.projectStatus    || "Needs Timeline",
+    earliestLaunchDate: proj.earliestLaunchDate || "",
   });
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
   const [fromTemplate, setFromTemplate] = useState(null); // selected deliverable template
@@ -940,35 +947,18 @@ function ProjectDetailsModal({ proj, people, onClose, onSave, onArchive, onDelet
               placeholder="e.g. 23-041" style={inputStyle} />
           </div>
 
+
           {/* Owner / Account Lead */}
           <div>
-            <label style={labelStyle}>Account Lead / Project Owner</label>
-            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-              <div onClick={() => set("ownerId", "")}
-                style={{ padding: "6px 14px", borderRadius: 8, border: `1px solid ${!form.ownerId ? proj.color : "rgba(0,0,0,0.1)"}`,
-                  background: !form.ownerId ? proj.color + "15" : "transparent",
-                  color: !form.ownerId ? proj.color : "#6b7280", cursor: "pointer", fontSize: 12, fontWeight: 600 }}>
-                None
-              </div>
-              {people.map(p => {
-                const sel = form.ownerId === p.id;
-                return (
-                  <div key={p.id} onClick={() => set("ownerId", sel ? "" : p.id)}
-                    style={{ display: "flex", alignItems: "center", gap: 7, padding: "6px 12px", borderRadius: 8,
-                      border: `1px solid ${sel ? p.color : "rgba(0,0,0,0.1)"}`,
-                      background: sel ? p.color + "15" : "transparent", cursor: "pointer", transition: "all 0.1s" }}>
-                    <div style={{ width: 20, height: 20, borderRadius: "50%", background: p.color,
-                      display: "flex", alignItems: "center", justifyContent: "center",
-                      fontSize: 8, fontWeight: 800, color: "#fff", flexShrink: 0 }}>
-                      {p.name.split(" ").map(n => n[0]).join("").slice(0,2)}
-                    </div>
-                    <span style={{ fontSize: 12, fontWeight: sel ? 700 : 400, color: sel ? p.color : "#374151" }}>{p.name}</span>
-                    {sel && <span style={{ fontSize: 9, color: p.color }}>✓</span>}
-                  </div>
-                );
-              })}
-            </div>
+            <label style={labelStyle}>Account Lead</label>
+            <select value={form.accountLeadId || form.ownerId || ""}
+              onChange={e => { set("accountLeadId", e.target.value); set("ownerId", e.target.value); }}
+              style={inputStyle}>
+              <option value="">— None —</option>
+              {people.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+            </select>
           </div>
+
 
           {/* Project Team */}
           <div>
@@ -1005,6 +995,42 @@ function ProjectDetailsModal({ proj, people, onClose, onSave, onArchive, onDelet
               </div>
             )}
           </div>
+
+          {/* Project Manager */}
+          <div>
+            <label style={labelStyle}>Project Manager</label>
+            <select value={form.projectManagerId} onChange={e => set("projectManagerId", e.target.value)}
+              style={inputStyle}>
+              <option value="">— None —</option>
+              {people.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+            </select>
+          </div>
+
+          {/* Priority + Status */}
+          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12 }}>
+            <div>
+              <label style={labelStyle}>Priority</label>
+              <select value={form.priority} onChange={e => set("priority", e.target.value)} style={inputStyle}>
+                {["Critical","High","Medium","Low"].map(p => <option key={p}>{p}</option>)}
+              </select>
+            </div>
+            <div>
+              <label style={labelStyle}>Project Status</label>
+              <select value={form.projectStatus} onChange={e => set("projectStatus", e.target.value)} style={inputStyle}>
+                {["Needs Timeline","Timeline In Progress","Ready for Start of Work","Active","Complete","Archived"].map(s => <option key={s}>{s}</option>)}
+              </select>
+            </div>
+          </div>
+
+          {/* Objective */}
+          <div>
+            <label style={labelStyle}>Overall Project Objective</label>
+            <textarea value={form.objective} onChange={e => set("objective", e.target.value)}
+              placeholder="What is this project trying to achieve?"
+              rows={3} style={{ ...inputStyle, resize:"vertical", lineHeight:1.5 }} />
+          </div>
+
+
 
           {/* Notes */}
           <div>
@@ -11287,13 +11313,19 @@ export default function App() {
     () => setProjects(projs => projs.map(p => p.id === proj.id ? { ...p, ...proj } : p)),
     async () => {
       const { error } = await sb.update("projects", proj.id, {
-        owner_id:         proj.ownerId || null,
-        name:             proj.name,
-        client:           proj.client || "",
-        project_number:   proj.projectNumber || "",
-        team_member_ids:  proj.teamMemberIds || [],
-        notes:            proj.notes || "",
-        meta:             proj.meta || {},
+        owner_id:            proj.ownerId       || null,
+        name:                proj.name,
+        client:              proj.client        || "",
+        project_number:      proj.projectNumber || "",
+        team_member_ids:     proj.teamMemberIds || [],
+        notes:               proj.notes         || "",
+        meta:                proj.meta          || {},
+        priority:            proj.priority      || "Medium",
+        account_lead_id:     proj.accountLeadId || proj.ownerId || null,
+        project_manager_id:  proj.projectManagerId || null,
+        objective:           proj.objective     || "",
+        project_status:      proj.projectStatus || "Active",
+        earliest_launch_date: proj.earliestLaunchDate || null,
       });
       return error;
     },
