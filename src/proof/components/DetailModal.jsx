@@ -29,7 +29,7 @@ export default function DetailModal({ req, currentUser, proofreaders, proofreade
               <h2 style={{ margin:0, fontSize:18, fontWeight:800, color:C.navy }}>{req.project_name}</h2>
               <div style={{ fontSize:13, color:C.muted, marginTop:4 }}>{req.client}{req.project_number ? ` · ${req.project_number}` : ""}</div>
               {req.related_task_id && (
-                <div style={{ fontSize:11, color:"#0ea5e9", marginTop:4, display:"flex", alignItems:"center", gap:4 }}>
+                <div style={{ fontSize:11, color:C.teal, marginTop:4, display:"flex", alignItems:"center", gap:4 }}>
                   🔗 Linked to PulseX task — completion will sync automatically
                 </div>
               )}

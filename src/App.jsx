@@ -5276,6 +5276,14 @@ function MyHubView({ projects, people, holidays, pto = [], currentUserId, onSetC
                       <div style={{ fontSize:10, color:"#9ca3af", marginTop:3 }}>{when}</div>
                     </div>
                     <div style={{ display:"flex", flexDirection:"column", gap:4, flexShrink:0 }}>
+                      {n.type === "task_completed" && !n.projectId && (
+                        <button onClick={e => { e.stopPropagation(); onOpenNotifTask?.(n); }}
+                          style={{ fontSize:10, fontWeight:700, color:"#00B5B5", background:"rgba(0,181,181,0.08)",
+                            border:"1px solid rgba(0,181,181,0.25)", borderRadius:5, padding:"3px 9px",
+                            cursor:"pointer", fontFamily:"inherit", whiteSpace:"nowrap" }}>
+                          Open Queue ↗
+                        </button>
+                      )}
                       {n.type === "task_assigned" && (
                         <button onClick={e => {
                           e.stopPropagation();
@@ -12240,9 +12248,16 @@ export default function App() {
             onDismissNotification={dismissNotification}
             setToastNotif={setToastNotif}
             onOpenNotifTask={(notif) => {
-              const proj = projects.find(p => p.id === notif.projectId);
-              const del  = proj?.deliverables.find(d => d.id === notif.deliverableId);
-              if (del) handleEditItem({ ...del, projectId: proj.id, projectName: proj.name, projectColor: proj.color });
+              if (!notif.projectId) {
+                // Proof queue completion — open proof queue with the request pre-highlighted
+                try { localStorage.setItem("proof_queue_people", JSON.stringify(people)); } catch(e) {}
+                if (notif.taskId) localStorage.setItem("proof_open_request_id", notif.taskId);
+                window.open("/proof", "_blank");
+              } else {
+                const proj = projects.find(p => p.id === notif.projectId);
+                const del  = proj?.deliverables.find(d => d.id === notif.deliverableId);
+                if (del) handleEditItem({ ...del, projectId: proj.id, projectName: proj.name, projectColor: proj.color });
+              }
             }}
           />
         )}

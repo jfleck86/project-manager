@@ -81,6 +81,16 @@ export default function ProofApp() {
       }
 
       setLoading(false);
+
+      // Auto-open a specific request if navigated from PulseX notification
+      const openId = localStorage.getItem("proof_open_request_id");
+      if (openId) {
+        localStorage.removeItem("proof_open_request_id");
+        // Small delay to let requests load, then find and open it
+        setTimeout(() => {
+          setViewing(openId);
+        }, 400);
+      }
     }
     boot();
   }, []);
@@ -246,7 +256,12 @@ export default function ProofApp() {
     const active = view === id;
     return (
       <button onClick={() => setView(id)}
-        style={{ padding:"8px 14px", borderRadius:6, border:"none", cursor:"pointer", fontFamily:"inherit", fontSize:13, fontWeight:600, background:active?C.teal:"none", color:active?"#fff":"rgba(255,255,255,0.65)" }}>
+        style={{ padding:"5px 10px", borderRadius:5, border:`1px solid ${active ? C.teal+"80" : "rgba(255,255,255,0.1)"}`,
+          cursor:"pointer", fontFamily:C.font, fontSize:12, fontWeight:700,
+          background:active?"rgba(0,181,181,0.18)":"rgba(255,255,255,0.04)",
+          color:active?C.teal:"rgba(255,255,255,0.6)", flexShrink:0,
+          display:"flex", flexDirection:"column", alignItems:"center", gap:1, minWidth:52,
+          letterSpacing:"0.02em" }}>
         {label}
         {badge > 0 && <span style={{ marginLeft:6, fontSize:10, background:"rgba(255,255,255,0.25)", borderRadius:8, padding:"1px 5px" }}>{badge}</span>}
       </button>
@@ -256,7 +271,7 @@ export default function ProofApp() {
   // ── Form screen (new request OR editing OR pre-filled from PulseX) ──
   if (editing !== null || view === "form") {
     return (
-      <div style={{ minHeight:"100vh", background:C.bg, display:"flex", alignItems:"center", justifyContent:"center", padding:24, fontFamily:"system-ui,sans-serif" }}>
+      <div style={{ minHeight:"100vh", background:C.bg, display:"flex", alignItems:"center", justifyContent:"center", padding:24, fontFamily:'"Roboto", Arial, sans-serif' }}>
         {editing?._prefill && (
           <div style={{ position:"fixed", top:16, left:"50%", transform:"translateX(-50%)", background:"#002A4E", color:"#50C0C0", borderRadius:8, padding:"8px 18px", fontSize:12, fontWeight:700, zIndex:100 }}>
             ↗ Pre-filled from PulseX — all fields are editable
@@ -275,15 +290,18 @@ export default function ProofApp() {
   }
 
   return (
-    <div style={{ minHeight:"100vh", background:C.bg, fontFamily:"system-ui,sans-serif" }}>
-      {/* Header */}
-      <header style={{ background:C.navy, padding:"0 24px", height:56, display:"flex", alignItems:"center", gap:16 }}>
+    <div style={{ minHeight:"100vh", background:C.bg, fontFamily:C.font }}>
+      {/* Roboto font + global reset */}
+      <link rel="preconnect" href="https://fonts.googleapis.com" />
+      <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700;900&display=swap" rel="stylesheet" />
+      <style>{"* { box-sizing: border-box; } body, button, input, select, textarea { font-family: 'Roboto', Arial, sans-serif; }"}</style>
+
+      <header style={{ background:C.navy, padding:"0 10px", height:62, display:"flex", alignItems:"center", gap:10, position:"sticky", top:0, zIndex:100, borderBottom:"1px solid rgba(255,255,255,0.08)" }}>
         <div style={{ display:"flex", alignItems:"center", gap:8, marginRight:8 }}>
-          <div style={{ width:30, height:30, borderRadius:6, background:C.teal, display:"flex", alignItems:"center", justifyContent:"center" }}>
-            <span style={{ fontSize:11, fontWeight:900, color:"#fff" }}>PQ</span>
+          <div style={{ width:30, height:30, borderRadius:6, background:C.teal, display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0 }}>
+            <span style={{ fontSize:11, fontWeight:900, color:C.navy, fontFamily:'"Roboto", Arial, sans-serif' }}>PX</span>
           </div>
-          <span style={{ fontSize:14, fontWeight:800, color:"#fff" }}>Proof Queue</span>
-          <span style={{ fontSize:10, color:"rgba(255,255,255,0.4)", background:"rgba(255,255,255,0.08)", borderRadius:4, padding:"2px 6px" }}>PROTOTYPE</span>
+          <span style={{ fontSize:14, fontWeight:800, color:"#fff", letterSpacing:"-0.01em" }}>Proof Queue</span>
         </div>
         <nav style={{ display:"flex", gap:2 }}>
           <NavBtn id="queue"   label="Queue"    badge={unassigned} />
@@ -292,19 +310,23 @@ export default function ProofApp() {
         </nav>
         <div style={{ marginLeft:"auto", display:"flex", gap:8, alignItems:"center" }}>
           <button onClick={() => setShowArchived(a => !a)}
-            style={{ fontSize:11, fontWeight:600, padding:"5px 12px", background:showArchived?"rgba(245,158,11,0.2)":"rgba(255,255,255,0.1)", color:showArchived?"#fbbf24":"rgba(255,255,255,0.6)", border:"1px solid rgba(255,255,255,0.15)", borderRadius:6, cursor:"pointer", fontFamily:"inherit" }}>
+            style={{ fontSize:11, fontWeight:600, padding:"5px 12px", background:showArchived?"rgba(245,158,11,0.2)":"rgba(255,255,255,0.1)", color:showArchived?"#fbbf24":"#ffffff", border:"1px solid rgba(255,255,255,0.25)", borderRadius:6, cursor:"pointer", fontFamily:"inherit" }}>
             {showArchived ? "📦 Hide Archived" : "📦 Archived"}
           </button>
           <button onClick={() => {
             if (window.opener && !window.opener.closed) { window.opener.focus(); window.close(); }
             else { window.location.href = "/"; }
           }}
-            style={{ padding:"7px 14px", background:"rgba(255,255,255,0.1)", color:"rgba(255,255,255,0.7)", border:"1px solid rgba(255,255,255,0.2)", borderRadius:7, cursor:"pointer", fontSize:12, fontFamily:"inherit" }}>
+            style={{ padding:"5px 12px", background:"rgba(255,255,255,0.1)", color:"#ffffff",
+              border:"1px solid rgba(255,255,255,0.25)", borderRadius:6, cursor:"pointer",
+              fontSize:12, fontWeight:700, fontFamily:C.font }}>
             ← PulseX
           </button>
           <button onClick={() => { setEditing(null); setView("form"); }}
-            style={{ padding:"7px 16px", background:C.teal, color:"#fff", border:"none", borderRadius:7, cursor:"pointer", fontSize:13, fontWeight:700, fontFamily:"inherit" }}>
-            + New Request
+            style={{ padding:"5px 14px", background:"rgba(0,181,181,0.2)", color:"#00E5E5",
+              border:"1px solid rgba(0,181,181,0.6)", borderRadius:6, cursor:"pointer",
+              fontSize:13, fontWeight:800, fontFamily:C.font, display:"flex", alignItems:"center", gap:5 }}>
+            <span style={{ fontSize:15, lineHeight:1 }}>+</span> New Request
           </button>
           <span style={{ fontSize:12, color:"rgba(255,255,255,0.5)", borderLeft:"1px solid rgba(255,255,255,0.1)", paddingLeft:14 }}>
             👤 {currentUser}
