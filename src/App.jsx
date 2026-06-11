@@ -11954,7 +11954,7 @@ export default function App() {
   );
 
   return (
-    <div style={{ minHeight: "100vh", background: "#f5f6f8", color: "#111827", fontFamily: '"Roboto", Arial, sans-serif', display: "flex", flexDirection: "column", maxWidth: "100vw", overflowX: "hidden" }}>
+    <div style={{ height: "100vh", background: "#f5f6f8", color: "#111827", fontFamily: '"Roboto", Arial, sans-serif', display: "flex", flexDirection: "column", maxWidth: "100vw", overflowX: "hidden" }}>
 
       <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=5" />
       <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -11979,7 +11979,7 @@ export default function App() {
         input[type=date]::-webkit-calendar-picker-indicator { filter: invert(0); cursor: pointer; }
         input[type=range] { cursor: pointer; }
         nav::-webkit-scrollbar { display: none; }
-        @media (max-width: 480px) { .nav-controls { display: none !important; } .nav-label { display: none !important; } }
+        @media (max-width: 480px) { .nav-label { display: none !important; } }
         @media (max-width: 640px) { .nav-label { display: none !important; } }
         select option { background: #ffffff; color: #1a1d23; }
         [data-timeline-body] { cursor: default; }
@@ -11989,7 +11989,7 @@ export default function App() {
       `}</style>
 
       {/* Nav */}
-      <header style={{ borderBottom: `1px solid rgba(255,255,255,0.08)`, padding: "0 8px 0 10px", display: "flex", alignItems: "center", height: 62, flexShrink: 0, background: BRAND_NAVY, width: "100%", boxSizing: "border-box", overflow: "visible", gap: 6, position: "relative" }}>
+      <header style={{ borderBottom: `1px solid rgba(255,255,255,0.08)`, padding: "0 8px 0 10px", display: "flex", alignItems: "center", height: 62, flexShrink: 0, background: BRAND_NAVY, width: "100%", position: "sticky", top: 0, zIndex: 100, boxSizing: "border-box", overflow: "visible", gap: 6 }}>
         {/* Logo — compact, no wide margin */}
         <div style={{ display: "flex", alignItems: "center", gap: 5, flexShrink: 0 }} title="PulseX">
           <div style={{ width: 28, height: 28, background: BRAND_TEAL, borderRadius: 6, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
@@ -12051,23 +12051,38 @@ export default function App() {
             );
           })}
         </nav>
-        {/* Zoom + Settings — hidden on very small screens via CSS */}
-        <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }} className="nav-controls">
-          {/* ── ZOOM — compact select ── */}
-          <select value={zoomId} onChange={e => setZoom(e.target.value)} title="Zoom level"
-            style={{ background: "rgba(255,255,255,0.1)", border: "1px solid rgba(255,255,255,0.15)", color: "rgba(255,255,255,0.8)", borderRadius: 5, padding: "4px 2px", fontSize: 10, cursor: "pointer", fontFamily: "inherit", width: 34 }}>
-            {ZOOM_LEVELS.map(z => <option key={z.id} value={z.id} style={{ color: "#000" }}>{z.label[0]}</option>)}
-          </select>
+        {/* Nav controls — order: Proof | New Project | Search | Settings | Zoom | Logout */}
+        <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }} >
 
-          {/* ── SETTINGS MENU ── */}
+          {/* ── PROOF QUEUE ── */}
+          <button onClick={() => (() => { try { localStorage.setItem("proof_queue_people", JSON.stringify(people)); } catch(e){} window.open("/proof-queue", "_blank"); })()} 
+            title="Open Proof Queue in new tab"
+            style={{ background:"rgba(80,192,192,0.15)", border:"1px solid rgba(80,192,192,0.4)", color:"#50C0C0",
+              borderRadius:6, padding:"4px 10px", cursor:"pointer", fontSize:12, fontFamily:"inherit", fontWeight:700, flexShrink:0 }}>
+            🔍 Proof Queue ↗
+          </button>
+
+          {/* ── NEW PROJECT ── */}
+          <button onClick={() => setShowInitiation(true)} style={{
+            display: "flex", alignItems: "center", gap: 6,
+            background: BRAND_TEAL_L, border: `1px solid ${BRAND_TEAL}80`,
+            color: BRAND_TEAL_D, borderRadius: 6, padding: "5px 13px", cursor: "pointer",
+            fontSize: 14, fontWeight: 800, fontFamily: "inherit", transition: "all 0.12s",
+          }}>
+            <span style={{ fontSize: 15, lineHeight: 1 }}>+</span> NEW PROJECT
+          </button>
+
+          {/* ── SEARCH ── */}
+          <button onClick={() => setShowSearch(true)} title="Search tasks (⌘K)" style={{
+            display: "flex", alignItems: "center",
+            background: "rgba(255,255,255,0.08)",
+            border: "1px solid rgba(255,255,255,0.15)", color: "rgba(255,255,255,0.75)",
+            borderRadius: 6, padding: "5px 10px", cursor: "pointer",
+            fontSize: 14, fontFamily: "inherit",
+          }}>🔍</button>
+
+          {/* ── SETTINGS ── */}
           <div style={{ position: "relative" }}>
-            <button onClick={() => setShowSearch(true)} title="Search tasks (⌘K)" style={{
-              display: "flex", alignItems: "center",
-              background: "rgba(255,255,255,0.08)",
-              border: "1px solid rgba(255,255,255,0.15)", color: "rgba(255,255,255,0.75)",
-              borderRadius: 6, padding: "5px 10px", cursor: "pointer",
-              fontSize: 14, fontFamily: "inherit",
-            }}>🔍</button>
             <button onClick={() => setShowSettingsMenu(m => !m)} style={{
               display: "flex", alignItems: "center", gap: 5,
               background: showSettingsMenu ? "rgba(255,255,255,0.15)" : "rgba(255,255,255,0.08)",
@@ -12083,9 +12098,9 @@ export default function App() {
               }}>
                 {[
                   { icon: "◎", label: "Team Members",   color: "#38bdf8", action: () => { setShowTeamSettings(true); setShowSettingsMenu(false); } },
-                  { icon: "⊙", label: "Backfill Task Depts", color: "#a78bfa", action: () => { handleBackfillDepartments(); setShowSettingsMenu(false); } },
-                  { icon: "◧", label: "Templates",       color: "#a78bfa", action: () => { setShowTemplates(true); setShowSettingsMenu(false); } },  // deliverable templates
-
+                  { icon: "⊙", label: "Backfill Task Depts", color: "#a78bfa", action: () => { handleBackfillDepts(); setShowSettingsMenu(false); } },
+                  { icon: "◧", label: "Templates",       color: "#a78bfa", action: () => { setShowTemplates(true); setShowSettingsMenu(false); } },
+                  { icon: "⊞", label: "Access",          color: "#34d399", action: () => { setShowAccess(true); setShowSettingsMenu(false); } },
                   { icon: "🗓", label: "Holidays",        color: "#fb923c", action: () => { setShowHolidays(true); setShowSettingsMenu(false); } },
                   { icon: "↑", label: "Import Excel",    color: "#34d399", action: () => { setShowImport(true); setShowSettingsMenu(false); } },
                   { icon: "⊡", label: "Archived Projects",color: BRAND_TEAL, action: () => { setView("archived"); setShowSettingsMenu(false); } },
@@ -12104,35 +12119,25 @@ export default function App() {
                     {item.label}
                   </button>
                 ))}
-
               </div>
             )}
           </div>
-          {/* ── PROOF QUEUE SHORTCUT ── */}
-          <button onClick={() => (() => { try { localStorage.setItem("proof_queue_people", JSON.stringify(people.filter(p => p.department === "Proof" || p.department === "Proofreading").map(p => ({ id: p.id, name: p.name })))); } catch {} window.open("/proof", "_blank"); })()}
-            title="Open Proof Queue in new tab"
-            style={{ background:"rgba(80,192,192,0.15)", border:"1px solid rgba(80,192,192,0.4)", color:"#50C0C0", borderRadius:6, padding:"4px 12px", cursor:"pointer", fontSize:12, fontFamily:"inherit", fontWeight:700, flexShrink:0, display:"flex", alignItems:"center", gap:5 }}>
-            🔍 Proof Queue ↗
-          </button>
+
+          {/* ── ZOOM ── */}
+          <select value={zoomId} onChange={e => setZoom(e.target.value)} title="Zoom level"
+            style={{ background: "rgba(255,255,255,0.1)", border: "1px solid rgba(255,255,255,0.15)", color: "rgba(255,255,255,0.85)",
+              borderRadius: 6, padding: "4px 6px", cursor: "pointer", fontSize: 12, fontFamily: "inherit", flexShrink: 0 }}>
+            {ZOOM_LEVELS.map(z => <option key={z.id} value={z.id} style={{ color: "#000" }}>{z.label[0]}</option>)}
+          </select>
+
+          {/* ── LOGOUT ── */}
           <button onClick={handleLogout} title="Sign Out"
             style={{ background:"rgba(239,68,68,0.15)", border:"1px solid rgba(239,68,68,0.3)",
               color:"#fca5a5", borderRadius:6, padding:"4px 10px", cursor:"pointer",
               fontSize:12, fontFamily:"inherit", fontWeight:700, flexShrink:0 }}>
             ⎋
           </button>
-          {/* ── NEW PROJECT BUTTON ── */}
-          <button onClick={() => setShowInitiation(true)} style={{
-            display: "flex", alignItems: "center", gap: 6,
-            background: BRAND_TEAL_L, border: `1px solid ${BRAND_TEAL}80`,
-            color: BRAND_TEAL_D, borderRadius: 6, padding: "5px 13px", cursor: "pointer",
-            fontSize: 14, fontWeight: 800, fontFamily: "inherit",
-            transition: "all 0.12s",
-          }}>
-            <span style={{ fontSize: 15, lineHeight: 1 }}>+</span> NEW PROJECT
-          </button>
-          <div style={{ display: "flex" }}>
-            {people.map(p => <div key={p.id} style={{ marginLeft: -7 }}><Avatar person={p} size={26} /></div>)}
-          </div>
+
         </div>
       </header>
 
