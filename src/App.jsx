@@ -9667,173 +9667,255 @@ ${proj.kickoffRequested
 // ── Brief HTML Generator ──────────────────────────────────────────────────────
 function generateBriefHtml(proj, deliverables, people) {
   const fmtDate = d => d ? new Date(d + "T00:00:00").toLocaleDateString("en-US", { month:"short", day:"numeric", year:"numeric" }) : "—";
-  const person = id => people.find(p => p.id === id)?.name || "—";
-  const delRows = deliverables.map(d => `
-    <tr>
-      <td>${d.title || d.name || ""}</td>
-      <td>${fmtDate(d.requestedDeliveryDate || d.end)}</td>
-    </tr>`).join("");
+  const person  = id => people.find(p => p.id === id)?.name || "—";
 
-  const prebuiltRow = (label) => deliverables.map(d =>
-    `<tr><td>${d.title || d.name || ""}</td><td></td><td></td><td></td><td></td>${
-      label === "inputs" ? "<td></td><td></td>" :
-      label === "risks"  ? "<td></td><td></td>" :
-      label === "questions" ? "<td></td><td></td>" : ""
-    }</tr>`
-  ).join("") + `<tr><td><em>Project-Wide</em></td><td></td><td></td><td></td><td></td>${
-      label === "inputs" ? "<td></td><td></td>" :
-      label === "risks"  ? "<td></td><td></td>" :
-      label === "questions" ? "<td></td><td></td>" : ""
-  }</tr>`;
+  const NAVY  = "#002A4E";
+  const TEAL  = "#00B5B5";
+  const TEAL_L = "rgba(0,181,181,0.08)";
+  const GRAY  = "#f5f6f8";
+  const MUTED = "#6b7280";
+
+  // ── Reusable table builder ──────────────────────────────────────────────────
+  const table = (headers, rows, note = "") => `
+    <table>
+      <thead><tr>${headers.map(h => `<th>${h}</th>`).join("")}</tr></thead>
+      <tbody>${rows.map((r, i) => `<tr class="${i % 2 === 0 ? "even" : ""}">${r.map(c => `<td>${c}</td>`).join("")}</tr>`).join("")}
+      </tbody>
+    </table>${note ? `<p class="table-note">${note}</p>` : ""}`;
+
+  const blankRows = (n = 4) => Array(n).fill(null).map(() => []);
+
+  // ── Deliverable rows pre-populated with known data ─────────────────────────
+  const delNames = deliverables.map(d => d.title || d.name || "");
+  const delWithDates = deliverables.map(d => [
+    d.title || d.name || "",
+    fmtDate(d.requestedDeliveryDate || d.end),
+  ]);
+
+  // Section 4 — Deliverables full table
+  const sec4Rows = deliverables.map(d => [
+    `<strong>${d.title || d.name || ""}</strong>`,
+    "",  // Format
+    "",  // Platform / Placement
+    "",  // Audience
+    fmtDate(d.requestedDeliveryDate || d.end),
+    "",  // Dependencies
+    "",  // Notes
+  ]);
+
+  // Section 10 — Deliverable Strategy
+  const sec10Rows = deliverables.map(d => [
+    `<strong>${d.title || d.name || ""}</strong>`,
+    "", "", "", "",
+  ]);
+
+  // Section 11 — Inputs & Assets (one row per deliverable + project-wide row)
+  const sec11Rows = [
+    ...deliverables.map(d => [`<em>${d.title || d.name || ""}</em>`, "", "", "", "", ""]),
+    [`<em style="color:${MUTED}">Project-Wide</em>`, "", "", "", "", ""],
+  ];
+
+  // Section 12 — Risks & Dependencies
+  const sec12Rows = [
+    ...deliverables.map(d => [`<em>${d.title || d.name || ""}</em>`, "", "", "", ""]),
+    [`<em style="color:${MUTED}">Project-Wide</em>`, "", "", "", ""],
+  ];
+
+  // Section 13 — Open Questions
+  const sec13Rows = [
+    ...deliverables.map(d => [`<em>${d.title || d.name || ""}</em>`, "", "", "", ""]),
+    [`<em style="color:${MUTED}">Project-Wide</em>`, "", "", "", ""],
+  ];
+
+  const blank = (label = "Complete during Start of Work meeting") =>
+    `<div class="blank">${label}</div>`;
 
   return `<!DOCTYPE html>
-<html>
+<html xmlns:o='urn:schemas-microsoft-com:office:office'
+      xmlns:w='urn:schemas-microsoft-com:office:word'
+      xmlns='http://www.w3.org/TR/REC-html40'>
 <head>
 <meta charset="UTF-8">
 <title>Project Brief — ${proj.name}</title>
 <style>
-  body { font-family: Calibri, Arial, sans-serif; margin: 0; padding: 0; color: #1f2937; font-size: 11pt; }
-  .page { max-width: 900px; margin: 0 auto; padding: 48px 56px; }
-  h1 { font-size: 22pt; color: #002A4E; margin: 0 0 4px; }
-  .subtitle { font-size: 12pt; color: #6b7280; margin-bottom: 32px; }
-  h2 { font-size: 13pt; font-weight: 700; color: #002A4E; margin: 32px 0 10px;
-       padding-bottom: 6px; border-bottom: 2px solid #00B5B5; }
-  h3 { font-size: 11pt; font-weight: 700; color: #374151; margin: 16px 0 6px; }
-  table { width: 100%; border-collapse: collapse; margin-bottom: 16px; font-size: 10pt; }
-  th { background: #002A4E; color: white; padding: 7px 10px; text-align: left; font-weight: 600; }
-  td { border: 1px solid #e5e7eb; padding: 7px 10px; vertical-align: top; min-height: 28px; }
-  tr:nth-child(even) td { background: #f9fafb; }
-  .meta-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 24px; margin-bottom: 20px; }
-  .meta-item { display: flex; gap: 8px; font-size: 10.5pt; }
-  .meta-label { font-weight: 700; color: #374151; min-width: 130px; }
+  @import url('https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700;900&display=swap');
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: "Roboto", Arial, sans-serif; color: #1f2937; font-size: 10.5pt; background: #fff; }
+  .page { max-width: 940px; margin: 0 auto; padding: 48px 56px; }
+
+  /* ── Cover strip ── */
+  .cover { background: ${NAVY}; border-radius: 8px; padding: 28px 32px; margin-bottom: 32px; display: flex; align-items: flex-start; justify-content: space-between; }
+  .cover-logo { width: 36px; height: 36px; background: ${TEAL}; border-radius: 7px; display: flex; align-items: center; justify-content: center; font-size: 13px; font-weight: 900; color: ${NAVY}; flex-shrink: 0; }
+  .cover-title { color: #fff; font-size: 18pt; font-weight: 700; margin: 0 0 4px; }
+  .cover-sub { color: rgba(255,255,255,0.55); font-size: 10pt; }
+  .cover-meta { text-align: right; }
+  .cover-badge { display: inline-block; background: ${TEAL}; color: ${NAVY}; font-size: 9pt; font-weight: 700; padding: 3px 12px; border-radius: 20px; margin-bottom: 6px; }
+  .cover-date { color: rgba(255,255,255,0.45); font-size: 9pt; }
+
+  /* ── Meta grid (overview) ── */
+  .meta-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 32px; margin: 14px 0 20px; }
+  .meta-item { display: flex; gap: 8px; font-size: 10pt; line-height: 1.4; }
+  .meta-label { font-weight: 700; color: #374151; min-width: 140px; flex-shrink: 0; }
   .meta-value { color: #1f2937; }
-  .blank-section { background: #f9fafb; border: 1px dashed #d1d5db; border-radius: 4px;
-    padding: 16px 20px; color: #9ca3af; font-style: italic; min-height: 80px; margin-bottom: 8px; }
-  .section-num { color: #00B5B5; font-weight: 700; margin-right: 8px; }
-  .status-badge { display: inline-block; background: #dbeafe; color: #1e40af; font-weight: 700;
-    padding: 2px 10px; border-radius: 12px; font-size: 10pt; }
-  .generated-note { font-size: 9pt; color: #9ca3af; margin-top: 48px; border-top: 1px solid #e5e7eb; padding-top: 12px; }
+
+  /* ── Section headings ── */
+  h2 { font-size: 12pt; font-weight: 700; color: ${NAVY}; margin: 32px 0 10px; padding-bottom: 6px; border-bottom: 2.5px solid ${TEAL}; display: flex; align-items: center; gap: 10px; }
+  h2 .sec-num { background: ${TEAL}; color: #fff; font-size: 9pt; font-weight: 700; width: 22px; height: 22px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; }
+  h3 { font-size: 10.5pt; font-weight: 700; color: #374151; margin: 16px 0 6px; }
+
+  /* ── Tables ── */
+  table { width: 100%; border-collapse: collapse; margin-bottom: 6px; font-size: 9.5pt; }
+  th { background: ${NAVY}; color: #fff; padding: 7px 10px; text-align: left; font-weight: 600; font-size: 9pt; }
+  td { border: 1px solid #e5e7eb; padding: 7px 10px; vertical-align: top; min-height: 26px; }
+  tr.even td { background: ${GRAY}; }
+  td:first-child { font-size: 9.5pt; }
+  .table-note { font-size: 9pt; color: ${MUTED}; font-style: italic; margin: 4px 0 12px; }
+
+  /* ── Blank/narrative sections ── */
+  .blank { background: #fafafa; border: 1px dashed #d1d5db; border-radius: 5px; padding: 14px 16px; color: #9ca3af; font-style: italic; min-height: 70px; margin-bottom: 10px; font-size: 10pt; }
+
+  /* ── Objective box ── */
+  .objective { background: ${TEAL_L}; border-left: 3px solid ${TEAL}; border-radius: 0 5px 5px 0; padding: 10px 14px; margin-bottom: 16px; font-size: 10.5pt; color: #1f2937; }
+
+  /* ── Kickoff badge ── */
+  .kickoff-badge { background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 6px; padding: 8px 12px; font-size: 10pt; color: #065f46; margin-bottom: 10px; }
+
+  /* ── Footer ── */
+  .footer { margin-top: 48px; border-top: 1px solid #e5e7eb; padding-top: 12px; font-size: 8.5pt; color: #9ca3af; }
+
   @media print { body { margin: 0; } .page { padding: 32px; } }
 </style>
 </head>
 <body>
 <div class="page">
 
-  <h1>${proj.name}</h1>
-  <div class="subtitle">Project Brief &nbsp;·&nbsp; Generated ${new Date().toLocaleDateString("en-US", { month:"long", day:"numeric", year:"numeric" })} &nbsp;·&nbsp; <span class="status-badge">${proj.projectStatus || "Needs Timeline"}</span></div>
+  <!-- ── COVER ── -->
+  <div class="cover">
+    <div>
+      <div class="cover-logo">PX</div>
+      <div style="margin-top:12px">
+        <div class="cover-title">${proj.name}</div>
+        <div class="cover-sub">Project Brief &nbsp;·&nbsp; ${proj.client || "—"}</div>
+      </div>
+    </div>
+    <div class="cover-meta">
+      <div class="cover-badge">${proj.projectStatus || "Needs Timeline"}</div><br>
+      <div class="cover-date">Generated ${new Date().toLocaleDateString("en-US",{month:"long",day:"numeric",year:"numeric"})}</div>
+      ${proj.projectNumber ? `<div class="cover-date" style="margin-top:4px">Program #${proj.projectNumber}</div>` : ""}
+    </div>
+  </div>
 
-  <h2><span class="section-num">1</span> Project Overview</h2>
+  <!-- ── SECTION 1: Project Overview ── -->
+  <h2><span class="sec-num">1</span> Project Overview</h2>
   <div class="meta-grid">
     <div class="meta-item"><span class="meta-label">Project Name</span><span class="meta-value">${proj.name}</span></div>
     <div class="meta-item"><span class="meta-label">Client</span><span class="meta-value">${proj.client || "—"}</span></div>
-    <div class="meta-item"><span class="meta-label">Project Number</span><span class="meta-value">${proj.projectNumber || "—"}</span></div>
+    <div class="meta-item"><span class="meta-label">Program Number</span><span class="meta-value">${proj.projectNumber || "—"}</span></div>
     <div class="meta-item"><span class="meta-label">Priority</span><span class="meta-value">${proj.priority || "—"}</span></div>
     <div class="meta-item"><span class="meta-label">Account Lead</span><span class="meta-value">${person(proj.accountLeadId)}</span></div>
     <div class="meta-item"><span class="meta-label">Project Manager</span><span class="meta-value">${person(proj.projectManagerId)}</span></div>
     <div class="meta-item"><span class="meta-label">Earliest Launch Date</span><span class="meta-value">${fmtDate(proj.earliestLaunchDate)}</span></div>
+    <div class="meta-item"><span class="meta-label">Status</span><span class="meta-value">${proj.projectStatus || "—"}</span></div>
   </div>
-  ${proj.objective ? `<h3>Overall Project Objective</h3><p>${proj.objective}</p>` : ""}
-  ${proj.kickoffRequested ? `
-  <div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:6px;padding:10px 14px;margin:10px 0;font-size:10pt">
-    <strong style="color:#065f46">✓ Kickoff meeting requested</strong>
-    ${proj.kickoffDate ? ` — Requested meeting date: <strong>${fmtDate(proj.kickoffDate + "T00:00:00")}</strong>` : ""}
-    ${proj.kickoffNotifSentAt ? ` · PM notified ${fmtDate(proj.kickoffNotifSentAt)}` : ""}
-  </div>` : ""}
-  <table>
-    <thead><tr><th>Deliverable</th><th>Requested Delivery Date</th></tr></thead>
-    <tbody>${delRows}</tbody>
-  </table>
+  ${proj.objective ? `<div class="objective"><strong>Objective:</strong> ${proj.objective}</div>` : ""}
+  ${proj.kickoffRequested ? `<div class="kickoff-badge">✓ Kickoff meeting requested${proj.kickoffDate ? ` — ${fmtDate(proj.kickoffDate + "T00:00:00")}` : ""}${proj.kickoffNotifSentAt ? ` · PM notified ${fmtDate(proj.kickoffNotifSentAt)}` : ""}</div>` : ""}
+  ${table(["Deliverable", "Requested Delivery Date"], delWithDates)}
 
-  <h2><span class="section-num">2</span> Audience &amp; Brand</h2>
-  <div class="blank-section">Complete during Start of Work meeting</div>
+  <!-- ── SECTION 2: Audience & Brand ── -->
+  <h2><span class="sec-num">2</span> Audience &amp; Brand</h2>
+  ${blank()}
 
-  <h2><span class="section-num">3</span> Stakeholders</h2>
-  <table>
-    <thead><tr><th>Role</th><th>Name</th><th>Responsibility</th></tr></thead>
-    <tbody>
-      <tr><td>Client Owner</td><td>${proj.client || ""}</td><td></td></tr>
-      <tr><td>Account Lead</td><td>${person(proj.accountLeadId)}</td><td></td></tr>
-      <tr><td>Project Manager</td><td>${person(proj.projectManagerId)}</td><td></td></tr>
-      <tr><td>SME</td><td></td><td></td></tr>
-      <tr><td>Approver</td><td></td><td></td></tr>
-      <tr><td>Partner</td><td></td><td></td></tr>
-    </tbody>
-  </table>
+  <!-- ── SECTION 3: Stakeholders ── -->
+  <h2><span class="sec-num">3</span> Stakeholders</h2>
+  ${table(["Role", "Name", "Responsibility"], [
+    ["Client Owner", proj.client || "", ""],
+    ["Account Lead", person(proj.accountLeadId), ""],
+    ["Project Manager", person(proj.projectManagerId), ""],
+    ["SME", "", ""],
+    ["Approver", "", ""],
+    ["Partner", "", ""],
+  ])}
 
-  <h2><span class="section-num">4</span> Deliverables</h2>
-  <table>
-    <thead><tr><th>Deliverable</th><th>Format</th><th>Platform / Placement</th><th>Audience</th><th>Requested Delivery Date</th><th>Dependencies</th><th>Notes</th></tr></thead>
-    <tbody>${deliverables.map(d => `<tr>
-      <td>${d.title||d.name||""}</td><td></td><td></td><td></td>
-      <td>${fmtDate(d.requestedDeliveryDate||d.end)}</td><td></td><td></td>
-    </tr>`).join("")}</tbody>
-  </table>
+  <!-- ── SECTION 4: Deliverables ── -->
+  <h2><span class="sec-num">4</span> Deliverables</h2>
+  ${table(
+    ["Deliverable", "Format", "Platform / Placement", "Audience", "Requested Date", "Dependencies", "Notes"],
+    [...sec4Rows, ...Array(3).fill(["","","","","","",""]),]
+  )}
 
-  <h2><span class="section-num">5</span> Business Objective</h2>
-  <div class="blank-section">Complete during Start of Work meeting</div>
+  <!-- ── SECTION 5: Business Objective ── -->
+  <h2><span class="sec-num">5</span> Business Objective</h2>
+  ${blank()}
 
-  <h2><span class="section-num">6</span> Audience Insight</h2>
-  <div class="blank-section">Complete during Start of Work meeting</div>
+  <!-- ── SECTION 6: Audience Insight ── -->
+  <h2><span class="sec-num">6</span> Audience Insight</h2>
+  ${blank()}
 
-  <h2><span class="section-num">7</span> Desired Outcome</h2>
-  <div class="blank-section">Complete during Start of Work meeting</div>
+  <!-- ── SECTION 7: Desired Outcome ── -->
+  <h2><span class="sec-num">7</span> Desired Outcome</h2>
+  ${blank()}
 
-  <h2><span class="section-num">8</span> Behavioral Science Diagnostic</h2>
-  <table>
-    <thead><tr><th>Category</th><th>Selection</th></tr></thead>
-    <tbody>
-      <tr><td>Outcome Type</td><td></td></tr>
-      <tr><td>Primary Friction</td><td></td></tr>
-      <tr><td>Secondary Friction</td><td></td></tr>
-      <tr><td>Creative Emphasis</td><td></td></tr>
-    </tbody>
-  </table>
+  <!-- ── SECTION 8: Behavioral Science Diagnostic ── -->
+  <h2><span class="sec-num">8</span> Behavioral Science Diagnostic</h2>
+  ${table(["Category", "Selection"], [
+    ["Outcome Type", ""], ["Primary Friction", ""], ["Secondary Friction", ""], ["Creative Emphasis", ""],
+  ])}
   <h3>One-Sentence Diagnosis</h3>
-  <div class="blank-section">&nbsp;</div>
+  ${blank("Write a single sentence capturing the core behavioral challenge.")}
 
-  <h2><span class="section-num">9</span> Creative Direction</h2>
-  <h3>Key Messages</h3><div class="blank-section">&nbsp;</div>
-  <h3>Mandatory Copy</h3><div class="blank-section">&nbsp;</div>
-  <h3>Required Claims</h3><div class="blank-section">&nbsp;</div>
-  <h3>Tone Guidance</h3><div class="blank-section">&nbsp;</div>
-  <h3>What To Avoid</h3><div class="blank-section">&nbsp;</div>
+  <!-- ── SECTION 9: Creative Direction ── -->
+  <h2><span class="sec-num">9</span> Creative Direction</h2>
+  <h3>Key Messages</h3>${blank()}
+  <h3>Mandatory Copy</h3>${blank()}
+  <h3>Required Claims</h3>${blank()}
+  <h3>Tone Guidance</h3>${blank()}
+  <h3>What To Avoid</h3>${blank()}
 
-  <h2><span class="section-num">10</span> Deliverable Strategy <em style="font-weight:400;font-size:10pt;color:#9ca3af">(optional)</em></h2>
-  <table>
-    <thead><tr><th>Deliverable</th><th>Purpose</th><th>Primary Takeaway</th><th>Desired Action</th><th>Special Considerations</th></tr></thead>
-    <tbody>${deliverables.map(d => `<tr><td>${d.title||d.name||""}</td><td></td><td></td><td></td><td></td></tr>`).join("")}</tbody>
-  </table>
+  <!-- ── SECTION 10: Deliverable Strategy ── -->
+  <h2><span class="sec-num">10</span> Deliverable Strategy <span style="font-size:9pt;font-weight:400;color:${MUTED}">(optional)</span></h2>
+  ${table(
+    ["Deliverable", "Purpose", "Primary Takeaway", "Desired Action", "Special Considerations"],
+    [...sec10Rows, ...Array(3).fill(["","","","",""]),]
+  )}
 
-  <h2><span class="section-num">11</span> Inputs &amp; Assets</h2>
-  <table>
-    <thead><tr><th>Deliverable</th><th>Resource</th><th>Type</th><th>Owner</th><th>Status</th><th>Notes</th></tr></thead>
-    <tbody>${prebuiltRow("inputs")}</tbody>
-  </table>
+  <!-- ── SECTION 11: Inputs & Assets ── -->
+  <h2><span class="sec-num">11</span> Inputs &amp; Assets</h2>
+  ${table(
+    ["Deliverable", "Resource", "Type", "Owner", "Status", "Notes"],
+    [...sec11Rows, ...Array(3).fill(["","","","","",""]),]
+  )}
 
-  <h2><span class="section-num">12</span> Risks &amp; Dependencies</h2>
-  <table>
-    <thead><tr><th>Deliverable</th><th>Risk / Dependency</th><th>Impact</th><th>Mitigation</th><th>Owner</th><th>Notes</th></tr></thead>
-    <tbody>${prebuiltRow("risks")}</tbody>
-  </table>
+  <!-- ── SECTION 12: Risks & Dependencies ── -->
+  <h2><span class="sec-num">12</span> Risks &amp; Dependencies</h2>
+  ${table(
+    ["Deliverable", "Risk / Dependency", "Impact", "Mitigation", "Owner"],
+    [...sec12Rows, ...Array(3).fill(["","","","",""]),]
+  )}
 
-  <h2><span class="section-num">13</span> Open Questions</h2>
-  <table>
-    <thead><tr><th>Deliverable</th><th>Question</th><th>Owner</th><th>Due By</th><th>Resolution</th><th>Notes</th></tr></thead>
-    <tbody>${prebuiltRow("questions")}</tbody>
-  </table>
+  <!-- ── SECTION 13: Open Questions ── -->
+  <h2><span class="sec-num">13</span> Open Questions</h2>
+  ${table(
+    ["Deliverable", "Question", "Owner", "Due By", "Resolution"],
+    [...sec13Rows, ...Array(3).fill(["","","","",""]),]
+  )}
 
-  <h2><span class="section-num">14</span> Files</h2>
-  <h3>SharePoint Folder</h3><div class="blank-section">&nbsp;</div>
-  <h3>Reference Documents</h3><div class="blank-section">&nbsp;</div>
-  <h3>Creative Files</h3><div class="blank-section">&nbsp;</div>
-  <h3>Supporting Materials</h3><div class="blank-section">&nbsp;</div>
-  <h3>Additional Links</h3><div class="blank-section">&nbsp;</div>
+  <!-- ── SECTION 14: Files ── -->
+  <h2><span class="sec-num">14</span> Files</h2>
+  <h3>SharePoint Folder</h3>${blank("Paste SharePoint link here")}
+  <h3>Reference Documents</h3>${blank()}
+  <h3>Creative Files</h3>${blank()}
+  <h3>Supporting Materials</h3>${blank()}
+  <h3>Additional Links</h3>${blank()}
 
-  <div class="generated-note">Generated by PulseX · ${new Date().toISOString()} · Source of truth: PulseX project "${proj.name}"</div>
+  <div class="footer">
+    Generated by PulseX &nbsp;·&nbsp; ${new Date().toISOString()} &nbsp;·&nbsp;
+    Source of truth: PulseX project "${proj.name}". This document is a snapshot.
+  </div>
 </div>
 </body>
 </html>`;
 }
+
 
 function downloadBrief(proj, deliverables, people) {
   const innerHtml = generateBriefHtml(proj, deliverables, people);
