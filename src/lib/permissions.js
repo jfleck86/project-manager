@@ -32,7 +32,7 @@ export const ROLE_LABELS = {
   leadership:      "Leadership",
   project_manager: "Project Manager",
   contributor:     "Contributor",
-  viewer:          "Viewer",
+  viewer:          "Viewer",  // unused — kept for fallback only
 };
 
 // ─── Internal helpers ────────────────────────────────────────────────────────
@@ -148,11 +148,11 @@ export function canAccessHistory(role) {
 }
 
 export function canViewReporting(role) {
-  return is(role, ROLES.ADMIN, ROLES.LEADERSHIP, ROLES.PROJECT_MANAGER);
+  return is(role, ROLES.ADMIN, ROLES.LEADERSHIP);
 }
 
 export function canExportReports(role) {
-  return is(role, ROLES.ADMIN, ROLES.LEADERSHIP, ROLES.PROJECT_MANAGER);
+  return is(role, ROLES.ADMIN, ROLES.LEADERSHIP);
 }
 
 export function canViewCapacity(role) {
@@ -173,11 +173,11 @@ export function canViewTimeline(role) {
 }
 
 export function canViewByPerson(role) {
-  return is(role, ROLES.ADMIN, ROLES.LEADERSHIP, ROLES.PROJECT_MANAGER);
+  return is(role, ROLES.ADMIN, ROLES.LEADERSHIP, ROLES.PROJECT_MANAGER, ROLES.CONTRIBUTOR);
 }
 
 export function canViewStatus(role) {
-  return is(role, ROLES.ADMIN, ROLES.LEADERSHIP, ROLES.PROJECT_MANAGER);
+  return is(role, ROLES.ADMIN, ROLES.LEADERSHIP, ROLES.PROJECT_MANAGER, ROLES.CONTRIBUTOR);
 }
 
 // ─── My Hub ──────────────────────────────────────────────────────────────────
@@ -271,10 +271,10 @@ export function allowedNavItems(role) {
   const r = normalize(role);
   const map = {
     admin:           ["myhub","dashboard","timeline","people","status","workload","reporting","history","kpi"],
-    leadership:      ["dashboard","timeline","people","workload","reporting"],
-    project_manager: ["myhub","dashboard","timeline","people","status","workload","reporting"],
-    contributor:     ["myhub","timeline"],
-    viewer:          ["timeline","reporting"],
+    leadership:      ["myhub","dashboard","timeline","people","status","workload"],
+    project_manager: ["myhub","dashboard","timeline","people","status","workload"],
+    contributor:     ["myhub","dashboard","timeline","people","status"],
+    viewer:          ["timeline"],
   };
   return new Set(map[r] || map.viewer);
 }

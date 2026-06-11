@@ -8315,7 +8315,6 @@ const ROLE_OPTIONS = [
   { value: "leadership",      label: "Leadership",      color: "#7c3aed" },
   { value: "project_manager", label: "Project Manager", color: "#2563eb" },
   { value: "contributor",     label: "Contributor",     color: "#059669" },
-  { value: "viewer",          label: "Viewer",          color: "#6b7280" },
 ];
 
 function RoleManager({ people, sbUrl, sbKey, isAdmin, authToken }) {
