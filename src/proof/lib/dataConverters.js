@@ -8,6 +8,7 @@ export function rowToSubtask(r) {
     effort: r.effort || "M",
     file_url: r.file_url || "",
     isWaiting: r.is_waiting ?? false,
+    completedAt: r.completed_at || null,
   };
 }
 export function rowToDeliverable(r, subs) {
@@ -19,6 +20,7 @@ export function rowToDeliverable(r, subs) {
     effort: r.effort || "M",
     file_url: r.file_url || "",
     isWaiting: r.is_waiting ?? false,
+    completedAt: r.completed_at || null,
     requestedDeliveryDate: r.requested_delivery_date || null,
     subtasks: (subs || []).filter(s => s.deliverable_id != null && s.deliverable_id === r.id)
       .sort((a, b) => a.position - b.position).map(rowToSubtask),
@@ -40,6 +42,9 @@ export function rowToProject(r, dels, subs) {
     objective: r.objective || "",
     earliestLaunchDate: r.earliest_launch_date || null,
     projectStatus: r.project_status || "Active",
+    kickoffRequested:   r.kickoff_requested    || false,
+    kickoffDate:        r.kickoff_date         || null,
+    kickoffNotifSentAt: r.kickoff_notif_sent_at || null,
     deliverables: (dels || []).filter(d => d.project_id === r.id)
       .sort((a, b) => (a.position ?? 0) - (b.position ?? 0)).map(d => rowToDeliverable(d, subs)),
   };

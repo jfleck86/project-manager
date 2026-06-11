@@ -37,7 +37,7 @@ export const REQUEST_TYPES = [
 
 export const PROOFREADERS = ["Sam Torres", "Riley Park", "Jordan Rivers", "Alex Kim"];
 
-export const todayStr = new Date().toISOString().slice(0, 10);
+export function todayStr() { return new Date().toISOString().slice(0, 10); }
 
 export const STATUSES = ["Submitted", "Assigned", "In Review", "Complete", "On Hold"];
 export const PRIORITIES = ["Urgent", "High", "Medium", "Low"];

@@ -74,7 +74,10 @@ export default function DetailModal({ req, currentUser, proofreaders, proofreade
 
           {req.instructions && <div style={{ marginBottom:14 }}><div style={{ fontSize:11, fontWeight:600, color:C.muted, marginBottom:4 }}>Instructions</div><div style={{ fontSize:13, color:C.text, background:"#f8fafc", borderRadius:6, padding:"10px 12px", lineHeight:1.5 }}>{req.instructions}</div></div>}
           {req.comments     && <div style={{ marginBottom:14 }}><div style={{ fontSize:11, fontWeight:600, color:C.muted, marginBottom:4 }}>Comments</div><div style={{ fontSize:13, color:C.text, background:"#f8fafc", borderRadius:6, padding:"10px 12px", lineHeight:1.5 }}>{req.comments}</div></div>}
-          {req.sharepoint_link && <div style={{ marginBottom:18 }}><a href={req.sharepoint_link} target="_blank" rel="noopener noreferrer" style={{ fontSize:13, color:C.teal, fontWeight:600 }}>Open in SharePoint ↗</a></div>}
+          {req.sharepoint_link && <div style={{ marginBottom:18 }}><a href={req.sharepoint_link.startsWith("http") ? req.sharepoint_link : "https://" + req.sharepoint_link}
+              target="_blank" rel="noopener noreferrer"
+              onClick={e => { e.stopPropagation(); }}
+              style={{ fontSize:13, color:C.teal, fontWeight:600 }}>Open in SharePoint ↗</a></div>}
 
           {/* Actions */}
           <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>

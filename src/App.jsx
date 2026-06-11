@@ -591,8 +591,9 @@ function InlineNoteCell({ width, note = "", onChange, color, last = false }) {
       width, minWidth: width, flexShrink: 0, flexGrow: last ? 1 : 0,
       display: "flex", alignItems: "center",
       padding: "0 6px",
-      borderRight: last ? "none" : "1px solid rgba(0,0,0,0.06)",
-      overflow: "hidden",
+      borderRight: "1px solid rgba(0,0,0,0.06)",
+      overflow: "hidden", position: "relative",
+      background: "inherit",
     }}>
       {editing ? (
         <input
@@ -882,6 +883,9 @@ function ProjectDetailsModal({ proj, people, onClose, onSave, onArchive, onDelet
     objective:        proj.objective        || "",
     projectStatus:    proj.projectStatus    || "Needs Timeline",
     earliestLaunchDate: proj.earliestLaunchDate || "",
+    kickoffRequested:    proj.kickoffRequested    || false,
+    kickoffDate:         proj.kickoffDate         || "",
+    kickoffNotifSentAt:  proj.kickoffNotifSentAt  || null,
   });
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
   const [fromTemplate, setFromTemplate] = useState(null); // selected deliverable template
@@ -1032,6 +1036,43 @@ function ProjectDetailsModal({ proj, people, onClose, onSave, onArchive, onDelet
               rows={3} style={{ ...inputStyle, resize:"vertical", lineHeight:1.5 }} />
           </div>
 
+          {/* Kickoff meeting */}
+          <div style={{ background:"rgba(0,181,181,0.05)", border:"1px solid rgba(0,181,181,0.2)", borderRadius:8, padding:"12px 14px" }}>
+            <label style={{ ...labelStyle, marginBottom:8, display:"block" }}>
+              Program Launch / Kickoff Meeting
+              <span style={{ fontSize:9, fontWeight:400, color:"#9ca3af", marginLeft:6, textTransform:"none", letterSpacing:0 }}>ISO audit evidence</span>
+            </label>
+            <div style={{ display:"flex", alignItems:"center", gap:10, marginBottom: form.kickoffRequested ? 10 : 0 }}>
+              <input type="checkbox" id="kickoff-det" checked={!!form.kickoffRequested}
+                onChange={e => set("kickoffRequested", e.target.checked)}
+                style={{ width:15, height:15, cursor:"pointer" }} />
+              <label htmlFor="kickoff-det" style={{ fontSize:12, fontWeight:600, color:"#374151", cursor:"pointer" }}>
+                Kickoff meeting requested
+              </label>
+            </div>
+            {form.kickoffRequested && (
+              <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
+                <div>
+                  <label style={{ fontSize:10, fontWeight:700, color:"#6b7280", letterSpacing:".06em", textTransform:"uppercase", display:"block", marginBottom:5 }}>Date requested</label>
+                  <input type="date" value={form.kickoffDate || ""} onChange={e => set("kickoffDate", e.target.value)}
+                    style={inputStyle} />
+                </div>
+                {form.kickoffNotifSentAt ? (
+                  <div style={{ display:"flex", alignItems:"center", gap:6, fontSize:11, color:"#059669",
+                    background:"rgba(5,150,105,0.06)", border:"1px solid rgba(5,150,105,0.2)",
+                    borderRadius:6, padding:"6px 10px" }}>
+                    <span>✓</span>
+                    <span>PM notified on {new Date(form.kickoffNotifSentAt).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric",hour:"2-digit",minute:"2-digit"})}</span>
+                  </div>
+                ) : (
+                  <div style={{ fontSize:11, color:"#9ca3af", fontStyle:"italic" }}>
+                    PM notification will send when you save.
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+
 
 
           {/* Notes */}
@@ -1076,10 +1117,22 @@ function ProjectDetailsModal({ proj, people, onClose, onSave, onArchive, onDelet
               {owner ? <span>Lead: <strong style={{ color: owner.color }}>{owner.name}</strong></span> : "No lead assigned"}
               {teamMembers.length > 0 && <span style={{ marginLeft: 12 }}>Team: {teamMembers.length}</span>}
             </div>
-            <div style={{ display: "flex", gap: 8 }}>
-              <button onClick={onClose} style={{ padding: "8px 18px", borderRadius: 7, border: "1px solid rgba(0,0,0,0.1)",
-                background: "transparent", color: "#6b7280", fontSize: 12, fontWeight: 600,
-                cursor: "pointer", fontFamily: "inherit" }}>Cancel</button>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+              <button
+                onClick={() => generateAuditExport({ ...proj, ...form }, people||[])}
+                style={{ padding:"8px 14px", borderRadius:7, border:"1px solid rgba(5,150,105,0.3)",
+                  background:"transparent", color:"#059669", fontSize:12, fontWeight:600,
+                  cursor:"pointer", fontFamily:"inherit" }}>
+                📋 Audit Export
+              </button>
+              <button
+                onClick={() => downloadBrief({ ...proj, ...form }, proj.deliverables||[], people||[])}
+                style={{ padding:"8px 14px", borderRadius:7, border:"1px solid rgba(99,102,241,0.3)",
+                  background:"transparent", color:"#6366f1", fontSize:12, fontWeight:600,
+                  cursor:"pointer", fontFamily:"inherit" }}>
+                📄 Download SOW Brief
+              </button>
+              <button onClick={onClose} style={{ padding: "8px 18px", borderRadius: 7, border: "1px solid rgba(0,0,0,0.1)", background: "transparent", color: "#6b7280", fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>Cancel</button>
               <button onClick={handleSave} style={{ padding: "8px 20px", borderRadius: 7, border: "none",
                 background: saved ? "#34d399" : proj.color, color: "#fff", fontSize: 12, fontWeight: 700,
                 cursor: "pointer", fontFamily: "inherit", transition: "background 0.2s" }}>
@@ -2470,7 +2523,9 @@ function TimelineView({ projects, people, onEditItem, onAddDeliverable, onAddSub
               onMouseLeave={e => e.currentTarget.style.color = "#9ca3af"}
             >↺</button>
           )}
+
           </div>
+
           {/* Week date labels — only in Gantt view */}
           {showGantt && (
             <div style={{ flex: 1, flexShrink: 0, position: "relative", height: "100%", width: totalDays * DAY_W }}>
@@ -2670,7 +2725,7 @@ function ProjectSection({ proj, people, collapsed, toggle, weeks, todayOff, allI
   return (
     <div>
       {/* Project header row — clickable to collapse */}
-      <div style={{ display: "flex", height: 36, background: isProjCollapsed ? "rgba(0,0,0,0.03)" : "rgba(0,0,0,0.04)", borderBottom: "1px solid rgba(0,0,0,0.07)", alignItems: "center", cursor: "pointer" }}
+      <div style={{ display: "flex", height: D_ROW, background: isProjCollapsed ? "rgba(0,0,0,0.03)" : "rgba(0,0,0,0.04)", borderBottom: "1px solid rgba(0,0,0,0.07)", alignItems: "center", cursor: "pointer" }}
         onMouseEnter={e => e.currentTarget.style.background = "rgba(255,255,255,0.045)"}
         onMouseLeave={e => e.currentTarget.style.background = isProjCollapsed ? "rgba(0,0,0,0.03)" : "rgba(0,0,0,0.04)"}>
         <div style={{ width: showGantt ? LEFT_W : "100%", flexShrink: 0, display: "flex", alignItems: "center", padding: "0 12px", gap: 8, borderRight: "1px solid rgba(0,0,0,0.06)", height: "100%", position: showGantt ? "sticky" : "static", left:0, zIndex: showGantt ? 21 : "auto", alignSelf:"stretch", background:"#fff", width: showGantt ? LEFT_W : "100%", boxShadow:"2px 0 4px rgba(0,0,0,0.07)" }}>
@@ -2944,7 +2999,7 @@ function DeliverableRow({ del, proj, people, collapsed, toggle, weeks, todayOff,
           onMouseEnter={e => e.currentTarget.style.color="#374151"}
           onMouseLeave={e => e.currentTarget.style.color="#9ca3af"}
         >⠿</div>
-        <div onMouseEnter={e => e.currentTarget.style.background="#fff8ed"} onMouseLeave={e => e.currentTarget.style.background="#fff"} style={{ display:"flex", width:LEFT_W, flexShrink:0, alignSelf:"stretch", position: showGantt ? "sticky" : "static", left:18, zIndex: showGantt ? 20 : "auto", background:"#fff", width: showGantt ? LEFT_W : "100%", boxShadow: showGantt ? "2px 0 4px rgba(0,0,0,0.07)" : "none" }}>
+        <div onMouseEnter={e => e.currentTarget.style.background="#fff8ed"} onMouseLeave={e => e.currentTarget.style.background="#fff"} style={{ display:"flex", flexShrink:0, alignSelf:"stretch", position: showGantt ? "sticky" : "static", left:18, zIndex: showGantt ? 20 : "auto", background:"#fff", width: showGantt ? LEFT_W : "100%", boxShadow: showGantt ? "2px 0 4px rgba(0,0,0,0.07)" : "none" }}>
         {/* Row # */}
         <LeftCell width={colWidths.num} center>
           <span style={{ fontSize: 10, fontWeight: 700, color: "#9ca3af" }}>{rowNum}</span>
@@ -3006,7 +3061,6 @@ function DeliverableRow({ del, proj, people, collapsed, toggle, weeks, todayOff,
           }
         </LeftCell>
 
-        </div>
         <InlineNoteCell
           width={colWidths.notes}
           note={statusNotes[`${proj.id}::${del.id}`] || ""}
@@ -3014,6 +3068,7 @@ function DeliverableRow({ del, proj, people, collapsed, toggle, weeks, todayOff,
           color={proj.color}
           last
         />
+        </div>
         {/* Chart */}
         {showGantt && (
         <div style={{ flex: 1, height: "100%", position: "relative", width: totalDays * DAY_W }}>
@@ -3171,7 +3226,7 @@ function SubtaskRow({ sub, del, proj, people, weeks, todayOff, allItemsFlat, onE
       onMouseLeave={e => { const t=new Date().toLocaleDateString('en-CA'); e.currentTarget.style.background=sub.end&&sub.end<t&&sub.status==="In Progress"?"rgba(239,68,68,0.18)":sub.end&&sub.end<t&&sub.status!=="Done"?"rgba(239,68,68,0.09)":sub.end&&sub.end===t&&sub.status!=="Done"?"rgba(251,146,60,0.16)":"rgba(0,0,0,0.025)"; }}>
 
       <div style={{ width:18, flexShrink:0 }} />{/* spacer matching deliverable drag handle */}
-      <div style={{ display:"flex", width:LEFT_W, flexShrink:0, alignSelf:"stretch", position: showGantt ? "sticky" : "static", left:18, zIndex: showGantt ? 20 : "auto", background:"#fff", boxShadow:"2px 0 4px rgba(0,0,0,0.07)" }}>
+      <div style={{ display:"flex", width: showGantt ? LEFT_W - (colWidths.notes || 150) : "100%", flexShrink:0, alignSelf:"stretch", position: showGantt ? "sticky" : "static", left:18, zIndex: showGantt ? 20 : "auto", background:"#fff", boxShadow:"2px 0 4px rgba(0,0,0,0.07)" }}>
       {/* Row # */}
       <LeftCell width={colWidths.num} center>
         <span style={{ fontSize: 9, color: "#9ca3af" }}>{rowNum}</span>
@@ -3223,7 +3278,6 @@ function SubtaskRow({ sub, del, proj, people, weeks, todayOff, allItemsFlat, onE
       <LeftCell width={colWidths.assignees}>
         <InlineAssignees assignees={sub.assignees || []} people={people} onChange={v => save({ assignees: v })} />
       </LeftCell>
-      </div>{/* end sticky left */}
       <InlineNoteCell
         width={colWidths.notes}
         note={statusNotes[`${proj.id}::${sub.id}`] || ""}
@@ -3232,6 +3286,7 @@ function SubtaskRow({ sub, del, proj, people, weeks, todayOff, allItemsFlat, onE
         last
       />
 
+      </div>{/* end sticky left */}
       {/* Gantt bar */}
       {showGantt && (
       <div style={{ flex: 1, height: "100%", position: "relative", width: totalDays * DAY_W }}>
@@ -5225,9 +5280,9 @@ function MyHubView({ projects, people, holidays, pto = [], currentUserId, onSetC
           ? [...completions, ...assignments, ...readyToStart]
           : [...assignments, ...readyToStart];
         if (!visibleNotifs.length) return null;
-        const typeIcon  = { task_completed:"✓", task_assigned:"+", task_ready:"▶", due_soon:"⏰", overdue:"🔴" };
-        const typeColor = { task_completed:"#f97316", task_assigned:BRAND_TEAL, task_ready:"#6366f1", due_soon:"#d97706", overdue:"#e24b4a" };
-        const typeLabel = { task_completed:"Task Completed", task_assigned:"Assigned to You", task_ready:"Up Next", due_soon:"Due Soon", overdue:"Overdue" };
+        const typeIcon  = { task_completed:"✓", task_assigned:"+", task_ready:"▶", due_soon:"⏰", overdue:"🔴", project_completed:"🎉", kickoff_requested:"📅" };
+        const typeColor = { task_completed:"#f97316", task_assigned:BRAND_TEAL, task_ready:"#6366f1", due_soon:"#d97706", overdue:"#e24b4a", project_completed:"#10b981", kickoff_requested:"#0ea5e9" };
+        const typeLabel = { task_completed:"Task Completed", task_assigned:"Assigned to You", task_ready:"Up Next", due_soon:"Due Soon", overdue:"Overdue", project_completed:"Project Complete", kickoff_requested:"Kickoff Requested" };
         return (
           <div style={{ background:"#fff", border:"1px solid rgba(0,0,0,0.08)", borderRadius:10, overflow:"hidden" }}>
             <div style={{ padding:"12px 16px", background:"#f8fafc", borderBottom:"1px solid rgba(0,0,0,0.07)", display:"flex", alignItems:"center", justifyContent:"space-between", gap:10 }}>
@@ -9436,6 +9491,179 @@ function DeliverableTemplateManager({ onClose, deliverableTemplates, onSave, onD
 
 
 // --- NEW PROJECT MODAL ────────────────────────────────────────────────────────
+// ── generateAuditExport — ISO Program Audit Summary ──────────────────────────
+function generateAuditExport(proj, people) {
+  const fmtDate = d => d ? new Date(d + "T00:00:00").toLocaleDateString("en-US", { month:"short", day:"numeric", year:"numeric" }) : "—";
+  const fmtTs   = d => d ? new Date(d).toLocaleDateString("en-US", { month:"short", day:"numeric", year:"numeric" }) : null;
+  const person  = id => people.find(p => p.id === id)?.name || "—";
+
+  const teamNames = [
+    proj.accountLeadId    && `${person(proj.accountLeadId)} (Account Lead)`,
+    proj.projectManagerId && `${person(proj.projectManagerId)} (Project Manager)`,
+    ...(proj.teamMemberIds || []).map(id => person(id)),
+  ].filter(Boolean);
+
+  // ── Classify subtasks into checklist phases ──────────────────────────────
+  function classifySubtask(title = "") {
+    const t = title.toLowerCase();
+    if (/client.*(review|approval|sign|proof)|final approval|client\s+proof/.test(t)) return "client_signoff";
+    if (/internal.*(review|approval|sign)|peer review|supervisor|manager review/.test(t)) return "internal_signoff";
+    if (/review|approval|sign.?off|proof/.test(t)) return "internal_signoff"; // generic review = internal
+    return "output"; // copy, design, draft, build, etc.
+  }
+
+  function statusBadge(status, small = false) {
+    const sz = small ? "9px" : "10px";
+    const pd = small ? "1px 6px" : "2px 8px";
+    if (status === "Done")         return `<span style="background:#d1fae5;color:#065f46;padding:${pd};border-radius:10px;font-size:${sz};font-weight:700">✓ Done</span>`;
+    if (status === "In Progress")  return `<span style="background:#dbeafe;color:#1e40af;padding:${pd};border-radius:10px;font-size:${sz};font-weight:700">In Progress</span>`;
+    return `<span style="background:#f3f4f6;color:#6b7280;padding:${pd};border-radius:10px;font-size:${sz};font-weight:600">Not Started</span>`;
+  }
+
+  // ── Build deliverable rows ────────────────────────────────────────────────
+  const delRows = proj.deliverables.map((d, di) => {
+    const subtasks = d.subtasks || [];
+    const outputs       = subtasks.filter(s => classifySubtask(s.title) === "output");
+    const internalSO    = subtasks.filter(s => classifySubtask(s.title) === "internal_signoff");
+    const clientSO      = subtasks.filter(s => classifySubtask(s.title) === "client_signoff");
+
+    // Internal review "initiated" = first review task goes In Progress or Done
+    const internalInitiated = internalSO.find(s => s.status === "In Progress" || s.status === "Done");
+    // Internal signed off = all internal review tasks Done
+    const internalComplete = internalSO.length > 0 && internalSO.every(s => s.status === "Done");
+    // Client signed off = all client review tasks Done
+    const clientComplete   = clientSO.length  > 0 && clientSO.every(s => s.status === "Done");
+
+    const bg = di % 2 === 0 ? "#f9fafb" : "#fff";
+
+    const outputList = outputs.length
+      ? outputs.map(s => `<div style="margin-bottom:3px">${statusBadge(s.status, true)} <span style="font-size:10px">${s.title}</span>${s.status === "In Progress" || s.status === "Done" ? ` <span style="font-size:9px;color:#9ca3af">· due ${fmtDate(s.end)}</span>` : ""}</div>`).join("")
+      : `<span style="font-size:10px;color:#9ca3af;font-style:italic">No output tasks</span>`;
+
+    // Internal review cell
+    const internalReviewList = internalSO.length
+      ? internalSO.map(s => `<div style="margin-bottom:3px">${statusBadge(s.status, true)} <span style="font-size:10px">${s.title}</span></div>`).join("")
+        + (internalInitiated ? `<div style="font-size:9px;color:#6b7280;margin-top:4px">⚑ Review initiated — awaiting sign-off via email</div>` : "")
+      : `<span style="font-size:10px;color:#9ca3af;font-style:italic">No internal review task</span>`;
+
+    // Client sign-off cell
+    const clientReviewList = clientSO.length
+      ? clientSO.map(s => `<div style="margin-bottom:3px">${statusBadge(s.status, true)} <span style="font-size:10px">${s.title}</span></div>`).join("")
+        + `<div style="font-size:9px;color:#6b7280;margin-top:4px">⚑ Approval evidence: email</div>`
+      : (d.status === "Done"
+          ? `<div style="font-size:10px;color:#059669">✓ Deliverable complete</div><div style="font-size:9px;color:#6b7280;margin-top:2px">⚑ Approval evidence: email</div>`
+          : `<span style="font-size:10px;color:#9ca3af;font-style:italic">No client review task</span>`);
+
+    return `<tr style="background:${bg};vertical-align:top">
+      <td style="padding:9px 10px;border:1px solid #e5e7eb;font-weight:600;font-size:10.5pt">
+        ${d.title}
+        <div style="font-size:9px;color:#9ca3af;font-weight:400;margin-top:2px">Due: ${fmtDate(d.requestedDeliveryDate || d.end)}</div>
+        <div style="margin-top:4px">${statusBadge(d.status)}</div>
+      </td>
+      <td style="padding:9px 10px;border:1px solid #e5e7eb;font-size:10px">
+        <div style="font-size:9px;font-weight:700;color:#002A4E;text-transform:uppercase;letter-spacing:.05em;margin-bottom:5px">SOW / Brief</div>
+        ${proj.kickoffRequested
+          ? `<div style="color:#059669;font-size:10px">✓ Brief generated</div><div style="font-size:9px;color:#6b7280">${proj.kickoffDate ? fmtDate(proj.kickoffDate) : "See project brief"}</div>`
+          : `<div style="font-size:10px;color:#9ca3af;font-style:italic">See project brief</div>`}
+      </td>
+      <td style="padding:9px 10px;border:1px solid #e5e7eb;font-size:10px">
+        <div style="font-size:9px;font-weight:700;color:#002A4E;text-transform:uppercase;letter-spacing:.05em;margin-bottom:5px">Outputs</div>
+        ${outputList}
+      </td>
+      <td style="padding:9px 10px;border:1px solid #e5e7eb;font-size:10px">
+        <div style="font-size:9px;font-weight:700;color:#002A4E;text-transform:uppercase;letter-spacing:.05em;margin-bottom:5px">Internal Sign-off</div>
+        ${internalReviewList}
+        ${internalComplete ? `<div style="font-size:9px;color:#059669;margin-top:4px;font-weight:600">✓ Internal review complete</div>` : ""}
+      </td>
+      <td style="padding:9px 10px;border:1px solid #e5e7eb;font-size:10px">
+        <div style="font-size:9px;font-weight:700;color:#002A4E;text-transform:uppercase;letter-spacing:.05em;margin-bottom:5px">Client Sign-off</div>
+        ${clientReviewList}
+        ${clientComplete ? `<div style="font-size:9px;color:#059669;margin-top:4px;font-weight:600">✓ Client approval complete</div>` : ""}
+      </td>
+    </tr>`;
+  }).join("");
+
+  const allTasks = proj.deliverables.flatMap(d => [d, ...(d.subtasks || [])]);
+  const doneCount = allTasks.filter(t => t.status === "Done").length;
+
+  const html = `<html xmlns:o='urn:schemas-microsoft-com:office:office'
+    xmlns:w='urn:schemas-microsoft-com:office:word'
+    xmlns='http://www.w3.org/TR/REC-html40'>
+<head><meta charset="UTF-8"><title>Audit Summary — ${proj.name}</title>
+<style>
+body{font-family:Calibri,Arial,sans-serif;margin:0;padding:48px 56px;color:#1f2937;font-size:11pt}
+h1{font-size:20pt;color:#002A4E;margin:0 0 4px}
+h2{font-size:12pt;font-weight:700;color:#002A4E;margin:28px 0 10px;padding-bottom:6px;border-bottom:2px solid #00B5B5}
+table{width:100%;border-collapse:collapse;margin-bottom:16px;font-size:10pt}
+th{background:#002A4E;color:white;padding:8px 10px;text-align:left;font-weight:600;font-size:10px;text-transform:uppercase;letter-spacing:.04em}
+td{border:1px solid #e5e7eb;padding:8px 10px;vertical-align:top}
+.meta{display:grid;grid-template-columns:1fr 1fr;gap:6px 24px;margin-bottom:20px}
+.meta-item{display:flex;gap:8px;font-size:10.5pt}
+.meta-label{font-weight:700;color:#374151;min-width:140px}
+.footer{margin-top:48px;border-top:1px solid #e5e7eb;padding-top:12px;font-size:9pt;color:#9ca3af}
+.note{background:#fffbeb;border:1px solid #fde68a;border-radius:4px;padding:8px 12px;font-size:10pt;color:#92400e;margin-bottom:12px}
+@media print{body{padding:32px}}
+</style></head>
+<body>
+<h1>${proj.name}</h1>
+<div style="font-size:11pt;color:#6b7280;margin-bottom:24px">
+  ISO Program Audit Summary &nbsp;·&nbsp; Generated ${new Date().toLocaleDateString("en-US",{month:"long",day:"numeric",year:"numeric"})}
+  &nbsp;·&nbsp; Program #: <strong style="color:#1f2937">${proj.projectNumber || "—"}</strong>
+</div>
+
+<h2>Program Overview</h2>
+<div class="meta">
+  <div class="meta-item"><span class="meta-label">Program Name</span>${proj.name}</div>
+  <div class="meta-item"><span class="meta-label">Client</span>${proj.client || "—"}</div>
+  <div class="meta-item"><span class="meta-label">Program Number</span>${proj.projectNumber || "—"}</div>
+  <div class="meta-item"><span class="meta-label">Priority</span>${proj.priority || "—"}</div>
+  <div class="meta-item"><span class="meta-label">Account Lead</span>${person(proj.accountLeadId)}</div>
+  <div class="meta-item"><span class="meta-label">Project Manager</span>${person(proj.projectManagerId)}</div>
+  <div class="meta-item"><span class="meta-label">Project Status</span>${proj.projectStatus || "—"}</div>
+  <div class="meta-item"><span class="meta-label">Earliest Launch</span>${fmtDate(proj.earliestLaunchDate)}</div>
+</div>
+${proj.objective ? `<p><strong>Objective:</strong> ${proj.objective}</p>` : ""}
+
+<h2>Program Team</h2>
+<p>${teamNames.join(" &nbsp;·&nbsp; ") || "No team members assigned"}</p>
+
+<h2>Program Launch Meeting <span style="font-size:9pt;font-weight:400;color:#6b7280">(Checklist Step 8)</span></h2>
+${proj.kickoffRequested
+  ? `<p>✓ <strong>Kickoff meeting requested</strong> — logged in PulseX on ${proj.kickoffNotifSentAt ? fmtTs(proj.kickoffNotifSentAt) : "project creation"}</p>
+     <p>Requested meeting date: <strong>${fmtDate(proj.kickoffDate)}</strong></p>
+     ${proj.kickoffNotifSentAt ? `<p style="color:#059669;font-size:10.5pt">✓ PM notified: ${fmtTs(proj.kickoffNotifSentAt)}</p>` : ""}`
+  : `<p style="color:#9ca3af;font-style:italic">No kickoff meeting request logged for this program.</p>`}
+
+<h2>Deliverable Development <span style="font-size:9pt;font-weight:400;color:#6b7280">(Checklist Steps DD-1 through DD-4)</span></h2>
+<p style="margin-bottom:8px;font-size:10pt;color:#6b7280">${doneCount} of ${allTasks.length} tasks complete &nbsp;·&nbsp; Email evidence required for sign-off columns</p>
+<div class="note">Sign-off columns indicate task status in PulseX. Attach corresponding approval emails as supplemental evidence.</div>
+<table>
+  <thead><tr>
+    <th style="width:18%">Deliverable</th>
+    <th style="width:16%">DD-1: Request<br><span style="font-weight:400;font-size:9px">SOW / Brief</span></th>
+    <th style="width:22%">DD-2: Outputs<br><span style="font-weight:400;font-size:9px">Work product tasks</span></th>
+    <th style="width:22%">DD-3: Internal Sign-off<br><span style="font-weight:400;font-size:9px">Internal review tasks</span></th>
+    <th style="width:22%">DD-4: Client Sign-off<br><span style="font-weight:400;font-size:9px">Client review tasks</span></th>
+  </tr></thead>
+  <tbody>${delRows}</tbody>
+</table>
+
+<div class="footer">
+  Generated by PulseX · ${new Date().toISOString()} · 
+  Point-in-time snapshot. Source of truth: PulseX project "${proj.name}"
+</div>
+</body></html>`;
+
+  const blob = new Blob([html], { type: "application/msword;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `Audit Summary — ${(proj.name||"Project").replace(/[^a-zA-Z0-9 ]/g,"")} — ${new Date().toISOString().slice(0,10)}.doc`;
+  document.body.appendChild(a); a.click();
+  document.body.removeChild(a); URL.revokeObjectURL(url);
+}
+
+
 // ── Brief HTML Generator ──────────────────────────────────────────────────────
 function generateBriefHtml(proj, deliverables, people) {
   const fmtDate = d => d ? new Date(d + "T00:00:00").toLocaleDateString("en-US", { month:"short", day:"numeric", year:"numeric" }) : "—";
@@ -9505,6 +9733,12 @@ function generateBriefHtml(proj, deliverables, people) {
     <div class="meta-item"><span class="meta-label">Earliest Launch Date</span><span class="meta-value">${fmtDate(proj.earliestLaunchDate)}</span></div>
   </div>
   ${proj.objective ? `<h3>Overall Project Objective</h3><p>${proj.objective}</p>` : ""}
+  ${proj.kickoffRequested ? `
+  <div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:6px;padding:10px 14px;margin:10px 0;font-size:10pt">
+    <strong style="color:#065f46">✓ Kickoff meeting requested</strong>
+    ${proj.kickoffDate ? ` — Requested meeting date: <strong>${fmtDate(proj.kickoffDate + "T00:00:00")}</strong>` : ""}
+    ${proj.kickoffNotifSentAt ? ` · PM notified ${fmtDate(proj.kickoffNotifSentAt)}` : ""}
+  </div>` : ""}
   <table>
     <thead><tr><th>Deliverable</th><th>Requested Delivery Date</th></tr></thead>
     <tbody>${delRows}</tbody>
@@ -9642,6 +9876,8 @@ function ProjectInitiationModal({ people, onClose, onSubmit, existingProj = null
     projectManagerId:  existingProj?.projectManagerId || "",
     objective:         existingProj?.objective        || "",
     projectStatus:     existingProj?.projectStatus    || "Needs Timeline",
+    kickoffRequested:  existingProj?.kickoffRequested || false,
+    kickoffDate:       existingProj?.kickoffDate       || new Date().toISOString().slice(0,10),
   });
   const [deliverables, setDeliverables] = React.useState(
     existingProj?.deliverables?.map(d => ({
@@ -9772,6 +10008,25 @@ function ProjectInitiationModal({ people, onClose, onSubmit, existingProj = null
                 rows={3} placeholder="What is this project trying to achieve?"
                 style={{ ...inputStyle, resize:"vertical" }} />
             </div>
+
+          {/* Kickoff meeting request */}
+          <div style={{ background:"rgba(0,181,181,0.06)", border:"1px solid rgba(0,181,181,0.2)", borderRadius:8, padding:"12px 14px" }}>
+            <div style={{ display:"flex", alignItems:"center", gap:10 }}>
+              <input type="checkbox" id="kickoff-req" checked={form.kickoffRequested}
+                onChange={e => set("kickoffRequested", e.target.checked)}
+                style={{ width:16, height:16, cursor:"pointer" }} />
+              <label htmlFor="kickoff-req" style={{ fontSize:12, fontWeight:600, color:"#374151", cursor:"pointer" }}>
+                Request kickoff / Program Launch meeting
+              </label>
+            </div>
+            {form.kickoffRequested && (
+              <div style={{ marginTop:10 }}>
+                <label style={{ fontSize:10, fontWeight:700, color:"#6b7280", letterSpacing:".06em", textTransform:"uppercase", display:"block", marginBottom:5 }}>Requested meeting date</label>
+                <input type="date" value={form.kickoffDate} onChange={e => set("kickoffDate", e.target.value)}
+                  style={{ border:"1px solid rgba(0,0,0,0.12)", borderRadius:6, padding:"8px 10px", fontSize:12, fontFamily:"inherit", outline:"none" }} />
+              </div>
+            )}
+          </div>
           </div>
         )}
 
@@ -10200,7 +10455,7 @@ function ModalShell({ title, onClose, children, accentColor = BRAND_TEAL, width 
         <span style={{ flex: 1, fontSize: 15, fontWeight: 700, color: "#111827" }}>{title}</span>
         <button onClick={onClose} style={{ background: "none", border: "none", color: "#6b7280", cursor: "pointer", fontSize: 20, lineHeight: 1, padding: "0 2px" }}>×</button>
       </div>
-      <div style={{ padding: "0 24px 4px" }}>
+      <div style={{ padding: "0 24px 4px", overflowY: "auto", maxHeight: "calc(85vh - 130px)", flex: 1 }}>
         {children}
       </div>
     </div>
@@ -10844,7 +11099,9 @@ export default function App() {
         setArchivedProjects(archived2.map(p => rowToProject(p, dR2.data, subs2)));
         setPeople((tmR2.data || []).map(p => ({ id: p.id, name: p.name, color: p.color, annualTarget: p.annual_target || 1850, department: p.department || "" })));
         setHolidays(hR2.data || []);
-        setStatusNotes(snR2.data || []);
+        const notes2 = {};
+        (snR2.data || []).forEach(n => { notes2[`${n.project_id}::${n.deliverable_id}`] = n.note; });
+        setStatusNotes(notes2);
         setSavedTemplates((tR2.data || []).map(t => ({ ...t.data, id: t.id, name: t.name })));
         setPto((ptR2.data || []).map(rowToPto));
         console.log("[PulseX] Retry succeeded");
@@ -11108,6 +11365,10 @@ export default function App() {
     const wasJustCompleted = updated.status === "Done" && prevStatus !== "Done";
 
     if (wasJustCompleted) {
+      // Check if the whole project is now complete
+      setTimeout(() => checkProjectCompletion(updated.projectId || projects.find(p =>
+        p.deliverables.some(d => d.id === updated.id || d.subtasks?.some(s => s.id === updated.id))
+      )?.id), 600);
       // Auto-dismiss due_soon / overdue notifications for the completed task
       setNotifications(prev => prev.map(n =>
         (n.taskId === updated.id && (n.type === 'due_soon' || n.type === 'overdue') && !n.isRead)
@@ -11240,6 +11501,8 @@ export default function App() {
         objective: proj.objective || "",
         earliest_launch_date: proj.earliestLaunchDate || null,
         project_status: proj.projectStatus || "Needs Timeline",
+        kickoff_requested: proj.kickoffRequested || false,
+        kickoff_date: proj.kickoffDate || null,
       });
       return error;
     }
@@ -11280,7 +11543,30 @@ export default function App() {
       }
     }
 
-    // PM notification via admin_task
+    // Kickoff meeting notification to PM (if requested at creation)
+    if (formData.kickoffRequested && formData.projectManagerId && SB_READY) {
+      const pmName = people.find(p => p.id === formData.projectManagerId)?.name || "PM";
+      const kickoffNotifId = `notif_kickoff_${projId}_${Date.now()}`;
+      const sentNow = new Date().toISOString();
+      setNotifications(prev => [{
+        id: kickoffNotifId, type: "kickoff_requested",
+        message: `Kickoff meeting requested for "${formData.name}" — please schedule the Program Launch meeting.`,
+        assignedToPersonId: formData.projectManagerId,
+        projectId: projId, isRead: false, createdAt: sentNow,
+        _projName: formData.name, _projColor: formData.color,
+      }, ...prev]);
+      await sb.upsert("task_notifications", {
+        id: kickoffNotifId, project_id: projId,
+        notification_type: "kickoff_requested",
+        message: `Kickoff meeting requested for "${formData.name}" — please schedule the Program Launch meeting.`,
+        assigned_to_person_id: formData.projectManagerId,
+        is_read: false, created_at: sentNow,
+      });
+      // Record that notification was sent
+      await sb.update("projects", projId, { kickoff_notif_sent_at: sentNow }).catch(() => {});
+    }
+
+    // PM timeline planning notification via admin_task
     if (formData.projectManagerId && SB_READY) {
       const pmName = people.find(p => p.id === formData.projectManagerId)?.name || "PM";
       const notifId = "at_" + Date.now();
@@ -11350,6 +11636,36 @@ export default function App() {
   const handleSaveProjectDetails = (proj) => optimistic(
     () => setProjects(projs => projs.map(p => p.id === proj.id ? { ...p, ...proj } : p)),
     async () => {
+      // Send PM kickoff notification if just requested and not yet sent
+      const prevProj = projects.find(p => p.id === proj.id);
+      const kickoffJustRequested = proj.kickoffRequested && !prevProj?.kickoffRequested;
+      const kickoffNotifAlreadySent = !!prevProj?.kickoffNotifSentAt;
+      const sentAt = (proj.kickoffRequested && proj.projectManagerId &&
+                     (kickoffJustRequested || (proj.kickoffRequested && !kickoffNotifAlreadySent)))
+        ? new Date().toISOString() : (proj.kickoffNotifSentAt || null);
+
+      if (proj.kickoffRequested && proj.projectManagerId &&
+          (kickoffJustRequested || (proj.kickoffRequested && !kickoffNotifAlreadySent))) {
+        const pmName = people.find(p => p.id === proj.projectManagerId)?.name || "Project Manager";
+        const notifId = `notif_kickoff_${proj.id}_${Date.now()}`;
+        setNotifications(prev => [{
+          id: notifId, type: "kickoff_requested",
+          message: `Kickoff meeting requested for "${proj.name}" — please schedule the Program Launch meeting.`,
+          assignedToPersonId: proj.projectManagerId,
+          projectId: proj.id, isRead: false,
+          createdAt: new Date().toISOString(),
+          _projName: proj.name, _projColor: proj.color,
+        }, ...prev]);
+        setToastNotif({ message: `Kickoff notification sent to ${pmName}`, type: "kickoff_requested" });
+        if (SB_READY) sb.upsert("task_notifications", {
+          id: notifId, project_id: proj.id,
+          notification_type: "kickoff_requested",
+          message: `Kickoff meeting requested for "${proj.name}" — please schedule the Program Launch meeting.`,
+          assigned_to_person_id: proj.projectManagerId,
+          is_read: false, created_at: new Date().toISOString(),
+        });
+      }
+
       const { error } = await sb.update("projects", proj.id, {
         owner_id:            proj.ownerId       || null,
         name:                proj.name,
@@ -11364,6 +11680,9 @@ export default function App() {
         objective:           proj.objective     || "",
         project_status:      proj.projectStatus || "Active",
         earliest_launch_date: proj.earliestLaunchDate || null,
+        kickoff_requested:   proj.kickoffRequested || false,
+        kickoff_date:        proj.kickoffDate || null,
+        kickoff_notif_sent_at: sentAt,
       });
       return error;
     },
@@ -11527,6 +11846,50 @@ export default function App() {
         });
       }
     }
+  };
+
+  // ── Program close notification ──────────────────────────────────────────────
+  const checkProjectCompletion = async (projectId) => {
+    const proj = projects.find(p => p.id === projectId);
+    if (!proj) return;
+    const allItems = proj.deliverables.flatMap(d => [d, ...(d.subtasks || [])]);
+    if (!allItems.length) return;
+    const allDone = allItems.every(t => t.status === "Done");
+    if (!allDone) return;
+
+    // All tasks complete — fire project_completed notification to entire team
+    const recipients = [
+      ...new Set([
+        proj.ownerId, proj.projectManagerId, proj.accountLeadId,
+        ...(proj.teamMemberIds || []),
+      ].filter(Boolean))
+    ];
+
+    const msg = `All tasks complete — ${proj.name} is ready to close.`;
+    const notifId = `notif_proj_done_${projectId}_${Date.now()}`;
+
+    recipients.forEach(personId => {
+      const n = {
+        id: notifId + "_" + personId,
+        type: "project_completed",
+        message: msg,
+        assignedToPersonId: personId,
+        taskId: null, projectId,
+        isRead: false,
+        createdAt: new Date().toISOString(),
+        _projName: proj.name, _projColor: proj.color,
+      };
+      setNotifications(prev => prev.some(x => x.id === n.id) ? prev : [n, ...prev]);
+      if (SB_READY) sb.upsert("task_notifications", {
+        id: n.id, task_id: null, project_id: projectId,
+        notification_type: "project_completed", message: msg,
+        assigned_to_person_id: personId, is_read: false,
+        created_at: n.createdAt,
+      });
+    });
+
+    setToastNotif({ id: notifId, message: msg, type: "project_completed" });
+    console.log(`[PulseX] project_completed — ${proj.name} — notified ${recipients.length} team member(s)`);
   };
 
   const deleteAdminTask = async (id) => {
@@ -11799,7 +12162,10 @@ export default function App() {
       }
       optimistic(
         () => setProjects(ps => ps.map(p => p.id !== projectId ? p : { ...p, deliverables: p.deliverables.map(d => d.id !== deliverableId ? d : { ...d, subtasks: d.subtasks.map(s => s.id !== subtaskId ? s : { ...s, status: next, progress: newProg }) }) })),
-        async () => { const { error } = await sb.update("subtasks", subtaskId, { status: next, progress: newProg }); return error; }
+        async () => { const cAt = next === "Done" ? new Date().toISOString() : null;
+          const { error } = await sb.update("subtasks", subtaskId, cAt ? { status: next, progress: newProg, completed_at: cAt } : { status: next, progress: newProg });
+          if (!error && next === "Done") setTimeout(() => checkProjectCompletion(projectId), 500);
+          return error; }
       );
     } else {
       const next    = del?.status === "Done" ? "In Progress" : "Done";
@@ -11808,7 +12174,8 @@ export default function App() {
       optimistic(
         () => setProjects(ps => ps.map(p => p.id !== projectId ? p : { ...p, deliverables: p.deliverables.map(d => d.id !== deliverableId ? d : { ...d, status: next, progress: newProg, subtasks: next === "Done" ? d.subtasks.map(s => ({ ...s, status: "Done", progress: 100 })) : d.subtasks }) })),
         async () => {
-          const { error } = await sb.update("deliverables", deliverableId, { status: next, progress: newProg });
+          const cAtD = next === "Done" ? new Date().toISOString() : null;
+          const { error } = await sb.update("deliverables", deliverableId, cAtD ? { status: next, progress: newProg, completed_at: cAtD } : { status: next, progress: newProg });
           if (error) return error;
           if (next === "Done") { const { error: se } = await sb.updateWhere("subtasks", "deliverable_id", deliverableId, { status: "Done", progress: 100 }); return se; }
           return null;
