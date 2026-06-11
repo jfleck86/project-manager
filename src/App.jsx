@@ -9730,17 +9730,15 @@ function generateBriefHtml(proj, deliverables, people) {
   const blank = (label = "Complete during Start of Work meeting") =>
     `<div class="blank">${label}</div>`;
 
-  return `<!DOCTYPE html>
-<html xmlns:o='urn:schemas-microsoft-com:office:office'
+  return `<html xmlns:o='urn:schemas-microsoft-com:office:office'
       xmlns:w='urn:schemas-microsoft-com:office:word'
       xmlns='http://www.w3.org/TR/REC-html40'>
 <head>
 <meta charset="UTF-8">
 <title>Project Brief — ${proj.name}</title>
 <style>
-  @import url('https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700;900&display=swap');
   * { box-sizing: border-box; margin: 0; padding: 0; }
-  body { font-family: "Roboto", Arial, sans-serif; color: #1f2937; font-size: 10.5pt; background: #fff; }
+  body { font-family: Calibri, "Segoe UI", Arial, sans-serif; color: #1f2937; font-size: 10.5pt; background: #fff; }
   .page { max-width: 940px; margin: 0 auto; padding: 48px 56px; }
 
   /* ── Cover strip ── */
@@ -9918,28 +9916,18 @@ function generateBriefHtml(proj, deliverables, people) {
 
 
 function downloadBrief(proj, deliverables, people) {
-  const innerHtml = generateBriefHtml(proj, deliverables, people);
-  // Word HTML format — opens natively in Microsoft Word
-  const wordHtml = `<html xmlns:o='urn:schemas-microsoft-com:office:office'
-    xmlns:w='urn:schemas-microsoft-com:office:word'
-    xmlns='http://www.w3.org/TR/REC-html40'>
-    <head>
-      <meta charset="utf-8">
-      <meta name=ProgId content=Word.Document>
-      <meta name=Generator content=PulseX>
-      <title>${proj.name} — Project Brief</title>
-      <!--[if gte mso 9]><xml><w:WordDocument><w:View>Print</w:View></w:WordDocument></xml><![endif]-->
-    </head>` + innerHtml.replace('<html>', '').replace('</html>', '').replace(/<head>[\s\S]*?<\/head>/, '') + '</html>';
-  const blob = new Blob([wordHtml], { type: "application/msword;charset=utf-8" });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = `Brief — ${(proj.name||"Project").replace(/[^a-zA-Z0-9 ]/g, "")} — ${new Date().toISOString().slice(0,10)}.doc`;
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  URL.revokeObjectURL(url);
+  // generateBriefHtml already produces a complete Word-compatible HTML document
+  // with proper XML namespaces and embedded CSS — use it directly, no manipulation needed.
+  const html = generateBriefHtml(proj, deliverables, people);
+  const blob = new Blob([html], { type: "application/msword;charset=utf-8" });
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement("a");
+  a.href     = url;
+  a.download = `Brief — ${(proj.name||"Project").replace(/[^a-zA-Z0-9 ]/g,"")} — ${new Date().toISOString().slice(0,10)}.doc`;
+  document.body.appendChild(a); a.click();
+  document.body.removeChild(a); URL.revokeObjectURL(url);
 }
+
 
 // ── ProjectInitiationModal ────────────────────────────────────────────────────
 const PROJECT_PRIORITIES = ["Critical", "High", "Medium", "Low"];
