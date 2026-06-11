@@ -60,7 +60,7 @@ export async function createProofCompletionNotification({
   // Falls back to anon key if no session found.
   const token = (() => {
     try {
-      const s = JSON.parse(localStorage.getItem("sb_session") || "null");
+      const s = JSON.parse((() => { try { return localStorage.getItem("sb_session"); } catch(e) { return null; } })() || "null");
       return s?.access_token || KEY();
     } catch { return KEY(); }
   })();
@@ -70,7 +70,11 @@ export async function createProofCompletionNotification({
   const url  = `${BASE()}/rest/v1/task_notifications`;
 
   // Attempt 1: full notification with all fields (requires proof_queue_integration.sql for extra columns)
+  // id format matches PulseX's own notification creation (text primary key, not uuid)
+  const notifId = `notif_proof_${Date.now()}_${recipientMemberId}`;
+
   const fullNotif = {
+    id:                       notifId,
     task_id:                  taskId    || null,
     notification_type:        "proof_complete",
     message:                  msg,
@@ -84,14 +88,15 @@ export async function createProofCompletionNotification({
   try {
     let res = await fetch(url, { method: "POST", headers: hdrs, body: JSON.stringify(fullNotif) });
 
-    // If constraint error on notification_type or unknown column, retry with minimal fields
     if (!res.ok) {
       const errText = await res.text().catch(() => "");
-      console.warn("[ProofIntegration] Full notification failed:", res.status, errText.slice(0, 200));
+      console.warn("[ProofIntegration] Full notification failed:", res.status, errText.slice(0, 300));
 
+      // Retry with minimal fields — safe for any table schema
       const minimalNotif = {
+        id:                    notifId,
         task_id:               taskId || null,
-        notification_type:     "task_completed",   // always-valid fallback type
+        notification_type:     "task_completed",
         message:               msg,
         assigned_to_person_id: recipientMemberId,
         is_read:               false,
@@ -101,12 +106,13 @@ export async function createProofCompletionNotification({
 
       if (!res.ok) {
         const err2 = await res.text().catch(() => "");
-        console.error("[ProofIntegration] Minimal notification also failed:", res.status, err2.slice(0, 200));
+        console.error("[ProofIntegration] Notification failed:", res.status, err2.slice(0, 300));
+        console.error("[ProofIntegration] → Check task_notifications RLS + schema");
         return;
       }
     }
 
-    console.log("[ProofIntegration] ✓ Completion notification sent to member:", recipientMemberId);
+    console.log("[ProofIntegration] ✓ Notification sent, id:", notifId, "→ member:", recipientMemberId);
   } catch (e) {
     console.error("[ProofIntegration] notification threw:", e.message);
   }
@@ -149,9 +155,9 @@ export function storePrefill(data) {
 }
 export function readAndClearPrefill() {
   try {
-    const raw = localStorage.getItem(PREFILL_KEY);
+    const raw = (() => { try { return localStorage.getItem(PREFILL_KEY); } catch(e) { return null; } })()
     if (!raw) return null;
-    localStorage.removeItem(PREFILL_KEY);
+    try { localStorage.removeItem(PREFILL_KEY); } catch(e) {}
     const parsed = JSON.parse(raw);
     if (parsed._ts && Date.now() - parsed._ts > 120000) return null; // stale
     delete parsed._ts;

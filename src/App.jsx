@@ -10822,8 +10822,37 @@ export default function App() {
       setPto((ptR.data || []).map(rowToPto));
 
     } catch (e) {
-      console.error("[PulseX] loadAll failed:", e.message);
-      setDbError(e.message);
+      console.warn("[PulseX] loadAll failed:", e.message, "— retrying in 1.5s");
+      // Safari sometimes drops the first fetch (StrictMode double-mount / network blip).
+      // Auto-retry once before showing an error.
+      await new Promise(r => setTimeout(r, 1500));
+      try {
+        const [pR2, dR2, sR2, tmR2, hR2, snR2, tR2, ptR2] = await Promise.all([
+          sb.select("projects"),
+          sb.select("deliverables"),
+          sb.select("subtasks"),
+          sb.select("team_members"),
+          sb.select("holidays"),
+          sb.select("status_notes"),
+          sb.select("templates"),
+          sb.select("pto"),
+        ]);
+        if (pR2.error) throw new Error(pR2.error.message || "Retry failed");
+        const subs2 = (sR2.data || []).filter(s => s.deliverable_id && (dR2.data||[]).some(d => d.id === s.deliverable_id));
+        const active2   = (pR2.data || []).filter(p => !p.archived);
+        const archived2 = (pR2.data || []).filter(p =>  p.archived);
+        setProjects(active2.map(p => rowToProject(p, dR2.data, subs2)));
+        setArchivedProjects(archived2.map(p => rowToProject(p, dR2.data, subs2)));
+        setPeople((tmR2.data || []).map(p => ({ id: p.id, name: p.name, color: p.color, annualTarget: p.annual_target || 1850, department: p.department || "" })));
+        setHolidays(hR2.data || []);
+        setStatusNotes(snR2.data || []);
+        setSavedTemplates((tR2.data || []).map(t => ({ ...t.data, id: t.id, name: t.name })));
+        setPto((ptR2.data || []).map(rowToPto));
+        console.log("[PulseX] Retry succeeded");
+      } catch (e2) {
+        console.error("[PulseX] loadAll retry failed:", e2.message);
+        setDbError(e2.message);
+      }
     } finally {
       setLoading(false);
     }
@@ -11884,7 +11913,7 @@ export default function App() {
       try {
         const pending = JSON.parse(localStorage.getItem("proof_pending_notifications") || "[]");
         if (!pending.length) return;
-        localStorage.removeItem("proof_pending_notifications");
+        try { localStorage.removeItem("proof_pending_notifications"); } catch(e) {}
         pending.forEach(notif => {
           if (notif.assignedToPersonId !== ownMemberId) return;
           setNotifications(prev => {
@@ -11913,11 +11942,13 @@ export default function App() {
   // Track login on initial load — once per browser session (sessionStorage flag prevents duplicates)
   React.useEffect(() => {
     if (SB_READY && ownMemberId) {
-      const key = `planr_login_tracked_${ownMemberId}`;
-      if (!sessionStorage.getItem(key)) {
-        trackActivity("login");
-        try { sessionStorage.setItem(key, "1"); } catch {}
-      }
+      try {
+        const key = `planr_login_tracked_${ownMemberId}`;
+        if (!sessionStorage.getItem(key)) {
+          trackActivity("login");
+          try { sessionStorage.setItem(key, "1"); } catch {}
+        }
+      } catch {} // Safari blocks sessionStorage in restricted contexts
     }
   }, [SB_READY, ownMemberId]);
 
@@ -11964,7 +11995,7 @@ export default function App() {
   );
 
   return (
-    <div style={{ height: "100vh", background: "#f5f6f8", color: "#111827", fontFamily: '"Roboto", Arial, sans-serif', display: "flex", flexDirection: "column", maxWidth: "100vw", overflowX: "hidden" }}>
+    <div style={{ minHeight: "100vh", background: "#f5f6f8", color: "#111827", fontFamily: '"Roboto", Arial, sans-serif', display: "flex", flexDirection: "column", maxWidth: "100vw", overflowX: "hidden" }}>
 
       <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=5" />
       <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -12152,7 +12183,7 @@ export default function App() {
       </header>
 
       {/* Main */}
-      <main style={{ flex: 1, padding: "12px 14px", overflow: "auto", display: "flex", flexDirection: "column", gap: 14, boxSizing: "border-box", width: "100%", minWidth: 0, zoom: zoomScale }}>
+      <main style={{ flex: 1, minHeight: 0, padding: "12px 14px", overflow: "auto", display: "flex", flexDirection: "column", gap: 14, boxSizing: "border-box", width: "100%", minWidth: 0, zoom: zoomScale }}>
         {/* Project pills */}
         <div style={{ display: "flex", gap: 7, flexWrap: "wrap", alignItems: "center" }}>
           {projects.map(proj => {
@@ -12253,7 +12284,7 @@ export default function App() {
               if (!notif.projectId) {
                 // Proof queue completion — open proof queue with the request pre-highlighted
                 try { localStorage.setItem("proof_queue_people", JSON.stringify(people)); } catch(e) {}
-                if (notif.taskId) localStorage.setItem("proof_open_request_id", notif.taskId);
+                if (notif.taskId) try { localStorage.setItem("proof_open_request_id", notif.taskId); } catch(e) {}
                 window.open(PROOF_QUEUE_URL, "_blank");
               } else {
                 const proj = projects.find(p => p.id === notif.projectId);

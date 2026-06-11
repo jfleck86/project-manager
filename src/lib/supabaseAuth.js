@@ -34,7 +34,7 @@ function storeSession(data) {
       const payload = decodeJWT(session.access_token);
       if (payload.sub) session.user = { ...(session.user || {}), id: payload.sub };
     }
-    localStorage.setItem("sb_session", JSON.stringify(session));
+    try { localStorage.setItem("sb_session", JSON.stringify(session)); } catch(e) {}
     return session;
   } catch { return data; }
 }
@@ -206,7 +206,7 @@ export function getStoredSession() {
       // so the app can attempt a refresh. Don't wipe it here.
       // The app will call refreshSession() and replace it.
       if (session.refresh_token) return session; // return stale session; app will refresh
-      localStorage.removeItem("sb_session");
+      try { localStorage.removeItem("sb_session"); } catch(e) {}
       return null;
     }
     return session;
