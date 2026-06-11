@@ -22,6 +22,8 @@ import { rowToSubtask, rowToDeliverable, rowToProject, delToRow, subToRow, ptoTo
 import { signOut, getStoredSession, fetchAppUser, refreshSession } from "./lib/supabaseAuth.js";
 import LoginScreen from "./components/LoginScreen.jsx";
 
+const PROOF_QUEUE_URL = window.location.origin.replace(":5173", ":5174");
+
 // ── AccessDenied ─────────────────────────────────────────────────────────────
 function AccessDenied({ message }) {
   return (
@@ -12063,7 +12065,7 @@ export default function App() {
         <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }} >
 
           {/* ── PROOF QUEUE ── */}
-          <button onClick={() => (() => { try { localStorage.setItem("proof_queue_people", JSON.stringify(people)); } catch(e){} window.open("/proof-queue", "_blank"); })()} 
+          <button onClick={() => { try { localStorage.setItem("proof_queue_people", JSON.stringify(people)); } catch(e){} window.open(PROOF_QUEUE_URL, "_blank"); }} 
             title="Open Proof Queue in new tab"
             style={{ background:"rgba(80,192,192,0.15)", border:"1px solid rgba(80,192,192,0.4)", color:"#50C0C0",
               borderRadius:6, padding:"4px 10px", cursor:"pointer", fontSize:12, fontFamily:"inherit", fontWeight:700, flexShrink:0 }}>
@@ -12252,7 +12254,7 @@ export default function App() {
                 // Proof queue completion — open proof queue with the request pre-highlighted
                 try { localStorage.setItem("proof_queue_people", JSON.stringify(people)); } catch(e) {}
                 if (notif.taskId) localStorage.setItem("proof_open_request_id", notif.taskId);
-                window.open("/proof", "_blank");
+                window.open(PROOF_QUEUE_URL, "_blank");
               } else {
                 const proj = projects.find(p => p.id === notif.projectId);
                 const del  = proj?.deliverables.find(d => d.id === notif.deliverableId);
