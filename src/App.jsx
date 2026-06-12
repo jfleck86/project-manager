@@ -7068,14 +7068,124 @@ function KPIDashboardView({ projects, people, notifications, adminTasks = [], sb
 }
 
 
-function ReportingDashboardView({ projects, people, holidays = [], pto = [], adminTasks = [] }) {
+function ReportingDashboardView({ projects, people, holidays = [], pto = [], adminTasks = [], sb, SB_READY, currentRole }) {
   // Export center data is passed from parent props
   const [drawer, setDrawer] = useState(null); // { title, subtitle, rows, cols, groupBy }
   const [drillClient, setDrillClient] = useState(null);
   const [sortClientCol, setSortClientCol] = useState("client");
   const [sortClientDir, setSortClientDir] = useState("asc");
 
+
+  // ── Annual Hour Forecasting ───────────────────────────────────────────────
+  const [forecastYear,    setForecastYear]    = React.useState(new Date().getFullYear());
+  const [allocations,     setAllocations]     = React.useState([]);
+  const [allocLoading,    setAllocLoading]    = React.useState(false);
+  const [allocForm,       setAllocForm]       = React.useState({ person_id:"", client:"", hours:"" });
+  const [editingAlloc,    setEditingAlloc]    = React.useState(null); // id being edited
+  const [expandedPersons, setExpandedPersons] = React.useState(new Set());
+  const canEditAllocations = currentRole === "admin" || currentRole === "leadership";
+
+  const EFFORT_HRS = { S:1, M:4, L:8 };
+  const eHrs = t => Number(t.customHours) || EFFORT_HRS[t.effort] || 4;
+
+  React.useEffect(() => {
+    if (!SB_READY) return;
+    setAllocLoading(true);
+    sb.select("annual_allocations", `year=eq.${forecastYear}&order=person_id.asc,client.asc`)
+      .then(r => { if (r.data) setAllocations(r.data); })
+      .catch(() => {})
+      .finally(() => setAllocLoading(false));
+  }, [SB_READY, forecastYear]);
+
+  const saveAlloc = async () => {
+    if (!allocForm.person_id || !allocForm.client.trim() || !allocForm.hours) return;
+    const row = { year: forecastYear, person_id: allocForm.person_id,
+                  client: allocForm.client.trim(), allocated_hours: Number(allocForm.hours) };
+    if (editingAlloc) {
+      await sb.update("annual_allocations", editingAlloc, row).catch(() => {});
+      setAllocations(prev => prev.map(a => a.id === editingAlloc ? { ...a, ...row } : a));
+      setEditingAlloc(null);
+    } else {
+      const id = "alloc_" + Date.now();
+      await sb.upsert("annual_allocations", { id, ...row }).catch(() => {});
+      setAllocations(prev => [...prev, { id, ...row }]);
+    }
+    setAllocForm({ person_id:"", client:"", hours:"" });
+  };
+
+  const deleteAlloc = async (id) => {
+    await sb.delete("annual_allocations", id).catch(() => {});
+    setAllocations(prev => prev.filter(a => a.id !== id));
+  };
+
+  // ── Forecasted hours: sum effort by person × client for tasks ending in forecastYear ──
+  const forecastedByPersonClient = React.useMemo(() => {
+    const map = {}; // map[personId][client] = hours
+    projects.forEach(proj => {
+      if (!proj.client) return;
+      const tasks = proj.deliverables.flatMap(d =>
+        d.subtasks.length > 0 ? d.subtasks : [d]
+      );
+      tasks.forEach(t => {
+        const endYear = t.end ? new Date(t.end + "T00:00:00").getFullYear() : null;
+        if (endYear !== forecastYear) return;
+        const hrs = eHrs(t);
+        (t.assignees || []).forEach(pid => {
+          if (!map[pid]) map[pid] = {};
+          map[pid][proj.client] = (map[pid][proj.client] || 0) + hrs;
+        });
+      });
+    });
+    return map;
+  }, [projects, forecastYear]);
+
   const today = new Date(); today.setHours(0,0,0,0);
+  // ── Pace: % of year elapsed at today ─────────────────────────────────────
+  const yearStart = new Date(forecastYear, 0, 1);
+  const yearEnd   = new Date(forecastYear, 11, 31);
+  const totalDays = Math.round((yearEnd - yearStart) / 86400000) + 1;
+  const elapsed   = Math.max(0, Math.min(totalDays,
+    Math.round((today - yearStart) / 86400000) + 1));
+  const pacePct   = elapsed / totalDays; // 0–1
+
+  // ── Build per-person summary rows ─────────────────────────────────────────
+  const personForecastRows = React.useMemo(() => {
+    // Collect all person IDs mentioned in allocations or forecasted work
+    const pids = new Set([
+      ...allocations.map(a => a.person_id),
+      ...Object.keys(forecastedByPersonClient),
+    ]);
+    return Array.from(pids).map(pid => {
+      const person = people.find(p => p.id === pid);
+      if (!person) return null;
+      const personAllocs = allocations.filter(a => a.person_id === pid);
+      const totalAllocated = personAllocs.reduce((s, a) => s + Number(a.allocated_hours), 0);
+      // Collect all clients this person touches (allocated + forecasted)
+      const clients = new Set([
+        ...personAllocs.map(a => a.client),
+        ...Object.keys(forecastedByPersonClient[pid] || {}),
+      ]);
+      const clientRows = Array.from(clients).map(client => {
+        const alloc = personAllocs.find(a => a.client === client);
+        const allocHrs = alloc ? Number(alloc.allocated_hours) : 0;
+        const forecastHrs = Math.round((forecastedByPersonClient[pid]?.[client] || 0) * 10) / 10;
+        const pacedHrs = Math.round(allocHrs * pacePct);
+        const isOtherTeam = client.toLowerCase().includes("other") || !projects.some(p => p.client === client);
+        return { client, allocHrs, forecastHrs, pacedHrs, isOtherTeam };
+      }).sort((a, b) => b.allocHrs - a.allocHrs);
+      const totalForecasted  = Math.round(clientRows.reduce((s,r) => s + r.forecastHrs, 0) * 10) / 10;
+      const myClientRows     = clientRows.filter(r => !r.isOtherTeam);
+      const myAllocated      = myClientRows.reduce((s,r) => s + r.allocHrs, 0);
+      const myForecasted     = Math.round(myClientRows.reduce((s,r) => s + r.forecastHrs, 0) * 10) / 10;
+      const myPaced          = Math.round(myAllocated * pacePct);
+      const gap              = myForecasted - myPaced;
+      const status           = myPaced === 0 ? "no-data"
+                             : myForecasted >= myPaced * 0.85 ? "on-track" : "behind";
+      return { person, totalAllocated, totalForecasted, myAllocated, myForecasted, myPaced, gap, status, clientRows };
+    }).filter(Boolean).sort((a,b) => (b.totalAllocated||0) - (a.totalAllocated||0));
+  }, [allocations, forecastedByPersonClient, people, pacePct]);
+
+  // today defined above
   const todayStr = today.toISOString().slice(0,10);
   const holidaySet = new Set(holidays.map(h => h.date));
 
@@ -7359,6 +7469,242 @@ function ReportingDashboardView({ projects, people, holidays = [], pto = [], adm
         adminTasks={adminTasks}
         holidays={holidays}
       />
+
+
+      {/* ── Hour Forecasting ── */}
+      {(() => {
+        const NAVY2 = "#002A4E", TEAL2 = "#00B5B5";
+        const fmt = n => typeof n === "number" ? Math.round(n).toLocaleString() : n;
+        const statusMeta = {
+          "on-track":  { label: "On pace",     color: "#10b981", bg: "rgba(16,185,129,0.08)"  },
+          "behind":    { label: "Behind pace", color: "#f97316", bg: "rgba(249,115,22,0.08)"  },
+          "no-data":   { label: "No data",     color: "#9ca3af", bg: "rgba(0,0,0,0.04)"       },
+        };
+        return (
+          <div style={{ background:"#fff", border:"1px solid rgba(0,0,0,0.08)", borderRadius:10, overflow:"hidden" }}>
+            {/* header */}
+            <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between",
+              padding:"14px 18px", background:"#f8fafc", borderBottom:"1px solid rgba(0,0,0,0.07)" }}>
+              <div>
+                <div style={{ fontSize:14, fontWeight:800, color:NAVY2 }}>Annual Hour Forecasting</div>
+                <div style={{ fontSize:11, color:"#6b7280", marginTop:2 }}>
+                  Pace: {Math.round(pacePct*100)}% of {forecastYear} elapsed ({elapsed} / {totalDays} days)
+                  {" · "}Paced target = allocated × {Math.round(pacePct*100)}%
+                </div>
+              </div>
+              <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+                {/* pace bar */}
+                <div style={{ width:120, height:6, background:"#e5e7eb", borderRadius:3 }}>
+                  <div style={{ height:6, width:`${Math.round(pacePct*100)}%`, background:TEAL2, borderRadius:3 }} />
+                </div>
+                {/* year picker */}
+                <select value={forecastYear} onChange={e => setForecastYear(Number(e.target.value))}
+                  style={{ fontSize:12, border:"1px solid rgba(0,0,0,0.12)", borderRadius:6, padding:"5px 8px" }}>
+                  {[today.getFullYear()-1, today.getFullYear(), today.getFullYear()+1].map(y => (
+                    <option key={y} value={y}>{y}</option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            {/* allocation input — admin/leadership only */}
+            {canEditAllocations && (
+              <div style={{ padding:"14px 18px", borderBottom:"1px solid rgba(0,0,0,0.06)", background:"rgba(0,181,181,0.03)" }}>
+                <div style={{ fontSize:11, fontWeight:700, color:NAVY2, marginBottom:10 }}>
+                  Allocation entries for {forecastYear}
+                  <span style={{ fontSize:10, fontWeight:400, color:"#9ca3af", marginLeft:8 }}>
+                    Enter hours sold per person per client. "Other Teams" for hours committed elsewhere.
+                  </span>
+                </div>
+                {/* existing rows */}
+                {allocations.length > 0 && (
+                  <div style={{ marginBottom:12, display:"grid", gridTemplateColumns:"1fr 1fr auto auto", gap:"6px 10px", alignItems:"center",
+                    fontSize:11 }}>
+                    <div style={{ fontSize:9, fontWeight:700, color:"#9ca3af", textTransform:"uppercase", letterSpacing:".05em" }}>Person</div>
+                    <div style={{ fontSize:9, fontWeight:700, color:"#9ca3af", textTransform:"uppercase", letterSpacing:".05em" }}>Client / SOW</div>
+                    <div style={{ fontSize:9, fontWeight:700, color:"#9ca3af", textTransform:"uppercase", letterSpacing:".05em" }}>Hours</div>
+                    <div />
+                    {allocations.map(a => {
+                      const p = people.find(x => x.id === a.person_id);
+                      return editingAlloc === a.id ? (
+                        <React.Fragment key={a.id}>
+                          <select value={allocForm.person_id} onChange={e => setAllocForm(f=>({...f,person_id:e.target.value}))}
+                            style={{ fontSize:11, border:"1px solid rgba(0,0,0,0.15)", borderRadius:5, padding:"4px 6px" }}>
+                            <option value="">— person —</option>
+                            {people.map(p2=><option key={p2.id} value={p2.id}>{p2.name}</option>)}
+                          </select>
+                          <input value={allocForm.client} onChange={e=>setAllocForm(f=>({...f,client:e.target.value}))}
+                            placeholder="Client or SOW" style={{ fontSize:11, border:"1px solid rgba(0,0,0,0.15)", borderRadius:5, padding:"4px 6px" }} />
+                          <input type="number" value={allocForm.hours} onChange={e=>setAllocForm(f=>({...f,hours:e.target.value}))}
+                            placeholder="hrs" style={{ fontSize:11, border:"1px solid rgba(0,0,0,0.15)", borderRadius:5, padding:"4px 6px", width:70 }} />
+                          <div style={{ display:"flex", gap:4 }}>
+                            <button onClick={saveAlloc} style={{ fontSize:10, padding:"3px 8px", background:TEAL2, color:"#fff", border:"none", borderRadius:5, cursor:"pointer" }}>Save</button>
+                            <button onClick={()=>{setEditingAlloc(null);setAllocForm({person_id:"",client:"",hours:""});}} style={{ fontSize:10, padding:"3px 8px", background:"none", border:"1px solid rgba(0,0,0,0.15)", borderRadius:5, cursor:"pointer" }}>Cancel</button>
+                          </div>
+                        </React.Fragment>
+                      ) : (
+                        <React.Fragment key={a.id}>
+                          <div style={{ display:"flex", alignItems:"center", gap:6 }}>
+                            <div style={{ width:16, height:16, borderRadius:"50%", background:p?.color||"#ccc", fontSize:8, fontWeight:700, color:"#fff", display:"flex", alignItems:"center", justifyContent:"center" }}>
+                              {p?.name?.split(" ").map(w=>w[0]).join("").slice(0,2).toUpperCase()||"?"}
+                            </div>
+                            <span>{p?.name||"Unknown"}</span>
+                          </div>
+                          <div style={{ color:"#374151" }}>{a.client}</div>
+                          <div style={{ fontWeight:700, color:NAVY2 }}>{fmt(a.allocated_hours)}h</div>
+                          <div style={{ display:"flex", gap:4 }}>
+                            <button onClick={()=>{setEditingAlloc(a.id);setAllocForm({person_id:a.person_id,client:a.client,hours:String(a.allocated_hours)});}}
+                              style={{ fontSize:9, padding:"2px 6px", background:"none", border:"1px solid rgba(0,0,0,0.15)", borderRadius:4, cursor:"pointer" }}>Edit</button>
+                            <button onClick={()=>deleteAlloc(a.id)}
+                              style={{ fontSize:9, padding:"2px 6px", background:"none", border:"1px solid rgba(248,113,113,0.4)", color:"#f87171", borderRadius:4, cursor:"pointer" }}>✕</button>
+                          </div>
+                        </React.Fragment>
+                      );
+                    })}
+                  </div>
+                )}
+                {/* add new row */}
+                {!editingAlloc && (
+                  <div style={{ display:"flex", gap:8, alignItems:"center", flexWrap:"wrap" }}>
+                    <select value={allocForm.person_id} onChange={e=>setAllocForm(f=>({...f,person_id:e.target.value}))}
+                      style={{ fontSize:11, border:"1px solid rgba(0,0,0,0.15)", borderRadius:6, padding:"5px 8px" }}>
+                      <option value="">— select person —</option>
+                      {people.map(p=><option key={p.id} value={p.id}>{p.name}</option>)}
+                    </select>
+                    <input value={allocForm.client} onChange={e=>setAllocForm(f=>({...f,client:e.target.value}))}
+                      placeholder="Client / SOW (e.g. DPP, Other Teams)"
+                      style={{ fontSize:11, border:"1px solid rgba(0,0,0,0.15)", borderRadius:6, padding:"5px 10px", minWidth:200 }} />
+                    <input type="number" value={allocForm.hours} onChange={e=>setAllocForm(f=>({...f,hours:e.target.value}))}
+                      placeholder="Hours"
+                      style={{ fontSize:11, border:"1px solid rgba(0,0,0,0.15)", borderRadius:6, padding:"5px 8px", width:80 }} />
+                    <button onClick={saveAlloc} disabled={!allocForm.person_id||!allocForm.client.trim()||!allocForm.hours}
+                      style={{ fontSize:11, padding:"5px 14px", background:TEAL2, color:"#fff", border:"none", borderRadius:6, cursor:"pointer", opacity:(!allocForm.person_id||!allocForm.client.trim()||!allocForm.hours)?0.4:1 }}>
+                      + Add
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* forecast summary table */}
+            <div style={{ padding:"0 18px 18px" }}>
+              {personForecastRows.length === 0 ? (
+                <div style={{ textAlign:"center", padding:"28px 0", color:"#9ca3af", fontSize:12 }}>
+                  {allocLoading ? "Loading allocations…" : "No allocation data for " + forecastYear + ". Add entries above to get started."}
+                </div>
+              ) : (
+                <table style={{ width:"100%", borderCollapse:"collapse", marginTop:14, fontSize:12 }}>
+                  <thead>
+                    <tr style={{ borderBottom:"1.5px solid rgba(0,0,0,0.08)" }}>
+                      <th style={{ fontSize:9, fontWeight:700, color:"#9ca3af", textTransform:"uppercase", letterSpacing:".05em", padding:"6px 0", textAlign:"left" }}>Person</th>
+                      <th style={{ fontSize:9, fontWeight:700, color:"#9ca3af", textTransform:"uppercase", letterSpacing:".05em", padding:"6px 8px", textAlign:"right" }}>Total allocated</th>
+                      <th style={{ fontSize:9, fontWeight:700, color:"#9ca3af", textTransform:"uppercase", letterSpacing:".05em", padding:"6px 8px", textAlign:"right" }}>My scope forecast</th>
+                      <th style={{ fontSize:9, fontWeight:700, color:"#9ca3af", textTransform:"uppercase", letterSpacing:".05em", padding:"6px 8px", textAlign:"right" }}>Paced target</th>
+                      <th style={{ fontSize:9, fontWeight:700, color:"#9ca3af", textTransform:"uppercase", letterSpacing:".05em", padding:"6px 8px", textAlign:"right" }}>Gap</th>
+                      <th style={{ fontSize:9, fontWeight:700, color:"#9ca3af", textTransform:"uppercase", letterSpacing:".05em", padding:"6px 8px", textAlign:"left" }}>Status</th>
+                      <th />
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {personForecastRows.map(row => {
+                      const expanded = expandedPersons.has(row.person.id);
+                      const sm = statusMeta[row.status];
+                      const gapColor = row.gap >= 0 ? "#10b981" : "#f97316";
+                      const otherRows = row.clientRows.filter(r => r.isOtherTeam || !projects.some(p => p.client === r.client));
+                      const myRows    = row.clientRows.filter(r => !r.isOtherTeam && projects.some(p => p.client === r.client));
+                      return (
+                        <React.Fragment key={row.person.id}>
+                          <tr style={{ borderBottom:"1px solid rgba(0,0,0,0.05)", cursor:"pointer" }}
+                            onClick={() => setExpandedPersons(prev => {
+                              const n = new Set(prev);
+                              n.has(row.person.id) ? n.delete(row.person.id) : n.add(row.person.id);
+                              return n;
+                            })}>
+                            <td style={{ padding:"10px 0" }}>
+                              <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+                                <div style={{ width:22, height:22, borderRadius:"50%", background:row.person.color, fontSize:9, fontWeight:700, color:"#fff", display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0 }}>
+                                  {row.person.name.split(" ").map(w=>w[0]).join("").slice(0,2).toUpperCase()}
+                                </div>
+                                <span style={{ fontWeight:500 }}>{row.person.name}</span>
+                              </div>
+                            </td>
+                            <td style={{ padding:"10px 8px", textAlign:"right", fontVariantNumeric:"tabular-nums" }}>
+                              <div style={{ fontWeight:600 }}>{fmt(row.totalAllocated)}h</div>
+                              {otherRows.length > 0 && (
+                                <div style={{ fontSize:10, color:"#9ca3af" }}>
+                                  +{fmt(otherRows.reduce((s,r)=>s+r.allocHrs,0))}h other teams
+                                </div>
+                              )}
+                            </td>
+                            <td style={{ padding:"10px 8px", textAlign:"right", fontVariantNumeric:"tabular-nums", fontWeight:600 }}>
+                              {fmt(row.myForecasted)}h
+                            </td>
+                            <td style={{ padding:"10px 8px", textAlign:"right", fontVariantNumeric:"tabular-nums", color:"#6b7280" }}>
+                              {fmt(row.myPaced)}h
+                            </td>
+                            <td style={{ padding:"10px 8px", textAlign:"right", fontVariantNumeric:"tabular-nums",
+                              fontWeight:600, color:row.myPaced===0?"#9ca3af":gapColor }}>
+                              {row.myPaced === 0 ? "—" : (row.gap >= 0 ? "+" : "") + fmt(row.gap) + "h"}
+                            </td>
+                            <td style={{ padding:"10px 8px" }}>
+                              <span style={{ fontSize:10, fontWeight:700, padding:"2px 8px", borderRadius:10,
+                                color:sm.color, background:sm.bg }}>
+                                {sm.label}
+                              </span>
+                            </td>
+                            <td style={{ padding:"10px 0", textAlign:"right", color:"#9ca3af", fontSize:11 }}>
+                              {expanded ? "▲" : "▼"}
+                            </td>
+                          </tr>
+                          {expanded && row.clientRows.map(cr => (
+                            <tr key={cr.client} style={{ background:"rgba(0,0,0,0.02)", borderBottom:"1px solid rgba(0,0,0,0.04)" }}>
+                              <td style={{ padding:"6px 0 6px 30px", fontSize:11, color:"#374151" }}>
+                                {cr.isOtherTeam
+                                  ? <span style={{ color:"#9ca3af" }}>↳ {cr.client} <span style={{ fontSize:9, background:"rgba(0,0,0,0.06)", padding:"1px 5px", borderRadius:8 }}>other teams</span></span>
+                                  : <span>↳ {cr.client}</span>}
+                              </td>
+                              <td style={{ padding:"6px 8px", textAlign:"right", fontSize:11, color:"#6b7280" }}>
+                                {fmt(cr.allocHrs)}h allocated
+                              </td>
+                              <td style={{ padding:"6px 8px", textAlign:"right", fontSize:11, fontWeight:cr.forecastHrs>0?600:400,
+                                color:cr.isOtherTeam?"#9ca3af":cr.forecastHrs>0?"#374151":"#9ca3af" }}>
+                                {cr.isOtherTeam ? "—" : fmt(cr.forecastHrs)+"h"}
+                              </td>
+                              <td style={{ padding:"6px 8px", textAlign:"right", fontSize:11, color:"#9ca3af" }}>
+                                {cr.isOtherTeam ? "—" : fmt(cr.pacedHrs)+"h"}
+                              </td>
+                              <td colSpan={3}>
+                                {!cr.isOtherTeam && cr.allocHrs > 0 && (
+                                  <div style={{ display:"flex", alignItems:"center", gap:6, padding:"0 8px" }}>
+                                    <div style={{ flex:1, height:4, background:"#f3f4f6", borderRadius:2, maxWidth:120 }}>
+                                      <div style={{ height:4, borderRadius:2, background:cr.forecastHrs/cr.allocHrs>=0.85?"#10b981":"#f97316",
+                                        width:`${Math.min(100,Math.round(cr.forecastHrs/cr.allocHrs*100))}%` }} />
+                                    </div>
+                                    <span style={{ fontSize:10, color:"#6b7280", whiteSpace:"nowrap" }}>
+                                      {cr.allocHrs>0?Math.round(cr.forecastHrs/cr.allocHrs*100):0}% of allocation
+                                    </span>
+                                  </div>
+                                )}
+                              </td>
+                            </tr>
+                          ))}
+                        </React.Fragment>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              )}
+              {personForecastRows.length > 0 && (
+                <div style={{ fontSize:10, color:"#9ca3af", marginTop:10, paddingTop:10, borderTop:"1px solid rgba(0,0,0,0.05)" }}>
+                  Forecast hours = effort estimates on tasks ending in {forecastYear} (S=1h, M=4h, L=8h or custom).
+                  Paced target = allocated × {Math.round(pacePct*100)}% (year elapsed).
+                  Hours on unallocated clients show as forecasted but no paced target.
+                </div>
+              )}
+            </div>
+          </div>
+        );
+      })()}
 
       {/* ── Header ── */}
       <div>
@@ -12913,7 +13259,7 @@ export default function App() {
         {view === "reporting" && (
           <ReportingDashboardView
             projects={projects} people={people} holidays={holidays} pto={pto}
-            adminTasks={adminTasks}
+            adminTasks={adminTasks} sb={sb} SB_READY={SB_READY} currentRole={currentRole}
           />
         )}
         {view === "archived" && (
