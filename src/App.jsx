@@ -10155,88 +10155,69 @@ function generateBriefHtml(proj, deliverables, people) {
 <title>Project Brief — ${proj.name}</title>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
-  body { font-family: Calibri, "Segoe UI", Arial, sans-serif; color: #1f2937; font-size: 10.5pt; background: #fff; }
+  body { font-family: Calibri, Arial, sans-serif; color: #1f2937; font-size: 10.5pt; background: #fff; }
   .page { max-width: 940px; margin: 0 auto; padding: 48px 56px; }
-
-  /* ── Cover strip ── */
-  .cover { background: ${NAVY}; border-radius: 8px; padding: 28px 32px; margin-bottom: 32px; display: flex; align-items: flex-start; justify-content: space-between; }
-  .cover-logo { width: 36px; height: 36px; background: ${TEAL}; border-radius: 7px; display: flex; align-items: center; justify-content: center; font-size: 13px; font-weight: 900; color: ${NAVY}; flex-shrink: 0; }
-  .cover-title { color: #fff; font-size: 18pt; font-weight: 700; margin: 0 0 4px; }
-  .cover-sub { color: rgba(255,255,255,0.55); font-size: 10pt; }
-  .cover-meta { text-align: right; }
-  .cover-badge { display: inline-block; background: ${TEAL}; color: ${NAVY}; font-size: 9pt; font-weight: 700; padding: 3px 12px; border-radius: 20px; margin-bottom: 6px; }
-  .cover-date { color: rgba(255,255,255,0.45); font-size: 9pt; }
-
-  /* ── Meta grid (overview) ── */
-  .meta-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 32px; margin: 14px 0 20px; }
-  .meta-item { display: flex; gap: 8px; font-size: 10pt; line-height: 1.4; }
-  .meta-label { font-weight: 700; color: #374151; min-width: 140px; flex-shrink: 0; }
-  .meta-value { color: #1f2937; }
-
-  /* ── Section headings ── */
-  h2 { font-size: 12pt; font-weight: 700; color: ${NAVY}; margin: 32px 0 10px; padding-bottom: 6px; border-bottom: 2.5px solid ${TEAL}; display: flex; align-items: center; gap: 10px; }
-  h2 .sec-num { background: ${TEAL}; color: #fff; font-size: 9pt; font-weight: 700; width: 22px; height: 22px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; }
-  h3 { font-size: 10.5pt; font-weight: 700; color: #374151; margin: 16px 0 6px; }
-
-  /* ── Tables ── */
+  h2 { font-size: 12pt; font-weight: 700; color: #002A4E; margin: 28px 0 8px; padding-bottom: 5px; border-bottom: 2.5px solid #00B5B5; }
+  h3 { font-size: 10.5pt; font-weight: 700; color: #374151; margin: 14px 0 5px; }
+  p  { margin: 0 0 8px; line-height: 1.5; }
   table { width: 100%; border-collapse: collapse; margin-bottom: 6px; font-size: 9.5pt; }
-  th { background: ${NAVY}; color: #fff; padding: 7px 10px; text-align: left; font-weight: 600; font-size: 9pt; }
-  td { border: 1px solid #e5e7eb; padding: 7px 10px; vertical-align: top; min-height: 26px; }
-  tr.even td { background: ${GRAY}; }
-  td:first-child { font-size: 9.5pt; }
-  .table-note { font-size: 9pt; color: ${MUTED}; font-style: italic; margin: 4px 0 12px; }
-
-  /* ── Blank/narrative sections ── */
-  .blank { background: #fafafa; border: 1px dashed #d1d5db; border-radius: 5px; padding: 14px 16px; color: #9ca3af; font-style: italic; min-height: 70px; margin-bottom: 10px; font-size: 10pt; }
-
-  /* ── Objective box ── */
-  .objective { background: ${TEAL_L}; border-left: 3px solid ${TEAL}; border-radius: 0 5px 5px 0; padding: 10px 14px; margin-bottom: 16px; font-size: 10.5pt; color: #1f2937; }
-
-  /* ── Kickoff badge ── */
-  .kickoff-badge { background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 6px; padding: 8px 12px; font-size: 10pt; color: #065f46; margin-bottom: 10px; }
-
-  /* ── Footer ── */
-  .footer { margin-top: 48px; border-top: 1px solid #e5e7eb; padding-top: 12px; font-size: 8.5pt; color: #9ca3af; }
-
-  @media print { body { margin: 0; } .page { padding: 32px; } }
+  th { background: #002A4E; color: #fff; padding: 7px 10px; text-align: left; font-weight: 600; font-size: 9pt; }
+  td { border: 1px solid #e5e7eb; padding: 7px 10px; vertical-align: top; }
+  tr.even td { background: #f5f6f8; }
+  .table-note { font-size: 9pt; color: #6b7280; font-style: italic; margin: 3px 0 10px; }
+  .blank { background: #fafafa; border: 1px dashed #d1d5db; padding: 14px 16px; color: #9ca3af; font-style: italic; min-height: 60px; margin-bottom: 10px; font-size: 10pt; }
+  .objective { background: rgba(0,181,181,0.08); border-left: 3px solid #00B5B5; padding: 10px 14px; margin: 10px 0; font-size: 10pt; }
+  .kickoff-badge { background: #e1f5ee; border: 1px solid #00B5B5; padding: 5px 12px; margin: 8px 0; font-size: 9.5pt; color: #065f46; }
+  .meta-label { font-weight: 700; color: #374151; }
 </style>
 </head>
 <body>
 <div class="page">
+<div class="page">
 
   <!-- ── COVER ── -->
-  <div class="cover">
-    <div>
-      <div class="cover-title">${proj.name}</div>
-      <div class="cover-sub" style="margin-top:6px">Project Brief - ${proj.client || "—"}</div>
-    </div>
-    <div class="cover-meta">
-      <div class="cover-date">Generated ${new Date().toLocaleDateString("en-US",{month:"long",day:"numeric",year:"numeric"})}${proj.projectNumber ? ` &nbsp;·&nbsp; Program #: ${proj.projectNumber}` : ""}</div>
-    </div>
-  </div>
+  <table width="100%" style="background:#002A4E;border-collapse:collapse;margin-bottom:28px">
+    <tr>
+      <td style="padding:22px 26px;vertical-align:top">
+        <div style="color:#fff;font-size:17pt;font-weight:700">${proj.name}</div>
+        <div style="color:rgba(255,255,255,0.6);font-size:10pt;margin-top:5px">Project Brief - ${proj.client || "—"}</div>
+      </td>
+      <td style="padding:22px 26px;vertical-align:top;text-align:right;white-space:nowrap">
+        <div style="color:rgba(255,255,255,0.5);font-size:9pt">Generated ${new Date().toLocaleDateString("en-US",{month:"long",day:"numeric",year:"numeric"})}${proj.projectNumber ? ` &nbsp;·&nbsp; Program #: ${proj.projectNumber}` : ""}</div>
+      </td>
+    </tr>
+  </table>
 
   <!-- ── SECTION 1: Project Overview ── -->
-  <h2><span class="sec-num">1</span> Project Overview</h2>
-  <div class="meta-grid">
-    <div class="meta-item"><span class="meta-label">Project Name</span><span class="meta-value">${proj.name}</span></div>
-    <div class="meta-item"><span class="meta-label">Client</span><span class="meta-value">${proj.client || "—"}</span></div>
-    <div class="meta-item"><span class="meta-label">Program Number</span><span class="meta-value">${proj.projectNumber || "—"}</span></div>
-    <div class="meta-item"><span class="meta-label">Priority</span><span class="meta-value">${proj.priority || "—"}</span></div>
-    <div class="meta-item"><span class="meta-label">Account Lead</span><span class="meta-value">${person(proj.accountLeadId)}</span></div>
-    <div class="meta-item"><span class="meta-label">Project Manager</span><span class="meta-value">${person(proj.projectManagerId)}</span></div>
-    <div class="meta-item"><span class="meta-label">Earliest Launch Date</span><span class="meta-value">${fmtDate(proj.earliestLaunchDate)}</span></div>
-    <div class="meta-item"><span class="meta-label">Status</span><span class="meta-value">${proj.projectStatus || "—"}</span></div>
-  </div>
-  ${proj.objective ? `<div class="objective"><strong>Objective:</strong> ${proj.objective}</div>` : ""}
+  <h2>1. Project Overview</h2>
+    <table style="border-collapse:collapse;margin:10px 0 16px;width:100%;font-size:9.5pt">
+    <tr>
+      <td style="width:50%;padding:5px 0;vertical-align:top;border:none"><span class="meta-label">Project Name: </span>${proj.name}</td>
+      <td style="width:50%;padding:5px 0;vertical-align:top;border:none"><span class="meta-label">Client: </span>${proj.client || "—"}</td>
+    </tr>
+    <tr>
+      <td style="padding:5px 0;vertical-align:top;border:none"><span class="meta-label">Program Number: </span>${proj.projectNumber || "—"}</td>
+      <td style="padding:5px 0;vertical-align:top;border:none"><span class="meta-label">Priority: </span>${proj.priority || "—"}</td>
+    </tr>
+    <tr>
+      <td style="padding:5px 0;vertical-align:top;border:none"><span class="meta-label">Account Lead: </span>${person(proj.accountLeadId)}</td>
+      <td style="padding:5px 0;vertical-align:top;border:none"><span class="meta-label">Project Manager: </span>${person(proj.projectManagerId)}</td>
+    </tr>
+    <tr>
+      <td style="padding:5px 0;vertical-align:top;border:none"><span class="meta-label">Earliest Launch Date: </span>${fmtDate(proj.earliestLaunchDate)}</td>
+      <td style="padding:5px 0;vertical-align:top;border:none"><span class="meta-label">Status: </span>${proj.projectStatus || "—"}</td>
+    </tr>
+  </table>
+    ${proj.objective ? `<div class="objective"><strong>Objective:</strong> ${proj.objective}</div>` : ""}
   ${proj.kickoffRequested ? `<div class="kickoff-badge">✓ Kickoff meeting requested${proj.kickoffDate ? ` — ${fmtDate(proj.kickoffDate + "T00:00:00")}` : ""}${proj.kickoffNotifSentAt ? ` · PM notified ${fmtDate(proj.kickoffNotifSentAt)}` : ""}</div>` : ""}
   ${table(["Deliverable", "Requested Delivery Date"], delWithDates)}
 
   <!-- ── SECTION 2: Audience & Brand ── -->
-  <h2><span class="sec-num">2</span> Audience &amp; Brand</h2>
+  <h2>2. Audience &amp; Brand</h2>
   ${blank()}
 
   <!-- ── SECTION 3: Stakeholders ── -->
-  <h2><span class="sec-num">3</span> Stakeholders</h2>
+  <h2>3. Stakeholders</h2>
   ${table(["Role", "Name", "Responsibility"], [
     ["Client Owner", proj.client || "", ""],
     ["Account Lead", person(proj.accountLeadId), ""],
@@ -10247,26 +10228,26 @@ function generateBriefHtml(proj, deliverables, people) {
   ])}
 
   <!-- ── SECTION 4: Deliverables ── -->
-  <h2><span class="sec-num">4</span> Deliverables</h2>
+  <h2>4. Deliverables</h2>
   ${table(
     ["Deliverable", "Format", "Platform / Placement", "Audience", "Requested Date", "Dependencies", "Notes"],
     [...sec4Rows, ...Array(3).fill(["","","","","","",""]),]
   )}
 
   <!-- ── SECTION 5: Business Objective ── -->
-  <h2><span class="sec-num">5</span> Business Objective</h2>
+  <h2>5. Business Objective</h2>
   ${blank()}
 
   <!-- ── SECTION 6: Audience Insight ── -->
-  <h2><span class="sec-num">6</span> Audience Insight</h2>
+  <h2>6. Audience Insight</h2>
   ${blank()}
 
   <!-- ── SECTION 7: Desired Outcome ── -->
-  <h2><span class="sec-num">7</span> Desired Outcome</h2>
+  <h2>7. Desired Outcome</h2>
   ${blank()}
 
   <!-- ── SECTION 8: Behavioral Science Diagnostic ── -->
-  <h2><span class="sec-num">8</span> Behavioral Science Diagnostic</h2>
+  <h2>8. Behavioral Science Diagnostic</h2>
   ${table(["Category", "Selection"], [
     ["Outcome Type", ""], ["Primary Friction", ""], ["Secondary Friction", ""], ["Creative Emphasis", ""],
   ])}
@@ -10274,7 +10255,7 @@ function generateBriefHtml(proj, deliverables, people) {
   ${blank("Write a single sentence capturing the core behavioral challenge.")}
 
   <!-- ── SECTION 9: Creative Direction ── -->
-  <h2><span class="sec-num">9</span> Creative Direction</h2>
+  <h2>9. Creative Direction</h2>
   <h3>Key Messages</h3>${blank()}
   <h3>Mandatory Copy</h3>${blank()}
   <h3>Required Claims</h3>${blank()}
@@ -10282,35 +10263,35 @@ function generateBriefHtml(proj, deliverables, people) {
   <h3>What To Avoid</h3>${blank()}
 
   <!-- ── SECTION 10: Deliverable Strategy ── -->
-  <h2><span class="sec-num">10</span> Deliverable Strategy <span style="font-size:9pt;font-weight:400;color:${MUTED}">(optional)</span></h2>
+  <h2>10. Deliverable Strategy <span style="font-size:9pt;font-weight:400;color:${MUTED}">(optional)</span></h2>
   ${table(
     ["Deliverable", "Purpose", "Primary Takeaway", "Desired Action", "Special Considerations"],
     [...sec10Rows, ...Array(3).fill(["","","","",""]),]
   )}
 
   <!-- ── SECTION 11: Inputs & Assets ── -->
-  <h2><span class="sec-num">11</span> Inputs &amp; Assets</h2>
+  <h2>11. Inputs &amp; Assets</h2>
   ${table(
     ["Deliverable", "Resource", "Type", "Owner", "Status", "Notes"],
     [...sec11Rows, ...Array(3).fill(["","","","","",""]),]
   )}
 
   <!-- ── SECTION 12: Risks & Dependencies ── -->
-  <h2><span class="sec-num">12</span> Risks &amp; Dependencies</h2>
+  <h2>12. Risks &amp; Dependencies</h2>
   ${table(
     ["Deliverable", "Risk / Dependency", "Impact", "Mitigation", "Owner"],
     [...sec12Rows, ...Array(3).fill(["","","","",""]),]
   )}
 
   <!-- ── SECTION 13: Open Questions ── -->
-  <h2><span class="sec-num">13</span> Open Questions</h2>
+  <h2>13. Open Questions</h2>
   ${table(
     ["Deliverable", "Question", "Owner", "Due By", "Resolution"],
     [...sec13Rows, ...Array(3).fill(["","","","",""]),]
   )}
 
   <!-- ── SECTION 14: Files ── -->
-  <h2><span class="sec-num">14</span> Files</h2>
+  <h2>14. Files</h2>
   <h3>SharePoint Folder</h3>${blank("Paste SharePoint link here")}
   <h3>Reference Documents</h3>${blank()}
   <h3>Creative Files</h3>${blank()}
@@ -10323,7 +10304,69 @@ function generateBriefHtml(proj, deliverables, people) {
   </div>
 </div>
 </body>
-</html>`;
+</html><body>
+<table width="100%" style="background:#002A4E;border-collapse:collapse;margin-bottom:24px">
+  <tr>
+    <td style="padding:22px 26px;vertical-align:top">
+      <div style="color:#fff;font-size:17pt;font-weight:700">${proj.name}</div>
+      <div style="color:rgba(255,255,255,0.6);font-size:10pt;margin-top:5px">Audit Summary - ${proj.client || "—"}</div>
+    </td>
+    <td style="padding:22px 26px;vertical-align:top;text-align:right;white-space:nowrap">
+      <div style="color:rgba(255,255,255,0.5);font-size:9pt">Generated ${new Date().toLocaleDateString("en-US",{month:"long",day:"numeric",year:"numeric"})}${proj.projectNumber ? ` &nbsp;·&nbsp; Program #: ${proj.projectNumber}` : ""}</div>
+    </td>
+  </tr>
+</table>
+
+<h2>Project Overview</h2>
+<div class="meta">
+  <div class="meta-item"><span class="meta-label">Program Name</span>${proj.name}</div>
+  <div class="meta-item"><span class="meta-label">Client</span>${proj.client || "—"}</div>
+  <div class="meta-item"><span class="meta-label">Program Number</span>${proj.projectNumber || "—"}</div>
+  <div class="meta-item"><span class="meta-label">Priority</span>${proj.priority || "—"}</div>
+  <div class="meta-item"><span class="meta-label">Account Lead</span>${person(proj.accountLeadId)}</div>
+  <div class="meta-item"><span class="meta-label">Project Manager</span>${person(proj.projectManagerId)}</div>
+  <div class="meta-item"><span class="meta-label">Project Status</span>${proj.projectStatus || "—"}</div>
+  <div class="meta-item"><span class="meta-label">Earliest Launch</span>${fmtDate(proj.earliestLaunchDate)}</div>
+</div>
+${proj.objective ? `<p><strong>Objective:</strong> ${proj.objective}</p>` : ""}
+
+<h2>Program Team</h2>
+<p>${teamNames.join(" &nbsp;·&nbsp; ") || "No team members assigned"}</p>
+
+<h2>Program Launch Meeting <span style="font-size:9pt;font-weight:400;color:#6b7280">(Checklist Step 8)</span></h2>
+${proj.kickoffRequested
+  ? `<p>✓ <strong>Kickoff meeting requested</strong> — logged in PulseX on ${proj.kickoffNotifSentAt ? fmtTs(proj.kickoffNotifSentAt) : "project creation"}</p>
+     <p>Requested meeting date: <strong>${fmtDate(proj.kickoffDate)}</strong></p>
+     ${proj.kickoffNotifSentAt ? `<p style="color:#059669;font-size:10.5pt">✓ PM notified: ${fmtTs(proj.kickoffNotifSentAt)}</p>` : ""}`
+  : `<p style="color:#9ca3af;font-style:italic">No kickoff meeting request logged for this program.</p>`}
+
+<h2>Deliverable Development <span style="font-size:9pt;font-weight:400;color:#6b7280">(Checklist Steps DD-1 through DD-4)</span></h2>
+<p style="margin-bottom:8px;font-size:10pt;color:#6b7280">${doneCount} of ${allTasks.length} tasks complete &nbsp;·&nbsp; Email evidence required for sign-off columns</p>
+<div class="note">Sign-off columns indicate task status in PulseX. Attach corresponding approval emails as supplemental evidence.</div>
+<table>
+  <thead><tr>
+    <th style="width:18%">Deliverable</th>
+    <th style="width:16%">DD-1: Request<br><span style="font-weight:400;font-size:9px">SOW / Brief</span></th>
+    <th style="width:22%">DD-2: Outputs<br><span style="font-weight:400;font-size:9px">Work product tasks</span></th>
+    <th style="width:22%">DD-3: Internal Sign-off<br><span style="font-weight:400;font-size:9px">Internal review tasks</span></th>
+    <th style="width:22%">DD-4: Client Sign-off<br><span style="font-weight:400;font-size:9px">Client review tasks</span></th>
+  </tr></thead>
+  <tbody>${delRows}</tbody>
+</table>
+
+<div class="footer">
+  Generated by PulseX · ${new Date().toISOString()} · 
+  Point-in-time snapshot. Source of truth: PulseX project "${proj.name}"
+</div>
+</body></html>`;
+
+  const blob = new Blob([html], { type: "application/msword;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `Audit Summary — ${(proj.name||"Project").replace(/[^a-zA-Z0-9 ]/g,"")} — ${new Date().toISOString().slice(0,10)}.doc`;
+  document.body.appendChild(a); a.click();
+  document.body.removeChild(a); URL.revokeObjectURL(url);
 }
 
 
