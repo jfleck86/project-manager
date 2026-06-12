@@ -6297,6 +6297,7 @@ function KPISection({ title, children }) {
 function KPIDashboardView({ projects, people, notifications, adminTasks = [], sb, SB_READY, authMemberId }) {
   const [snapshots,    setSnapshots]    = React.useState([]);
   const [activity,     setActivity]     = React.useState([]);
+  const [allNotifs,    setAllNotifs]    = React.useState([]);
   const [dateRange,    setDateRange]    = React.useState("30d");
   const [exporting,    setExporting]    = React.useState(false);
   const [snapshotSaved,setSnapshotSaved]= React.useState(false);
@@ -6315,7 +6316,7 @@ function KPIDashboardView({ projects, people, notifications, adminTasks = [], sb
   );
   const openTasks       = allTasks.filter(t => t.status !== "Done");
   const doneTasks       = allTasks.filter(t => t.status === "Done");
-  const totalHrs        = allTasks.reduce((s,t) => s+eHrs(t), 0);
+  const totalHrs        = openTasks.reduce((s,t) => s+eHrs(t), 0);
   const assignedHrs     = openTasks.reduce((s,t) => s + ((t.assignees||[]).length > 0 ? eHrs(t) : 0), 0);
 
   // ── Visibility Score ──────────────────────────────────────────────────────
@@ -6438,6 +6439,11 @@ function KPIDashboardView({ projects, people, notifications, adminTasks = [], sb
     sb.select("user_activity", `occurred_at=gte.${act90.toISOString()}&order=occurred_at.desc&limit=2000`)
       .then(r => { if (r.data) setActivity(r.data); })
       .catch(() => {});
+
+    // Load ALL notifications for notification engagement metrics (not filtered by user)
+    sb.select("task_notifications", `order=created_at.desc&limit=500`)
+      .then(r => { if (r.data) setAllNotifs(r.data); })
+      .catch(() => {});
   }, [SB_READY]);
 
   // Ref guard — prevents React Strict Mode double-invocation from writing duplicate snapshots
@@ -6525,12 +6531,23 @@ function KPIDashboardView({ projects, people, notifications, adminTasks = [], sb
   const loginEvents = actD30.filter(a => a.event_type === "login");
   const avgLogins   = people.length > 0 ? (loginEvents.length / people.length).toFixed(1) : "—";
 
-  const featureCounts = ["myhub","dashboard","timeline","people","status","workload","reporting","history"].map(f => ({
-    feature: f,
-    label: { myhub:"My Hub", dashboard:"Dashboard", timeline:"Timeline", people:"By Person", status:"Status", workload:"Workload", reporting:"Reporting", history:"History" }[f] || f,
-    views: actD30.filter(a => a.event_type === `view_${f}`).length,
-    users: new Set(actD30.filter(a => a.event_type === `view_${f}`).map(a => a.person_id)).size,
-  })).sort((a,b) => b.views - a.views);
+  const featureCounts = ["myhub","dashboard","timeline","people","status","workload","reporting","history"].map(f => {
+    const events = actD30.filter(a => a.event_type === `view_${f}`);
+    // Sessions = unique (person_id + date) combinations — more meaningful than raw click count
+    const sessions = new Set(events.map(a => a.person_id + "|" + a.occurred_at.slice(0,10))).size;
+    const users    = new Set(events.map(a => a.person_id)).size;
+    // Per-person sessions breakdown
+    const byPerson = people.map(p => ({
+      ...p,
+      sessions: new Set(events.filter(a => a.person_id === p.id).map(a => a.occurred_at.slice(0,10))).size,
+    })).filter(p => p.sessions > 0).sort((a,b) => b.sessions - a.sessions);
+    return {
+      feature: f,
+      label: { myhub:"My Hub", dashboard:"Dashboard", timeline:"Timeline", people:"By Person", status:"Status",
+               workload:"Workload", reporting:"Reporting", history:"History" }[f] || f,
+      sessions, users, byPerson,
+    };
+  }).sort((a,b) => b.sessions - a.sessions);
 
   // Login recency per person
   const lastLogin = people.map(p => {
@@ -6632,9 +6649,46 @@ function KPIDashboardView({ projects, people, notifications, adminTasks = [], sb
 
   return (
     <div style={{ display:"flex", flexDirection:"column", gap:18, padding:"0 0 40px" }}>
-      {drillDown === "visibility" && <VisibilityDrillDown projects={projects} onClose={() => setDrillDown(null)} />}
-      {drillDown === "missing_owners" && <MissingItemsDrillDown title="Tasks Missing Owners" items={missingOwnerRows} columns={["Project","Task","Due Date","Status"]} onClose={() => setDrillDown(null)} />}
-      {drillDown === "missing_dates" && <MissingItemsDrillDown title="Tasks Missing End Dates" items={missingDateRows} columns={["Project","Task","Assigned To","Status"]} onClose={() => setDrillDown(null)} />}
+      {drillDown === "visibility"     && <VisibilityDrillDown projects={projects} onClose={() => setDrillDown(null)} />}
+      {drillDown === "missing_owners" && <MissingItemsDrillDown title="Tasks Missing Owners"    items={missingOwnerRows} columns={["Project","Task","Due Date","Status"]} onClose={() => setDrillDown(null)} />}
+      {drillDown === "missing_dates"  && <MissingItemsDrillDown title="Tasks Missing End Dates" items={missingDateRows}  columns={["Project","Task","Assignee","Status"]}  onClose={() => setDrillDown(null)} />}
+      {drillDown === "planning"       && <MissingItemsDrillDown title="Planning Completeness — by Project" columns={["Project","Owner","Deliverables","Dates 75%+","Tasks","Score"]}
+        items={activeProjects.map(proj => { const tasks=proj.deliverables.flatMap(d=>d.subtasks.length>0?d.subtasks:[d]); const dwd=proj.deliverables.filter(d=>d.start&&d.end).length; const pts=[proj.ownerId?1:0,proj.deliverables.length>0?1:0,proj.deliverables.length===0||dwd/Math.max(proj.deliverables.length,1)>=0.75?1:0,tasks.length>0?1:0]; return [proj.name,proj.ownerId?"✓":"✗",proj.deliverables.length,`${dwd}/${proj.deliverables.length}`,tasks.length,`${Math.round(pts.reduce((a,b)=>a+b,0)/4*100)}%`]; })} onClose={() => setDrillDown(null)} />}
+      {drillDown === "forecast"       && <MissingItemsDrillDown title="Forecast Coverage — by Project" columns={["Project","Tasks w/ Effort","Total Tasks","Coverage"]}
+        items={activeProjects.map(proj => { const tasks=proj.deliverables.flatMap(d=>d.subtasks.length>0?d.subtasks:[d]); const we=tasks.filter(t=>t.effort||t.customHours).length; return [proj.name,we,tasks.length,tasks.length>0?`${Math.round(we/tasks.length*100)}%`:"—"]; })} onClose={() => setDrillDown(null)} />}
+      {drillDown === "capacity"       && <MissingItemsDrillDown
+        title="Capacity Visibility — what counts and what doesn't"
+        columns={["Project","Task","Effort","Hrs","Assignee","Counts?"]}
+        items={(() => {
+          const EHRS={S:1,M:4,L:8}; const eh=t=>Number(t.customHours)||EHRS[t.effort]||4;
+          const rows = [];
+          activeProjects.forEach(proj => {
+            const tasks = proj.deliverables.flatMap(d=>d.subtasks.length>0?d.subtasks:[d]).filter(t=>t.status!=="Done");
+            const total = tasks.reduce((s,t)=>s+eh(t),0);
+            const asgn  = tasks.filter(t=>(t.assignees||[]).length>0).reduce((s,t)=>s+eh(t),0);
+            rows.push([`── ${proj.name} (${Math.round(total>0?asgn/total*100:0)}%)`, "", "", "", "", ""]);
+            tasks.forEach(t => {
+              const hrs = eh(t);
+              const hasAsgn = (t.assignees||[]).length > 0;
+              const effortLabel = t.customHours ? `${t.customHours}h` : t.effort || "—";
+              const assigneeNames = (t.assignees||[]).map(id => people.find(p=>p.id===id)?.name?.split(" ")[0]||id).join(", ") || "— unassigned";
+              rows.push([proj.name, t.title||t.name||"Untitled", effortLabel, `${hrs}h`, assigneeNames, hasAsgn ? "✓ Yes" : "✗ No"]);
+            });
+          });
+          return rows;
+        })()} onClose={() => setDrillDown(null)} />}
+      {drillDown === "cycle_time"     && <MissingItemsDrillDown title="Task Cycle Times (Completed Tasks)" columns={["Project","Task","Start","End","Days"]}
+        items={doneTasks.filter(t=>t.start&&t.end&&t.end>t.start).map(t=>{ const proj=activeProjects.find(p=>p.deliverables.some(d=>d.id===t.id||(d.subtasks||[]).some(s=>s.id===t.id))); const days=Math.ceil((new Date(t.end+"T00:00:00")-new Date(t.start+"T00:00:00"))/86400000); return [proj?.name||"?",t.title||t.name||"Untitled",t.start,t.end,`${days}d`]; }).sort((a,b)=>Number(b[4])-Number(a[4]))} onClose={() => setDrillDown(null)} />}
+      {drillDown === "reporting"      && <MissingItemsDrillDown title="Reporting Coverage — Project Eligibility" columns={["Project","Tasks","Has Dates","Has Assignees","Eligible"]}
+        items={activeProjects.map(proj=>{ const tasks=proj.deliverables.flatMap(d=>d.subtasks.length>0?d.subtasks:[d]); const hd=proj.deliverables.some(d=>d.end); const ha=proj.deliverables.some(d=>(d.assignees||[]).length>0); return [proj.name,tasks.length,hd?"✓":"✗",ha?"✓":"✗",(tasks.length>0&&hd&&ha)?"✓ Eligible":"✗ Not eligible"]; })} onClose={() => setDrillDown(null)} />}
+      {drillDown === "active_users"   && <MissingItemsDrillDown title="Active Users — Last 30 Days" columns={["User","Last Login","Logins (30d)","Active Days (30d)","Status"]}
+        items={lastLogin.map(p=>{ const logins=actD30.filter(a=>a.person_id===p.id&&a.event_type==="login").length; const days=new Set(actD30.filter(a=>a.person_id===p.id).map(a=>a.occurred_at.slice(0,10))).size; const status=p.daysAgo===null?"No data":p.daysAgo===0?"Active today":p.daysAgo<=7?"Active this week":"Inactive "+p.daysAgo+"d ago"; return [p.name,p.daysAgo===null?"—":p.daysAgo===0?"Today":`${p.daysAgo}d ago`,logins,days,status]; })} onClose={() => setDrillDown(null)} />}
+      {drillDown === "feature_usage"  && <MissingItemsDrillDown title="Feature Usage — Who Uses What (sessions = active days)" columns={["User",...featureCounts.map(f=>f.label),"Total Active Days"]}
+        items={people.map(p=>{ const perTab=featureCounts.map(f=>{ const s=new Set(actD30.filter(a=>a.person_id===p.id&&a.event_type===`view_${f.feature}`).map(a=>a.occurred_at.slice(0,10))).size; return s>0?`${s}d`:"—"; }); const total=new Set(actD30.filter(a=>a.person_id===p.id).map(a=>a.occurred_at.slice(0,10))).size; return [p.name,...perTab,total>0?`${total}d`:"—"]; })} onClose={() => setDrillDown(null)} />}
+      {drillDown === "notifications"  && <MissingItemsDrillDown title="Notification Engagement by Type" columns={["Type","Sent","Opened","Open Rate"]}
+        items={["task_assigned","task_completed","task_ready","kickoff_requested","project_completed"].map(type=>{ const sent=allNotifs.filter(n=>n.notification_type===type).length; const opened=allNotifs.filter(n=>n.notification_type===type&&n.is_read).length; const labels={task_assigned:"Assigned to You",task_completed:"Task Completed",task_ready:"Up Next",kickoff_requested:"Kickoff Requested",project_completed:"Project Complete"}; return [labels[type]||type,sent,opened,sent>0?`${Math.round(opened/sent*100)}%`:"—"]; })} onClose={() => setDrillDown(null)} />}
+      {drillDown === "missing_effort" && <MissingItemsDrillDown title="Tasks Missing Effort Estimate" columns={["Project","Task","Assignee","Status"]}
+        items={openTasks.filter(t=>!t.effort&&!t.customHours).map(t=>{ const proj=activeProjects.find(p=>p.deliverables.some(d=>d.id===t.id||(d.subtasks||[]).some(s=>s.id===t.id))); return [proj?.name||"?",t.title||"Untitled",(t.assignees||[]).length?"Assigned":"—",t.status||"?"]; })} onClose={() => setDrillDown(null)} />}
 
       {/* ── Header ── */}
       <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", flexWrap:"wrap", gap:10 }}>
@@ -6666,15 +6720,15 @@ function KPIDashboardView({ projects, people, notifications, adminTasks = [], sb
 
       {/* ── Summary Cards ── */}
       <div style={{ display:"grid", gridTemplateColumns:"repeat(5,1fr)", gap:12 }}>
-        <KPIMetricCard label="Visibility Score"       value={visibilityScore+"%"} color={TEAL}     icon="◉" sparkData={sparkVis}      trend={trend(sparkVis)}      trendLabel="pts" onClick={() => setDrillDown("visibility")}
+        <KPIMetricCard label="Visibility Score"       value={visibilityScore+"%"} color={TEAL}     icon="◉" sparkData={sparkVis}      trend={trend(sparkVis)}      trendLabel="pts" onClick={() => setDrillDown("visibility")} onClick={() => setDrillDown("visibility")}
           desc="How well-structured your projects are. Scores tasks for having owners, due dates, effort estimates, and more." />
-        <KPIMetricCard label="Planning Completeness"  value={planningScore+"%"}   color="#6366f1"  icon="◈" sparkData={sparkPlan}     trend={trend(sparkPlan)}     trendLabel="pts"
+        <KPIMetricCard label="Planning Completeness"  value={planningScore+"%"}   color="#6366f1"  icon="◈" sparkData={sparkPlan}     trend={trend(sparkPlan)}     trendLabel="pts" onClick={() => setDrillDown("planning")}
           desc="% of active projects that have an owner, deliverables, dates, and tasks defined before work begins." />
-        <KPIMetricCard label="Forecast Coverage"      value={forecastCov+"%"}     color="#0ea5e9"  icon="▬" sparkData={sparkForecast} trend={trend(sparkForecast)} trendLabel="pts"
+        <KPIMetricCard label="Forecast Coverage"      value={forecastCov+"%"}     color="#0ea5e9"  icon="▬" sparkData={sparkForecast} trend={trend(sparkForecast)} trendLabel="pts" onClick={() => setDrillDown("forecast")}
           desc="% of tasks with an effort estimate (S/M/L). Higher coverage means more reliable capacity forecasting." />
-        <KPIMetricCard label="Capacity Visibility"    value={capacityVis+"%"}     color="#8b5cf6"  icon="▦" sparkData={sparkCap}      trend={trend(sparkCap)}      trendLabel="pts"
-          desc="% of total forecasted hours that are assigned to a specific person. Shows how much future work has a clear owner." />
-        <KPIMetricCard label="Active Users (7d)"      value={activity.length > 0 ? active7d : "—"} sub={activity.length > 0 ? `of ${people.length}` : "Tracking starts now"}
+        <KPIMetricCard label="Capacity Visibility"    value={capacityVis+"%"}     color="#8b5cf6"  icon="▦" sparkData={sparkCap}      trend={trend(sparkCap)}      trendLabel="pts" onClick={() => setDrillDown("capacity")}
+          desc="Of your open tasks with effort estimates, what % have a named owner. S=1h M=4h L=8h. If a task has no assignee or no effort estimate, those hours aren't counted as visible. Tap to see task-by-task breakdown." />
+        <KPIMetricCard label="Active Users (7d)"      value={activity.length > 0 ? active7d : "—"} onClick={() => setDrillDown("active_users")} sub={activity.length > 0 ? `of ${people.length}` : "Tracking starts now"}
           color="#f59e0b" icon="⊙" sparkData={sparkActive7} trend={null} warning={activity.length === 0}
           desc="Team members who have opened PulseX in the last 7 days. Measures day-to-day platform adoption." />
       </div>
@@ -6760,9 +6814,9 @@ function KPIDashboardView({ projects, people, notifications, adminTasks = [], sb
         <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:12, marginBottom:18 }}>
           <KPIMetricCard label="Visibility Score"     value={visibilityScore+"%"} color={TEAL}    sub={`${activeProjects.length} projects scored`} sparkData={sparkVis} trend={trend(sparkVis)} trendLabel="pts"
             desc="Each project earns points for having a client, deliverables, tasks, owners, due dates, and effort sizes. 100% = fully visible." />
-          <KPIMetricCard label="Tasks Missing Owners" value={missingOwners}       color="#f97316" sub={`${missingOwnersPct}% of ${openTasks.length} open tasks`} warning={missingOwnersPct > 20} onClick={() => setDrillDown("missing_owners")}
+          <KPIMetricCard label="Tasks Missing Owners" value={missingOwners} onClick={() => setDrillDown("missing_owners")}       color="#f97316" sub={`${missingOwnersPct}% of ${openTasks.length} open tasks`} warning={missingOwnersPct > 20} onClick={() => setDrillDown("missing_owners")}
             desc="Open tasks with no one assigned. Unowned tasks create blind spots in capacity planning and scheduling." />
-          <KPIMetricCard label="Tasks Missing Dates"  value={missingDates}        color="#f59e0b" sub={`${missingDatesPct}% of ${openTasks.length} open tasks`} warning={missingDatesPct > 20} onClick={() => setDrillDown("missing_dates")}
+          <KPIMetricCard label="Tasks Missing Dates"  value={missingDates} onClick={() => setDrillDown("missing_dates")}        color="#f59e0b" sub={`${missingDatesPct}% of ${openTasks.length} open tasks`} warning={missingDatesPct > 20} onClick={() => setDrillDown("missing_dates")}
             desc="Open tasks with no due date. Missing dates make Timeline and By Person views incomplete and forecasting unreliable." />
         </div>
 
@@ -6860,15 +6914,15 @@ function KPIDashboardView({ projects, people, notifications, adminTasks = [], sb
           Measures how effectively PulseX is being used to plan, estimate, and manage work. Higher scores mean more predictable delivery and better resource allocation.
         </p>
         <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:12, marginBottom:18 }}>
-          <KPIMetricCard label="Planning Completeness" value={planningScore+"%"}  color="#6366f1" sparkData={sparkPlan}     trend={trend(sparkPlan)}     trendLabel="pts"
+          <KPIMetricCard label="Planning Completeness" value={planningScore+"%"} onClick={() => setDrillDown("planning")}  color="#6366f1" sparkData={sparkPlan}     trend={trend(sparkPlan)}     trendLabel="pts"
             desc="% of projects that have an owner, deliverables with dates, and tasks before work starts. Goal: plan before you build." />
-          <KPIMetricCard label="Forecast Coverage"     value={forecastCov+"%"}   color="#0ea5e9" sparkData={sparkForecast} trend={trend(sparkForecast)} trendLabel="pts"
+          <KPIMetricCard label="Forecast Coverage"     value={forecastCov+"%"} onClick={() => setDrillDown("forecast")}   color="#0ea5e9" sparkData={sparkForecast} trend={trend(sparkForecast)} trendLabel="pts"
             sub={`${allTasks.filter(t=>t.effort||t.customHours).length} / ${allTasks.length} tasks`}
             desc="% of tasks with S/M/L effort sizing or custom hours. Needed to calculate capacity and workload reports accurately." />
-          <KPIMetricCard label="Capacity Visibility"   value={capacityVis+"%"}   color="#8b5cf6" sparkData={sparkCap}      trend={trend(sparkCap)}      trendLabel="pts"
+          <KPIMetricCard label="Capacity Visibility"   value={capacityVis+"%"} onClick={() => setDrillDown("capacity")}   color="#8b5cf6" sparkData={sparkCap}      trend={trend(sparkCap)}      trendLabel="pts"
             sub={`${assignedHrs}h / ${totalHrs}h assigned`}
             desc="% of total estimated hours that have a named owner. Shows how much future work is properly assigned vs floating." />
-          <KPIMetricCard label="Avg Cycle Time"        value={avgCycleTime ? avgCycleTime.avg+"d" : "—"} color="#f59e0b"
+          <KPIMetricCard label="Avg Cycle Time"        value={avgCycleTime ? avgCycleTime.avg+"d" : "—"} onClick={() => setDrillDown("cycle_time")} color="#f59e0b"
             sub={avgCycleTime ? `Median ${avgCycleTime.median}d · ${avgCycleTime.count} tasks` : "No completed tasks with dates"}
             desc="Average days from task start to completion. Tracks whether delivery speed is improving over time." />
         </div>
@@ -6906,14 +6960,15 @@ function KPIDashboardView({ projects, people, notifications, adminTasks = [], sb
           Measures whether PulseX has enough data to generate meaningful reports, health scores, and capacity forecasts — the outputs the platform exists to produce.
         </p>
         <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:12 }}>
-          <KPIMetricCard label="Reporting Coverage"      value={reportingCov+"%"}    color="#10b981"
+          <KPIMetricCard label="Reporting Coverage"      value={reportingCov+"%"} onClick={() => setDrillDown("reporting")}    color="#10b981"
             sub={`${eligible.length} / ${activeProjects.length} projects eligible`}
             desc="% of active projects that qualify for reporting: have tasks, due dates, and at least one assigned owner." />
-          <KPIMetricCard label="Project Health Coverage" value={healthCov+"%"}        color="#0ea5e9"
+          <KPIMetricCard label="Project Health Coverage" value={healthCov+"%"} onClick={() => setDrillDown("reporting")}        color="#0ea5e9"
             sub={`${healthEligible.length} / ${activeProjects.length} with enough data`}
             desc="% of projects with enough date information to calculate an on-track / at-risk / off-track status." />
-          <KPIMetricCard label="Notifications"           value={notifications.filter(n=>n.isRead).length}
-            sub={`${notifications.length} total · ${Math.round(notifications.length>0?notifications.filter(n=>n.isRead).length/notifications.length*100:0)}% open rate`}
+          <KPIMetricCard label="Notifications"           value={allNotifs.filter(n=>n.is_read).length} onClick={() => setDrillDown("notifications")}
+            sub={`${allNotifs.length} total · ${Math.round(allNotifs.length>0?allNotifs.filter(n=>n.is_read).length/allNotifs.length*100:0)}% open rate`} desc={"Tracks whether workflow notifications (assignments, completions, ready-to-start) are being opened. Low rate = team may be missing tasks."}
+            onClick={() => setDrillDown("notifications")} __REMOVE__={`n.isRead).length/notifications.length*100:0)}% open rate`}
             color="#6366f1"
             desc="Tracks whether workflow notifications (assignments, completions, ready-to-start) are being opened and acted on." />
         </div>
@@ -6933,10 +6988,17 @@ function KPIDashboardView({ projects, people, notifications, adminTasks = [], sb
             <div style={{ fontSize:12, fontWeight:700, color:NAVY, marginBottom:10 }}>Feature Usage — Last 30 Days</div>
             <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:10, marginBottom:18 }}>
               {featureCounts.map(f => (
-                <div key={f.feature} style={{ background:"#f8fafc", borderRadius:7, padding:"10px 14px" }}>
+                <div key={f.feature} onClick={() => setDrillDown("feature_usage")}
+                  style={{ background:"#f8fafc", borderRadius:7, padding:"10px 14px",
+                    cursor:"pointer", border:"1px solid transparent" }}
+                  onMouseEnter={e => e.currentTarget.style.border="1px solid rgba(0,181,181,0.3)"}
+                  onMouseLeave={e => e.currentTarget.style.border="1px solid transparent"}>
                   <div style={{ fontSize:11, fontWeight:600, color:"#374151" }}>{f.label}</div>
-                  <div style={{ fontSize:20, fontWeight:900, color:TEAL, marginTop:2 }}>{f.views}</div>
-                  <div style={{ fontSize:10, color:"#9ca3af" }}>views · {f.users} user{f.users!==1?"s":""}</div>
+                  <div style={{ fontSize:20, fontWeight:900, color:TEAL, marginTop:2 }}>{f.sessions}</div>
+                  <div style={{ fontSize:10, color:"#9ca3af" }}>active days · {f.users} user{f.users!==1?"s":""}</div>
+                  {f.byPerson.slice(0,3).map(p => (
+                    <div key={p.id} style={{ fontSize:9, color:"#6b7280", marginTop:2 }}>{p.name.split(" ")[0]}: {p.sessions}d</div>
+                  ))}
                 </div>
               ))}
             </div>
@@ -6947,9 +7009,9 @@ function KPIDashboardView({ projects, people, notifications, adminTasks = [], sb
         <div style={{ marginTop:8 }}>
           <div style={{ fontSize:12, fontWeight:700, color:NAVY, marginBottom:8 }}>Notification Engagement</div>
           <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:10 }}>
-            {["task_assigned","task_completed","task_ready","due_soon","overdue"].map(type => {
-              const sent   = notifications.filter(n => n.type === type).length;
-              const opened = notifications.filter(n => n.type === type && n.isRead).length;
+            {["task_assigned","task_completed","task_ready","kickoff_requested","project_completed"].map(type => {
+              const sent   = allNotifs.filter(n => n.notification_type === type).length;
+              const opened = allNotifs.filter(n => n.notification_type === type && n.is_read).length;
               const rate   = sent > 0 ? Math.round(opened/sent*100) : 0;
               const label  = { task_assigned:"Assigned to You", task_completed:"Task Completed", task_ready:"Up Next", due_soon:"Due Soon", overdue:"Overdue" }[type] || type;
               return (
