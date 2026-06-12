@@ -314,8 +314,7 @@ export default function ProofApp() {
             {showArchived ? "📦 Hide Archived" : "📦 Archived"}
           </button>
           <button onClick={() => {
-            if (window.opener && !window.opener.closed) { window.opener.focus(); window.close(); }
-            else { window.location.href = "/"; }
+            window.close();
           }}
             style={{ padding:"5px 12px", background:"rgba(255,255,255,0.1)", color:"#ffffff",
               border:"1px solid rgba(255,255,255,0.25)", borderRadius:6, cursor:"pointer",

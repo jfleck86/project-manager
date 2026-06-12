@@ -869,25 +869,29 @@ function CheckButton({ isDone, onClick }) {
 
 // ─── PROJECT DETAILS MODAL ───────────────────────────────────────────────────
 function ProjectDetailsModal({ proj, people, onClose, onSave, onArchive, onDelete, onSaveAsTemplate }) {
-  const [form, setForm] = useState({
-    name:             proj.name,
-    client:           proj.client || "",
-    projectNumber:    proj.projectNumber || "",
-    ownerId:          proj.ownerId || "",
-    teamMemberIds:    proj.teamMemberIds || [],
-    notes:            proj.notes || "",
-    // Phase 1 initiation fields
-    priority:         proj.priority         || "Medium",
-    accountLeadId:    proj.accountLeadId    || proj.ownerId || "",
-    projectManagerId: proj.projectManagerId || "",
-    objective:        proj.objective        || "",
-    projectStatus:    proj.projectStatus    || "Needs Timeline",
+  // Use proj as the source of truth; local edits stored as overrides.
+  // This avoids useState timing issues where proj arrives after first render.
+  const [overrides, setOverrides] = useState({});
+  const form = {
+    name:               proj.name               || "",
+    client:             proj.client             || "",
+    projectNumber:      proj.projectNumber      || "",
+    ownerId:            proj.ownerId            || "",
+    teamMemberIds:      proj.teamMemberIds      || [],
+    notes:              proj.notes              || "",
+    priority:           proj.priority           || "Medium",
+    accountLeadId:      proj.accountLeadId      || proj.ownerId || "",
+    projectManagerId:   proj.projectManagerId   || "",
+    objective:          proj.objective          || "",
+    projectStatus:      proj.projectStatus      || "Needs Timeline",
     earliestLaunchDate: proj.earliestLaunchDate || "",
-    kickoffRequested:    proj.kickoffRequested    || false,
-    kickoffDate:         proj.kickoffDate         || "",
-    kickoffNotifSentAt:  proj.kickoffNotifSentAt  || null,
-  });
-  const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
+    kickoffRequested:   proj.kickoffRequested   || false,
+    kickoffDate:        proj.kickoffDate        || "",
+    kickoffNotifSentAt: proj.kickoffNotifSentAt || null,
+    ...overrides,
+  };
+  const set = (k, v) => setOverrides(prev => ({ ...prev, [k]: v }));
+
   const [fromTemplate, setFromTemplate] = useState(null); // selected deliverable template
   const toggleMember = (id) => set("teamMemberIds",
     form.teamMemberIds.includes(id)
@@ -1496,7 +1500,7 @@ function TaskModal({ item, projectColor, allItems, onClose, onSave, allPeople, o
               <button
                 onClick={() => {
                   if (linkedProof) {
-                    window.location.href = "/proof";
+                    window.open(PROOF_QUEUE_URL, "_blank", "noopener,noreferrer");
                   } else if (onSendToProof) {
                     onSendToProof(form);
                   }
@@ -9919,13 +9923,14 @@ function downloadBrief(proj, deliverables, people) {
   // generateBriefHtml already produces a complete Word-compatible HTML document
   // with proper XML namespaces and embedded CSS — use it directly, no manipulation needed.
   const html = generateBriefHtml(proj, deliverables, people);
-  const blob = new Blob([html], { type: "application/msword;charset=utf-8" });
+  const blob = new Blob([html], { type: "application/octet-stream" });
   const url  = URL.createObjectURL(blob);
   const a    = document.createElement("a");
   a.href     = url;
   a.download = `Brief — ${(proj.name||"Project").replace(/[^a-zA-Z0-9 ]/g,"")} — ${new Date().toISOString().slice(0,10)}.doc`;
   document.body.appendChild(a); a.click();
-  document.body.removeChild(a); URL.revokeObjectURL(url);
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 2000);
 }
 
 
@@ -10759,6 +10764,7 @@ function ChangeHistoryView({ people, projects, currentUserId, sb, SB_READY }) {
 
 
 export default function App() {
+  // ── Safe notification save — handles DB constraint mismatches gracefully ────
   // ── SUPABASE CONFIG — read after main.jsx has set window vars ────────────
   // Reading inside App() guarantees main.jsx has already run and set these.
   const SB_URL   = (typeof window !== "undefined" && window.__SB_URL__)  || "";
@@ -10841,6 +10847,16 @@ export default function App() {
     softDelete:  (table, id, byPersonId) => sbFetch(`${table}?id=eq.${encodeURIComponent(id)}`, { method: "PATCH", prefer: "return=minimal", body: JSON.stringify({ deleted_at: new Date().toISOString(), deleted_by: byPersonId || "" }) }),
     restore:     (table, id, byPersonId) => sbFetch(`${table}?id=eq.${encodeURIComponent(id)}`, { method: "PATCH", prefer: "return=minimal", body: JSON.stringify({ deleted_at: null, deleted_by: null, restored_at: new Date().toISOString(), restored_by: byPersonId || "" }) }),
   }), [sbFetch]);
+
+  // ── Safe notification save — handles DB type constraint mismatches ─────────
+  const safeNotifSave = React.useCallback(async (data) => {
+    if (!SB_READY) return;
+    const { error } = await sb.upsert("task_notifications", data);
+    if (error) {
+      const retry = { ...data, notification_type: "task_assigned" };
+      await sb.upsert("task_notifications", retry).catch(() => {});
+    }
+  }, [sb, SB_READY]);
 
   // ── UI-only state (never persisted) ───────────────────────────────────────
   // ── Auth — declared first so early returns are safe ─────────────────────────
@@ -11119,6 +11135,7 @@ export default function App() {
       }
       seeded.current = true;
       console.log("[PulseX] Loaded — projects:", pR.data?.length, "deliverables:", dR.data?.length, "subtasks:", sR.data?.length);
+      const _r = pR.data?.[0] || {};
       const active   = (pR.data || []).filter(p => !p.archived);
       const archived = (pR.data || []).filter(p => p.archived);
       // Guard: skip subtask rows that have a deliverable_id pointing to a
@@ -11135,8 +11152,21 @@ export default function App() {
         }
         return true;
       });
-      setProjects(active.map(p => rowToProject(p, dR.data, cleanSubtasks)));
-      setArchivedProjects(archived.map(p => rowToProject(p, dR.data, cleanSubtasks)));
+      const toProj = (p) => ({
+        ...rowToProject(p, dR.data, cleanSubtasks),
+        // Inline Phase-1 fields so they survive any dataConverters version mismatch
+        priority:           p.priority            || "Medium",
+        accountLeadId:      p.account_lead_id     || p.owner_id || null,
+        projectManagerId:   p.project_manager_id  || null,
+        objective:          p.objective           || "",
+        projectStatus:      p.project_status      || "Needs Timeline",
+        earliestLaunchDate: p.earliest_launch_date || null,
+        kickoffRequested:   p.kickoff_requested   || false,
+        kickoffDate:        p.kickoff_date        || null,
+        kickoffNotifSentAt: p.kickoff_notif_sent_at || null,
+      });
+      setProjects(active.map(p => toProj(p)));
+      setArchivedProjects(archived.map(p => toProj(p)));
       setPeople((mR.data || []).map(p => ({ id: p.id, name: p.name, color: p.color, annualTarget: p.annual_target || 1850, department: p.department || "" })));
       setHolidays((hR.data || []).map(h => ({ id: h.id, date: h.date, name: h.name })));
       const notes = {};
@@ -11165,8 +11195,20 @@ export default function App() {
         const subs2 = (sR2.data || []).filter(s => s.deliverable_id && (dR2.data||[]).some(d => d.id === s.deliverable_id));
         const active2   = (pR2.data || []).filter(p => !p.archived);
         const archived2 = (pR2.data || []).filter(p =>  p.archived);
-        setProjects(active2.map(p => rowToProject(p, dR2.data, subs2)));
-        setArchivedProjects(archived2.map(p => rowToProject(p, dR2.data, subs2)));
+        const toProj2 = (p) => ({
+          ...rowToProject(p, dR2.data, subs2),
+          priority:           p.priority            || "Medium",
+          accountLeadId:      p.account_lead_id     || p.owner_id || null,
+          projectManagerId:   p.project_manager_id  || null,
+          objective:          p.objective           || "",
+          projectStatus:      p.project_status      || "Needs Timeline",
+          earliestLaunchDate: p.earliest_launch_date || null,
+          kickoffRequested:   p.kickoff_requested   || false,
+          kickoffDate:        p.kickoff_date        || null,
+          kickoffNotifSentAt: p.kickoff_notif_sent_at || null,
+        });
+        setProjects(active2.map(p => toProj2(p)));
+        setArchivedProjects(archived2.map(p => toProj2(p)));
         setPeople((tmR2.data || []).map(p => ({ id: p.id, name: p.name, color: p.color, annualTarget: p.annual_target || 1850, department: p.department || "" })));
         setHolidays(hR2.data || []);
         const notes2 = {};
@@ -11316,7 +11358,7 @@ export default function App() {
       storePrefill(prefill);
       // Store people for the proofreader dropdown in the Proof Queue
       try { localStorage.setItem("proof_queue_people", JSON.stringify(people.filter(p => p.department === "Proof" || p.department === "Proofreading").map(p => ({ id: p.id, name: p.name })))); } catch {}
-      window.open("/proof", "_blank");
+      window.open(PROOF_QUEUE_URL, "_blank", "noopener,noreferrer");
     });
   };
 
@@ -11468,7 +11510,7 @@ export default function App() {
         setToastNotif({ ...readyNotifs[0] });
         if (SB_READY) {
           readyNotifs.forEach(n => {
-            sb.upsert("task_notifications", {
+            safeNotifSave({
               id: n.id, task_id: n.taskId, notification_type: "task_ready",
               message: n.message, assigned_to_person_id: n.assignedToPersonId,
               completed_by_person_id: n.completedByPersonId,
@@ -11625,9 +11667,9 @@ export default function App() {
         projectId: projId, isRead: false, createdAt: sentNow,
         _projName: formData.name, _projColor: formData.color,
       }, ...prev]);
-      await sb.upsert("task_notifications", {
+      await safeNotifSave({
         id: kickoffNotifId, project_id: projId,
-        notification_type: "kickoff_requested",
+        notification_type: "task_assigned",
         message: `Kickoff meeting requested for "${formData.name}" — please schedule the Program Launch meeting.`,
         assigned_to_person_id: formData.projectManagerId,
         is_read: false, created_at: sentNow,
@@ -11727,16 +11769,16 @@ export default function App() {
           _projName: proj.name, _projColor: proj.color,
         }, ...prev]);
         setToastNotif({ message: `Kickoff notification sent to ${pmName}`, type: "kickoff_requested" });
-        if (SB_READY) sb.upsert("task_notifications", {
+        if (SB_READY) safeNotifSave({
           id: notifId, project_id: proj.id,
-          notification_type: "kickoff_requested",
+          notification_type: "task_assigned",   // fallback type — kickoff_requested may not be in constraint
           message: `Kickoff meeting requested for "${proj.name}" — please schedule the Program Launch meeting.`,
           assigned_to_person_id: proj.projectManagerId,
           is_read: false, created_at: new Date().toISOString(),
         });
       }
 
-      const { error } = await sb.update("projects", proj.id, {
+      const payload = {
         owner_id:            proj.ownerId       || null,
         name:                proj.name,
         client:              proj.client        || "",
@@ -11753,7 +11795,12 @@ export default function App() {
         kickoff_requested:   proj.kickoffRequested || false,
         kickoff_date:        proj.kickoffDate || null,
         kickoff_notif_sent_at: sentAt,
-      });
+      };
+      const { error } = await sb.update("projects", proj.id, payload);
+      if (error) {
+        console.error("[PulseX] saveProjectDetails failed:", error);
+        setToastNotif({ message: `Save failed: ${JSON.stringify(error).slice(0,120)}`, type: "overdue" });
+      }
       return error;
     },
     "saveProjectDetails"
@@ -11885,7 +11932,7 @@ export default function App() {
       setNotifications(prev => [notif, ...prev]);
       setToastNotif({ id:notifId, message:msg, type:"task_assigned" });
       if (SB_READY) {
-        const r = await sb.upsert("task_notifications", {
+        const r = await safeNotifSave({
           id:notifId, task_id:id, notification_type:"task_assigned", message:msg,
           assigned_to_person_id:entry.assignedTo, is_read:false, created_at:notif.createdAt,
         });
@@ -11910,7 +11957,7 @@ export default function App() {
           completedByPersonId:task.assignedTo, isRead:false, createdAt:new Date().toISOString() };
         setNotifications(prev => [notif, ...prev]);
         setToastNotif({ id:notifId, message:msg, type:"task_completed" });
-        if (SB_READY) await sb.upsert("task_notifications", {
+        if (SB_READY) await safeNotifSave({
           id:notifId, task_id:id, notification_type:"task_completed", message:msg,
           completed_by_person_id:task.assignedTo, is_read:false, created_at:notif.createdAt,
         });
@@ -11950,7 +11997,7 @@ export default function App() {
         _projName: proj.name, _projColor: proj.color,
       };
       setNotifications(prev => prev.some(x => x.id === n.id) ? prev : [n, ...prev]);
-      if (SB_READY) sb.upsert("task_notifications", {
+      if (SB_READY) safeNotifSave({
         id: n.id, task_id: null, project_id: projectId,
         notification_type: "project_completed", message: msg,
         assigned_to_person_id: personId, is_read: false,
@@ -12058,6 +12105,11 @@ export default function App() {
     () => setProjects(projs => projs.map(p => p.id !== projectId ? p : { ...p, deliverables: p.deliverables.filter(d => d.id !== deliverableId) })),
     async () => {
       logChange("deliverable", deliverableId, "delete", { projectId, newValue: { deliverableId } });
+      const now = new Date().toISOString();
+      // Cascade: soft-delete all subtasks belonging to this deliverable first
+      await sb.updateWhere("subtasks", "deliverable_id", deliverableId, {
+        deleted_at: now, deleted_by: currentUserId,
+      });
       const { error } = await sb.softDelete("deliverables", deliverableId, currentUserId);
       return error;
     }
@@ -12170,7 +12222,7 @@ export default function App() {
         setToastNotif(notif); // show toast for the person who completed it; admin will see on next load
       }
       if (SB_READY) {
-        await sb.upsert("task_notifications", {
+        await safeNotifSave({
           id: notifId, task_id: notif.taskId, deliverable_id: deliverableId,
           project_id: projectId, completed_by_person_id: currentUserId,
           notification_type: "task_completed", message,
@@ -12218,7 +12270,7 @@ export default function App() {
             console.log(`[PulseX] up-next — ${readyTasks.length} task(s) ready:`, readyTasks.map(t => t.title));
             setNotifications(prev => [...readyNotifs, ...prev]);
             setToastNotif({ ...readyNotifs[0] });
-            if (SB_READY) readyNotifs.forEach(n => sb.upsert("task_notifications", {
+            if (SB_READY) readyNotifs.forEach(n => safeNotifSave({
               id: n.id, task_id: n.taskId, notification_type: "task_ready",
               message: n.message, assigned_to_person_id: n.assignedToPersonId,
               completed_by_person_id: n.completedByPersonId,
@@ -12358,7 +12410,7 @@ export default function App() {
           });
           setToastNotif({ id: notif.id, message: notif.message, type: "task_completed" });
           // Persist to DB using PulseX's own auth
-          if (SB_READY) sb.upsert("task_notifications", {
+          if (SB_READY) safeNotifSave({
             id:                    notif.id,
             task_id:               notif.taskId || null,
             notification_type:     "task_completed",
@@ -12532,7 +12584,7 @@ export default function App() {
         <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }} >
 
           {/* ── PROOF QUEUE ── */}
-          <button onClick={() => { try { localStorage.setItem("proof_queue_people", JSON.stringify(people)); } catch(e){} window.open(PROOF_QUEUE_URL, "_blank"); }} 
+          <button onClick={() => { try { localStorage.setItem("proof_queue_people", JSON.stringify(people)); } catch(e){} window.open(PROOF_QUEUE_URL, "_blank", "noopener,noreferrer"); }} 
             title="Open Proof Queue in new tab"
             style={{ background:"rgba(80,192,192,0.15)", border:"1px solid rgba(80,192,192,0.4)", color:"#50C0C0",
               borderRadius:6, padding:"4px 10px", cursor:"pointer", fontSize:12, fontFamily:"inherit", fontWeight:700, flexShrink:0 }}>
@@ -12721,7 +12773,7 @@ export default function App() {
                 // Proof queue completion — open proof queue with the request pre-highlighted
                 try { localStorage.setItem("proof_queue_people", JSON.stringify(people)); } catch(e) {}
                 if (notif.taskId) try { localStorage.setItem("proof_open_request_id", notif.taskId); } catch(e) {}
-                window.open(PROOF_QUEUE_URL, "_blank");
+                window.open(PROOF_QUEUE_URL, "_blank", "noopener,noreferrer");
               } else {
                 const proj = projects.find(p => p.id === notif.projectId);
                 const del  = proj?.deliverables.find(d => d.id === notif.deliverableId);
@@ -12976,6 +13028,7 @@ export default function App() {
       )}
       {projectDetailsId && projects.concat(archivedProjects).find(p => p.id === projectDetailsId) && (
         <ProjectDetailsModal
+          key={projectDetailsId + "|" + (projects.concat(archivedProjects).find(p => p.id === projectDetailsId)?.projectManagerId || "") + "|" + (projects.concat(archivedProjects).find(p => p.id === projectDetailsId)?.priority || "")}
           proj={projects.concat(archivedProjects).find(p => p.id === projectDetailsId)}
           people={people}
           onClose={() => setProjectDetailsId(null)}
