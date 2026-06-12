@@ -10017,13 +10017,18 @@ td{border:1px solid #e5e7eb;padding:8px 10px;vertical-align:top}
 @media print{body{padding:32px}}
 </style></head>
 <body>
-<h1>${proj.name}</h1>
-<div style="font-size:11pt;color:#6b7280;margin-bottom:24px">
-  ISO Program Audit Summary &nbsp;·&nbsp; Generated ${new Date().toLocaleDateString("en-US",{month:"long",day:"numeric",year:"numeric"})}
-  &nbsp;·&nbsp; Program #: <strong style="color:#1f2937">${proj.projectNumber || "—"}</strong>
+<div style="background:#002A4E;border-radius:8px;padding:24px 28px;margin-bottom:24px;display:flex;align-items:flex-start;justify-content:space-between">
+  <div>
+    <div style="color:#fff;font-size:17pt;font-weight:700;margin:0 0 5px">${proj.name}</div>
+    <div style="color:rgba(255,255,255,0.55);font-size:10pt;margin-top:6px">Audit Summary - ${proj.client || "—"}</div>
+  </div>
+  <div style="text-align:right">
+    <div style="font-size:9px;font-weight:500;color:rgba(255,255,255,0.35);text-transform:uppercase;letter-spacing:.05em;margin-bottom:3px">Generated</div>
+    <div style="color:rgba(255,255,255,0.45);font-size:9pt">Generated ${new Date().toLocaleDateString("en-US",{month:"long",day:"numeric",year:"numeric"})}${proj.projectNumber ? ` &nbsp;·&nbsp; Program #: ${proj.projectNumber}` : ""}</div>
+  </div>
 </div>
 
-<h2>Program Overview</h2>
+<h2>Project Overview</h2>
 <div class="meta">
   <div class="meta-item"><span class="meta-label">Program Name</span>${proj.name}</div>
   <div class="meta-item"><span class="meta-label">Client</span>${proj.client || "—"}</div>
@@ -10139,7 +10144,7 @@ function generateBriefHtml(proj, deliverables, people) {
     [`<em style="color:${MUTED}">Project-Wide</em>`, "", "", "", ""],
   ];
 
-  const blank = (label = "Complete during Start of Work meeting") =>
+  const blank = (label = "Complete prior to start of work meeting") =>
     `<div class="blank">${label}</div>`;
 
   return `<html xmlns:o='urn:schemas-microsoft-com:office:office'
@@ -10202,16 +10207,11 @@ function generateBriefHtml(proj, deliverables, people) {
   <!-- ── COVER ── -->
   <div class="cover">
     <div>
-      <div class="cover-logo">PX</div>
-      <div style="margin-top:12px">
-        <div class="cover-title">${proj.name}</div>
-        <div class="cover-sub">Project Brief &nbsp;·&nbsp; ${proj.client || "—"}</div>
-      </div>
+      <div class="cover-title">${proj.name}</div>
+      <div class="cover-sub" style="margin-top:6px">Project Brief - ${proj.client || "—"}</div>
     </div>
     <div class="cover-meta">
-      <div class="cover-badge">${proj.projectStatus || "Needs Timeline"}</div><br>
-      <div class="cover-date">Generated ${new Date().toLocaleDateString("en-US",{month:"long",day:"numeric",year:"numeric"})}</div>
-      ${proj.projectNumber ? `<div class="cover-date" style="margin-top:4px">Program #${proj.projectNumber}</div>` : ""}
+      <div class="cover-date">Generated ${new Date().toLocaleDateString("en-US",{month:"long",day:"numeric",year:"numeric"})}${proj.projectNumber ? ` &nbsp;·&nbsp; Program #: ${proj.projectNumber}` : ""}</div>
     </div>
   </div>
 
