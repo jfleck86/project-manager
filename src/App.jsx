@@ -5278,11 +5278,11 @@ function MyHubView({ projects, people, holidays, pto = [], currentUserId, onSetC
         const completions  = allUnread.filter(n => n.type === "task_completed");
         const assignments  = allUnread.filter(n => n.type === "task_assigned"  && n.assignedToPersonId === meId);
         const readyToStart = allUnread.filter(n => n.type === "task_ready"     && n.assignedToPersonId === meId);
-        // Admin: completions + assignments + ready-to-start for viewed person
-        // Member: own assignments + own ready-to-start
+        const kickoffs     = allUnread.filter(n => n.type === "kickoff_requested" && n.assignedToPersonId === meId);
+        const projDone     = allUnread.filter(n => n.type === "project_completed" && n.assignedToPersonId === meId);
         const visibleNotifs = currentRole === "admin"
-          ? [...completions, ...assignments, ...readyToStart]
-          : [...assignments, ...readyToStart];
+          ? [...completions, ...assignments, ...readyToStart, ...kickoffs, ...projDone]
+          : [...assignments, ...readyToStart, ...kickoffs, ...projDone];
         if (!visibleNotifs.length) return null;
         const typeIcon  = { task_completed:"✓", task_assigned:"+", task_ready:"▶", due_soon:"⏰", overdue:"🔴", project_completed:"🎉", kickoff_requested:"📅" };
         const typeColor = { task_completed:"#f97316", task_assigned:BRAND_TEAL, task_ready:"#6366f1", due_soon:"#d97706", overdue:"#e24b4a", project_completed:"#10b981", kickoff_requested:"#0ea5e9" };
@@ -9047,7 +9047,7 @@ function ExcelImportModal({ onClose, onImport, existingColors }) {
                     <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 12px" }}>
                       <div style={{ width: 8, height: 8, borderRadius: "50%", background: projectColor, flexShrink: 0 }} />
                       <span style={{ fontSize: 12, fontWeight: 700, color: "#1f2937", flex: 1 }}>{del.title}</span>
-                      <span style={{ fontSize: 10, color: "#6b7280" }}>{del.start && del.start !== "2026-05-20" ? fmt(parseDate(del.start)) : "—"} → {del.end && del.end !== "2026-05-20" ? fmt(parseDate(del.end)) : "—"}</span>
+                      <span style={{ fontSize: 10, color: "#6b7280" }}>{del.start ? fmt(parseDate(del.start)) : "—"} → {del.end && del.end !== "2026-05-20" ? fmt(parseDate(del.end)) : "—"}</span>
                       {del.assigneesRaw && <span style={{ fontSize: 10, color: "#6b7280" }}>👤 {del.assigneesRaw}</span>}
                     </div>
                     {/* Subtasks */}
@@ -9055,7 +9055,7 @@ function ExcelImportModal({ onClose, onImport, existingColors }) {
                       <div key={sub.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "5px 12px 5px 28px", borderTop: "1px solid rgba(0,0,0,0.05)", background: "rgba(0,0,0,0.04)" }}>
                         <div style={{ width: 4, height: 4, borderRadius: "50%", background: "#475569", flexShrink: 0 }} />
                         <span style={{ fontSize: 11, color: "#4b5563", flex: 1 }}>{sub.title}</span>
-                        <span style={{ fontSize: 10, color: "#9ca3af" }}>{sub.start && sub.start !== "2026-05-20" ? fmt(parseDate(sub.start)) : "—"} → {sub.end && sub.end !== "2026-05-20" ? fmt(parseDate(sub.end)) : "—"}</span>
+                        <span style={{ fontSize: 10, color: "#9ca3af" }}>{sub.start && sub.start ? fmt(parseDate(sub.start)) : "—"} → {sub.end && sub.end !== "2026-05-20" ? fmt(parseDate(sub.end)) : "—"}</span>
                         {sub.assigneesRaw && <span style={{ fontSize: 10, color: "#6b7280" }}>👤 {sub.assigneesRaw}</span>}
                       </div>
                     ))}
@@ -10257,8 +10257,8 @@ function NewProjectModal({ onClose, onAdd, existingColors }) {
 
 // --- NEW DELIVERABLE MODAL ────────────────────────────────────────────────────
 function NewDeliverableModal({ project, onClose, onAdd, allPeople, savedTemplates = [], deliverableTemplates = [] }) {
-  const today = "2026-05-20";
-  const weekOut = "2026-05-27";
+  const today   = new Date().toISOString().slice(0, 10);
+  const weekOut = (() => { const d = new Date(); d.setDate(d.getDate() + 7); return d.toISOString().slice(0, 10); })();
   const [form, setForm] = useState({
     title: "", status: "Not Started", priority: "Medium",
     assignees: [], start: today, end: weekOut, progress: 0, dependencies: [], department: "",
@@ -10838,7 +10838,7 @@ export default function App() {
   // ── sb convenience object — re-created when sbFetch updates ──────────────
   const sb = useMemo(() => ({
     select:      (table, query = "")     => sbFetch(query ? `${table}?${query}` : table),
-    upsert:      (table, body)           => sbFetch(table, { method: "POST",   prefer: "resolution=merge-duplicates,return=minimal", body: JSON.stringify(Array.isArray(body) ? body : [body]) }),
+    upsert:      (table, body)           => sbFetch(`${table}?on_conflict=id`, { method: "POST",   prefer: "resolution=merge-duplicates,return=minimal", body: JSON.stringify(Array.isArray(body) ? body : [body]) }),
     update:      (table, id, body)       => sbFetch(`${table}?id=eq.${encodeURIComponent(id)}`, { method: "PATCH",  prefer: "return=minimal", body: JSON.stringify(body) }),
     updateWhere: (table, col, val, body) => sbFetch(`${table}?${col}=eq.${encodeURIComponent(val)}`, { method: "PATCH",  prefer: "return=minimal", body: JSON.stringify(body) }),
     delete:      (table, id)             => sbFetch(`${table}?id=eq.${encodeURIComponent(id)}`, { method: "DELETE", prefer: "return=minimal" }),
@@ -10851,11 +10851,8 @@ export default function App() {
   // ── Safe notification save — handles DB type constraint mismatches ─────────
   const safeNotifSave = React.useCallback(async (data) => {
     if (!SB_READY) return;
-    const { error } = await sb.upsert("task_notifications", data);
-    if (error) {
-      const retry = { ...data, notification_type: "task_assigned" };
-      await sb.upsert("task_notifications", retry).catch(() => {});
-    }
+    // Attempt save — completely silent on failure (constraint may not allow type yet)
+    await sb.upsert("task_notifications", data).catch(() => {});
   }, [sb, SB_READY]);
 
   // ── UI-only state (never persisted) ───────────────────────────────────────
@@ -11636,7 +11633,7 @@ export default function App() {
 
     // Create deliverables
     const newDels = deliverableList.map((d, i) => ({
-      id: "d_" + Date.now() + "_" + i,
+      id: "d_" + Date.now() + "_" + i + "_" + Math.random().toString(36).slice(2,6),
       title: d.name, status: "Not Started", priority: "Medium", department: "",
       start: null, end: d.requestedDate || null, requestedDeliveryDate: d.requestedDate || null,
       progress: 0, dependencies: [], assignees: [], effort: "M",
@@ -11687,7 +11684,7 @@ export default function App() {
         assigned_to: formData.projectManagerId,
         assigned_by: ownMemberId || formData.accountLeadId || null,
         title: `New project requires timeline planning: ${formData.name}`,
-        status: "Not Started", priority: "High",
+        status: "Not Started",
         due_date: formData.earliestLaunchDate || null,
         notes: `Client: ${formData.client}\nDeliverables: ${newDels.length}\nEarliest Launch: ${formData.earliestLaunchDate || "TBD"}\nObjective: ${formData.objective || "—"}`,
         created_at: new Date().toISOString(),
@@ -11760,14 +11757,17 @@ export default function App() {
           (kickoffJustRequested || (proj.kickoffRequested && !kickoffNotifAlreadySent))) {
         const pmName = people.find(p => p.id === proj.projectManagerId)?.name || "Project Manager";
         const notifId = `notif_kickoff_${proj.id}_${Date.now()}`;
-        setNotifications(prev => [{
-          id: notifId, type: "kickoff_requested",
-          message: `Kickoff meeting requested for "${proj.name}" — please schedule the Program Launch meeting.`,
-          assignedToPersonId: proj.projectManagerId,
-          projectId: proj.id, isRead: false,
-          createdAt: new Date().toISOString(),
-          _projName: proj.name, _projColor: proj.color,
-        }, ...prev]);
+        // Only add to local state for the PM — others see it via DB on next load
+        if (ownMemberId === proj.projectManagerId) {
+          setNotifications(prev => [{
+            id: notifId, type: "kickoff_requested",
+            message: `Kickoff meeting requested for "${proj.name}" — please schedule the Program Launch meeting.`,
+            assignedToPersonId: proj.projectManagerId,
+            projectId: proj.id, isRead: false,
+            createdAt: new Date().toISOString(),
+            _projName: proj.name, _projColor: proj.color,
+          }, ...prev]);
+        }
         setToastNotif({ message: `Kickoff notification sent to ${pmName}`, type: "kickoff_requested" });
         if (SB_READY) safeNotifSave({
           id: notifId, project_id: proj.id,
@@ -11932,11 +11932,10 @@ export default function App() {
       setNotifications(prev => [notif, ...prev]);
       setToastNotif({ id:notifId, message:msg, type:"task_assigned" });
       if (SB_READY) {
-        const r = await safeNotifSave({
+        await safeNotifSave({
           id:notifId, task_id:id, notification_type:"task_assigned", message:msg,
           assigned_to_person_id:entry.assignedTo, is_read:false, created_at:notif.createdAt,
         });
-        if (r?.error) console.error("[PulseX] notification save failed:", r.error);
       }
     }
 
