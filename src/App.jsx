@@ -10017,16 +10017,14 @@ td{border:1px solid #e5e7eb;padding:8px 10px;vertical-align:top}
 @media print{body{padding:32px}}
 </style></head>
 <body>
-<div style="background:#002A4E;border-radius:8px;padding:24px 28px;margin-bottom:24px;display:flex;align-items:flex-start;justify-content:space-between">
-  <div>
-    <div style="color:#fff;font-size:17pt;font-weight:700;margin:0 0 5px">${proj.name}</div>
-    <div style="color:rgba(255,255,255,0.55);font-size:10pt;margin-top:6px">Audit Summary - ${proj.client || "—"}</div>
-  </div>
-  <div style="text-align:right">
-    <div style="font-size:9px;font-weight:500;color:rgba(255,255,255,0.35);text-transform:uppercase;letter-spacing:.05em;margin-bottom:3px">Generated</div>
-    <div style="color:rgba(255,255,255,0.45);font-size:9pt">Generated ${new Date().toLocaleDateString("en-US",{month:"long",day:"numeric",year:"numeric"})}${proj.projectNumber ? ` &nbsp;·&nbsp; Program #: ${proj.projectNumber}` : ""}</div>
-  </div>
-</div>
+<table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;margin-bottom:24px">
+  <tr>
+    <td bgcolor="#002A4E" style="background:#002A4E;padding:22px 26px">
+      <h1 style="font-size:17pt;color:#fff;margin:0 0 5px;font-weight:bold">${proj.name}</h1>
+      <p style="color:#ccc;font-size:10pt;margin:0">Audit Summary - ${proj.client || "—"} &nbsp;&middot;&nbsp; Generated ${new Date().toLocaleDateString("en-US",{month:"long",day:"numeric",year:"numeric"})}${proj.projectNumber ? ` &nbsp;&middot;&nbsp; Program #: ${proj.projectNumber}` : ""}</p>
+    </td>
+  </tr>
+</table>
 
 <h2>Project Overview</h2>
 <div class="meta">
@@ -10086,26 +10084,19 @@ function generateBriefHtml(proj, deliverables, people) {
   const fmtDate = d => d ? new Date(d+"T00:00:00").toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"}) : "—";
   const person  = id => people.find(p => p.id === id)?.name || "—";
 
-  const F   = 'face="Calibri,Arial,sans-serif"';
-  const td  = (c,s="") => `<td style="border:1px solid #e5e7eb;padding:7px 10px;vertical-align:top;${s}"><font ${F} size="2">${c||"&nbsp;"}</font></td>`;
-  const th  = (c)       => `<td bgcolor="#002A4E" style="background:#002A4E;padding:7px 10px"><font ${F} size="2" color="#FFFFFF"><b>${c}</b></font></td>`;
+  const th = c => `<th style="background:#002A4E;color:#fff;padding:7px 10px;text-align:left;font-weight:bold;font-size:9pt">${c}</th>`;
   const tbl = (headers, rows, note) => {
-    const head  = "<tr>" + headers.map(h => th(h)).join("") + "</tr>";
-    const body  = rows.map((r,i) => "<tr>" + r.map(c => td(c, i%2===1?"background:#f5f6f8":"")).join("") + "</tr>").join("");
-    const noteH = note ? `<tr><td colspan="${headers.length}" style="padding:4px 2px;border:none"><font ${F} size="1" color="#6b7280"><i>${note}</i></font></td></tr>` : "";
-    return `<table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;margin-bottom:8px"><thead>${head}</thead><tbody>${body}${noteH}</tbody></table>`;
+    const head = "<tr>" + headers.map(th).join("") + "</tr>";
+    const body = rows.map((r,i) => "<tr>" + r.map(c =>
+      `<td style="border:1px solid #e5e7eb;padding:7px 10px;vertical-align:top;${i%2===1?"background:#f5f6f8":""}">${c||"&nbsp;"}</td>`
+    ).join("") + "</tr>").join("");
+    const n = note ? `<p style="font-size:9pt;color:#6b7280;font-style:italic;margin:3px 0 10px">${note}</p>` : "";
+    return `<table width="100%" style="border-collapse:collapse;margin-bottom:8px"><thead>${head}</thead><tbody>${body}</tbody></table>${n}`;
   };
-
-  const blank = (label) => {
-    const txt = label || "Complete prior to start of work meeting";
-    return `<table width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:10px"><tr><td style="border:1px dashed #d1d5db;padding:12px 14px;min-height:50px;text-align:left"><font ${F} size="2" color="#9ca3af"><i>${txt}</i></font></td></tr></table>`;
-  };
-
-  const h2 = (n,t) => `<p style="font-size:12pt;font-weight:bold;color:#002A4E;margin:20px 0 6px;padding-bottom:4px;border-bottom:2pt solid #00B5B5"><font ${F} color="#002A4E"><b>${n}. ${t}</b></font></p>`;
-  const h3 = (t)   => `<p style="font-size:10.5pt;font-weight:bold;margin:10px 0 4px"><font ${F} color="#374151"><b>${t}</b></font></p>`;
-  const metaTd = (label,val) => `<td style="width:50%;padding:5px 2px;vertical-align:top;border:none"><font ${F} size="2"><b>${label}:</b> ${val}</font></td>`;
-  const blankRows = (n) => Array(n).fill(null).map(() => []);
-  const delPlusProj = (cols) => [
+  const blank = (label) =>
+    `<p style="border:1px dashed #d1d5db;padding:12px 14px;color:#9ca3af;font-style:italic;min-height:50px;margin-bottom:10px">${label||"Complete prior to start of work meeting"}</p>`;
+  const blankRows = n => Array(n).fill(null).map(()=>[]);
+  const delPlusProj = cols => [
     ...deliverables.map(d => [`<i>${d.title||d.name||""}</i>`, ...Array(cols).fill("")]),
     [`<i>Project-Wide</i>`, ...Array(cols).fill("")],
   ];
@@ -10113,79 +10104,94 @@ function generateBriefHtml(proj, deliverables, people) {
   const teamRows = [
     [person(proj.accountLeadId)||"—","Account Lead",""],
     [person(proj.projectManagerId)||"—","Project Manager",""],
-    ...(proj.teamMemberIds||[]).map(id => [person(id),"Team Member",""]),
+    ...(proj.teamMemberIds||[]).map(id=>[person(id),"Team Member",""]),
     ...blankRows(2),
   ];
-  const sec4Rows  = deliverables.map(d => [`<b>${d.title||d.name||""}</b>`,"","","", fmtDate(d.requestedDeliveryDate||d.end),"",""]);
-  const sec10Rows = deliverables.map(d => [`<b>${d.title||d.name||""}</b>`,"","","",""]);
+  const sec4Rows  = deliverables.map(d=>[`<b>${d.title||d.name||""}</b>`,"","","",fmtDate(d.requestedDeliveryDate||d.end),"",""]);
+  const sec10Rows = deliverables.map(d=>[`<b>${d.title||d.name||""}</b>`,"","","",""]);
   const dateStr   = new Date().toLocaleDateString("en-US",{month:"long",day:"numeric",year:"numeric"});
   const progNum   = proj.projectNumber ? ` &nbsp;&middot;&nbsp; Program #: ${proj.projectNumber}` : "";
 
-  const html = [
-    `<html xmlns:o='urn:schemas-microsoft-com:office:office'`,
-    `      xmlns:w='urn:schemas-microsoft-com:office:word'`,
-    `      xmlns='http://www.w3.org/TR/REC-html40'>`,
-    `<head><meta charset="UTF-8"><title>Project Brief</title>`,
-    `<style>body{font-family:Calibri,Arial,sans-serif;font-size:10.5pt;margin:48px 56px;text-align:left}p{margin:0 0 6px;line-height:1.5;text-align:left}</style>`,
-    `</head><body style="text-align:left">`,
+  return `<html xmlns:o='urn:schemas-microsoft-com:office:office'
+      xmlns:w='urn:schemas-microsoft-com:office:word'
+      xmlns='http://www.w3.org/TR/REC-html40'>
+<head><meta charset="UTF-8"><title>Project Brief</title>
+<style>
+body{font-family:Calibri,Arial,sans-serif;margin:0;padding:40px 56px;color:#1f2937;font-size:11pt}
+h2{font-size:12pt;font-weight:bold;color:#002A4E;margin:24px 0 8px;padding-bottom:5px;border-bottom:2px solid #00B5B5}
+h3{font-size:10.5pt;font-weight:bold;color:#374151;margin:12px 0 4px}
+p{margin:0 0 6px;line-height:1.5;font-size:10.5pt}
+table{width:100%;border-collapse:collapse;margin-bottom:8px;font-size:10pt}
+th{background:#002A4E;color:#fff;padding:7px 10px;text-align:left;font-weight:bold;font-size:9pt}
+td{border:1px solid #e5e7eb;padding:7px 10px;vertical-align:top}
+</style>
+</head>
+<body>
+<table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;margin-bottom:24px">
+  <tr>
+    <td bgcolor="#002A4E" style="background:#002A4E;padding:22px 26px">
+      <h1 style="font-size:17pt;color:#fff;margin:0 0 5px;font-weight:bold">${proj.name}</h1>
+      <p style="color:#ccc;font-size:10pt;margin:0">Project Brief - ${proj.client||"—"} &nbsp;&middot;&nbsp; Generated ${dateStr}${progNum}</p>
+    </td>
+  </tr>
+</table>
 
-    `<table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;margin-bottom:24px">`,
-    `  <tr>`,
-    `    <td align="left" bgcolor="#002A4E" style="background:#002A4E;padding:22px 26px;vertical-align:top;text-align:left">`,
-    `      <font ${F} size="5" color="#FFFFFF"><b>${proj.name}</b></font><br>`,
-    `      <font ${F} size="2" color="#CCCCCC">Project Brief - ${proj.client||"—"}</font><br>`,
-    `      <font ${F} size="1" color="#AAAAAA">Generated ${dateStr}${progNum}</font>`,
-    `    </td>`,
-    `  </tr>`,
-    `</table>`,
+<h2>1. Project Overview</h2>
+<table width="100%" cellpadding="4" cellspacing="0" style="border-collapse:collapse;margin:8px 0 16px">
+  <tr>
+    <td style="width:50%;border:none;padding:4px 4px 4px 0"><b>Project Name:</b> ${proj.name}</td>
+    <td style="width:50%;border:none;padding:4px"><b>Client:</b> ${proj.client||"—"}</td>
+  </tr>
+  <tr>
+    <td style="border:none;padding:4px 4px 4px 0"><b>Program Number:</b> ${proj.projectNumber||"—"}</td>
+    <td style="border:none;padding:4px"><b>Priority:</b> ${proj.priority||"—"}</td>
+  </tr>
+  <tr>
+    <td style="border:none;padding:4px 4px 4px 0"><b>Account Lead:</b> ${person(proj.accountLeadId)}</td>
+    <td style="border:none;padding:4px"><b>Project Manager:</b> ${person(proj.projectManagerId)}</td>
+  </tr>
+  <tr>
+    <td style="border:none;padding:4px 4px 4px 0"><b>Earliest Launch:</b> ${fmtDate(proj.earliestLaunchDate)}</td>
+    <td style="border:none;padding:4px"><b>Status:</b> ${proj.projectStatus||"—"}</td>
+  </tr>
+</table>
+${proj.objective?`<p style="background:#e1f5f5;border-left:3px solid #00B5B5;padding:8px 12px;margin:8px 0"><b>Objective:</b> ${proj.objective}</p>`:""}
+${tbl(["Deliverable","Requested Delivery Date"],deliverables.map(d=>[d.title||d.name||"",fmtDate(d.requestedDeliveryDate||d.end)]))}
 
-    h2(1,"Project Overview"),
-    `<table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;margin:8px 0 16px">`,
-    `<tr>${metaTd("Project Name",proj.name)}${metaTd("Client",proj.client||"—")}</tr>`,
-    `<tr>${metaTd("Program Number",proj.projectNumber||"—")}${metaTd("Priority",proj.priority||"—")}</tr>`,
-    `<tr>${metaTd("Account Lead",person(proj.accountLeadId))}${metaTd("Project Manager",person(proj.projectManagerId))}</tr>`,
-    `<tr>${metaTd("Earliest Launch Date",fmtDate(proj.earliestLaunchDate))}${metaTd("Status",proj.projectStatus||"—")}</tr>`,
-    `</table>`,
-    proj.objective ? `<p style="background:#e1f5f5;border-left:3px solid #00B5B5;padding:8px 12px;margin:8px 0"><font ${F} size="2"><b>Objective:</b> ${proj.objective}</font></p>` : "",
-    tbl(["Deliverable","Requested Delivery Date"], deliverables.map(d=>[d.title||d.name||"", fmtDate(d.requestedDeliveryDate||d.end)])),
+<h2>2. Audience &amp; Brand</h2>
+<h3>Target Audience</h3>${blank()}
+<h3>Brand / Voice Guidelines</h3>${blank()}
 
-    h2(2,"Audience & Brand"),
-    h3("Target Audience"), blank(),
-    h3("Brand / Voice Guidelines"), blank(),
+<h2>3. Program Team</h2>
+${tbl(["Name","Role","Responsibilities"],teamRows)}
 
-    h2(3,"Program Team"),
-    tbl(["Name","Role","Responsibilities"], teamRows),
+<h2>4. Deliverables</h2>
+${tbl(["Deliverable","Format","Platform / Placement","Audience","Due Date","Dependencies","Notes"],[...sec4Rows,...blankRows(3)],"Populate during Start of Work meeting.")}
 
-    h2(4,"Deliverables"),
-    tbl(["Deliverable","Format","Platform / Placement","Audience","Due Date","Dependencies","Notes"],
-      [...sec4Rows, ...blankRows(3)], "Populate during Start of Work meeting."),
+<h2>5. Timeline &amp; Milestones</h2>${blank()}
 
-    h2(5,"Timeline & Milestones"), blank(),
+<h2>6. Budget &amp; Resources</h2>
+<h3>Budget</h3>${blank()}
+<h3>Internal Resources</h3>${blank()}
+<h3>External Resources / Vendors</h3>${blank()}
 
-    h2(6,"Budget & Resources"),
-    h3("Budget"), blank(), h3("Internal Resources"), blank(), h3("External Resources / Vendors"), blank(),
+<h2>7. Approval Process</h2>${blank("Describe internal review and client approval steps.")}
+<h2>8. Distribution &amp; Launch</h2>${blank()}
+<h2>9. Success Metrics</h2>${blank()}
 
-    h2(7,"Approval Process"), blank("Describe internal review and client approval steps."),
-    h2(8,"Distribution & Launch"), blank(),
-    h2(9,"Success Metrics"), blank(),
+<h2>10. Deliverable Strategy</h2>
+${tbl(["Deliverable","Messaging Angle","Format Rationale","Key Visual Direction","Notes"],[...sec10Rows,...blankRows(2)])}
 
-    h2(10,"Deliverable Strategy"),
-    tbl(["Deliverable","Messaging Angle","Format Rationale","Key Visual Direction","Notes"],
-      [...sec10Rows, ...blankRows(2)]),
+<h2>11. Inputs &amp; Assets Required</h2>
+${tbl(["Deliverable / Scope","Asset Type","Description","Owner","Needed By","Status"],delPlusProj(5))}
 
-    h2(11,"Inputs & Assets Required"),
-    tbl(["Deliverable / Scope","Asset Type","Description","Owner","Needed By","Status"], delPlusProj(5)),
+<h2>12. Risks &amp; Dependencies</h2>
+${tbl(["Deliverable / Scope","Risk or Dependency","Impact","Mitigation","Owner"],delPlusProj(4))}
 
-    h2(12,"Risks & Dependencies"),
-    tbl(["Deliverable / Scope","Risk or Dependency","Impact","Mitigation","Owner"], delPlusProj(4)),
+<h2>13. Open Questions</h2>
+${tbl(["Deliverable / Scope","Question","Owner","Due Date","Status"],delPlusProj(4))}
 
-    h2(13,"Open Questions"),
-    tbl(["Deliverable / Scope","Question","Owner","Due Date","Status"], delPlusProj(4)),
-
-    `</body></html>`,
-  ].join("\n");
-
-  return html;
+</body></html>`;
 }
 
 
