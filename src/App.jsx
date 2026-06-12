@@ -10098,7 +10098,7 @@ function generateBriefHtml(proj, deliverables, people) {
 
   const blank = (label) => {
     const txt = label || "Complete prior to start of work meeting";
-    return `<table width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:10px"><tr><td style="border:1px dashed #d1d5db;padding:12px 14px;min-height:50px"><font ${F} size="2" color="#9ca3af"><i>${txt}</i></font></td></tr></table>`;
+    return `<table width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:10px"><tr><td style="border:1px dashed #d1d5db;padding:12px 14px;min-height:50px;text-align:left"><font ${F} size="2" color="#9ca3af"><i>${txt}</i></font></td></tr></table>`;
   };
 
   const h2 = (n,t) => `<p style="font-size:12pt;font-weight:bold;color:#002A4E;margin:20px 0 6px;padding-bottom:4px;border-bottom:2pt solid #00B5B5"><font ${F} color="#002A4E"><b>${n}. ${t}</b></font></p>`;
@@ -10126,7 +10126,7 @@ function generateBriefHtml(proj, deliverables, people) {
     `      xmlns:w='urn:schemas-microsoft-com:office:word'`,
     `      xmlns='http://www.w3.org/TR/REC-html40'>`,
     `<head><meta charset="UTF-8"><title>Project Brief</title>`,
-    `<style>body{font-family:Calibri,Arial,sans-serif;font-size:10.5pt;margin:48px 56px}p{margin:0 0 6px;line-height:1.5}</style>`,
+    `<style>body{font-family:Calibri,Arial,sans-serif;font-size:10.5pt;margin:48px 56px;text-align:left}p{margin:0 0 6px;line-height:1.5;text-align:left}</style>`,
     `</head><body>`,
 
     `<table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;margin-bottom:24px">`,
