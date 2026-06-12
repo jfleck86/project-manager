@@ -10080,25 +10080,111 @@ ${proj.kickoffRequested
 
 
 // ── Brief HTML Generator ──────────────────────────────────────────────────────
-function generateBriefHtml(proj, deliverables, people) {
+
+// ── SOW Brief — generates a real .docx using the docx npm package ──────────
+async function downloadBrief(proj, deliverables, people) {
+  const { Document, Packer, Paragraph, TextRun, Table, TableRow, TableCell,
+          HeadingLevel, AlignmentType, WidthType, ShadingType, BorderStyle,
+          ImageRun, Header, Footer, PageBreak, TableBorder } =
+    await import("docx").catch(() => {
+      alert("Please run: npm install docx  — then reload the page.");
+      return {};
+    });
+  if (!Document) return;
+
+  const NAVY = "002A4E", TEAL = "00B5B5", GRAY = "F5F6F8", WHITE = "FFFFFF";
   const fmtDate = d => d ? new Date(d+"T00:00:00").toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"}) : "—";
   const person  = id => people.find(p => p.id === id)?.name || "—";
 
-  const th = c => `<th style="background:#002A4E;color:#fff;padding:7px 10px;text-align:left;font-weight:bold;font-size:9pt">${c}</th>`;
-  const tbl = (headers, rows, note) => {
-    const head = "<tr>" + headers.map(th).join("") + "</tr>";
-    const body = rows.map((r,i) => "<tr>" + r.map(c =>
-      `<td style="border:1px solid #e5e7eb;padding:7px 10px;vertical-align:top;${i%2===1?"background:#f5f6f8":""}">${c||"&nbsp;"}</td>`
-    ).join("") + "</tr>").join("");
-    const n = note ? `<p style="font-size:9pt;color:#6b7280;font-style:italic;margin:3px 0 10px">${note}</p>` : "";
-    return `<table width="100%" style="border-collapse:collapse;margin-bottom:8px"><thead>${head}</thead><tbody>${body}</tbody></table>${n}`;
+  // ── helpers ─────────────────────────────────────────────────────────────
+  const run = (text, opts={}) => new TextRun({ text: String(text||""), font:"Calibri", size:22, ...opts });
+  const boldRun = (text, opts={}) => run(text, { bold:true, ...opts });
+
+  const para = (children, opts={}) => new Paragraph({
+    children: Array.isArray(children) ? children : [run(children)],
+    spacing:{ after:60 }, ...opts
+  });
+
+  const h2 = (text) => new Paragraph({
+    children: [boldRun(text, { color:NAVY, size:24 })],
+    heading: HeadingLevel.HEADING_2,
+    spacing: { before:360, after:80 },
+    border: { bottom:{ style:BorderStyle.SINGLE, size:16, color:TEAL, space:4 } },
+  });
+
+  const h3 = (text) => new Paragraph({
+    children: [boldRun(text, { color:"374151", size:22 })],
+    spacing:{ before:180, after:60 },
+  });
+
+  const blankBox = (label) => new Table({
+    width:{ size:100, type:WidthType.PERCENTAGE },
+    borders: {
+      top:{ style:BorderStyle.DASHED, size:6, color:"D1D5DB" },
+      bottom:{ style:BorderStyle.DASHED, size:6, color:"D1D5DB" },
+      left:{ style:BorderStyle.DASHED, size:6, color:"D1D5DB" },
+      right:{ style:BorderStyle.DASHED, size:6, color:"D1D5DB" },
+    },
+    rows:[new TableRow({ children:[new TableCell({
+      shading:{ type:ShadingType.SOLID, color:"FAFAFA" },
+      margins:{ top:160, bottom:160, left:160, right:160 },
+      children:[para([run(label||"Complete prior to start of work meeting", { color:"9CA3AF", italics:true })])],
+    })]})]
+  });
+
+  const headerRow = (cols) => new TableRow({
+    tableHeader:true,
+    children: cols.map(c => new TableCell({
+      shading:{ type:ShadingType.SOLID, color:NAVY },
+      margins:{ top:80, bottom:80, left:120, right:120 },
+      children:[para([boldRun(c, { color:WHITE, size:18 })])],
+    }))
+  });
+
+  const dataRow = (cells, shade) => new TableRow({ children: cells.map(c =>
+    new TableCell({
+      shading: shade ? { type:ShadingType.SOLID, color:GRAY } : undefined,
+      margins:{ top:80, bottom:80, left:120, right:120 },
+      children:[para([run(c||"")])],
+    })
+  )});
+
+  const tbl = (cols, rows) => {
+    const colW = Math.floor(9360 / cols.length);
+    return new Table({
+      width:{ size:100, type:WidthType.PERCENTAGE },
+      rows: [
+        headerRow(cols),
+        ...rows.map((r,i) => dataRow(
+          cols.map((_,ci) => String(r[ci]||"")),
+          i % 2 === 1
+        )),
+      ],
+      columnWidths: cols.map(()=>colW),
+    });
   };
-  const blank = (label) =>
-    `<p style="border:1px dashed #d1d5db;padding:12px 14px;color:#9ca3af;font-style:italic;min-height:50px;margin-bottom:10px">${label||"Complete prior to start of work meeting"}</p>`;
-  const blankRows = n => Array(n).fill(null).map(()=>[]);
+
+  const metaTable = (pairs) => new Table({
+    width:{ size:100, type:WidthType.PERCENTAGE },
+    borders:{
+      top:{style:BorderStyle.NONE},bottom:{style:BorderStyle.NONE},
+      left:{style:BorderStyle.NONE},right:{style:BorderStyle.NONE},
+      insideH:{style:BorderStyle.NONE},insideV:{style:BorderStyle.NONE},
+    },
+    rows: pairs.map(([l,v]) => new TableRow({ children:[
+      new TableCell({ width:{size:50,type:WidthType.PERCENTAGE}, margins:{top:40,bottom:40,left:0,right:80},
+        children:[para([boldRun(l+": "), run(v||"—")])] }),
+    ]})),
+    columnWidths:[4680],
+  });
+
+  const sp = (n=1) => Array(n).fill(new Paragraph({ children:[], spacing:{after:0,before:0} }));
+
+  // ── Deliverable helpers ─────────────────────────────────────────────────
+  const blankRows   = n => Array(n).fill(null).map(()=>[]);
   const delPlusProj = cols => [
-    ...deliverables.map(d => [`<i>${d.title||d.name||""}</i>`, ...Array(cols).fill("")]),
-    [`<i>Project-Wide</i>`, ...Array(cols).fill("")],
+    ...deliverables.map(d => [d.title||d.name||"", ...Array(cols).fill("")]),
+    ["Project-Wide", ...Array(cols).fill("")],
   ];
 
   const teamRows = [
@@ -10107,108 +10193,91 @@ function generateBriefHtml(proj, deliverables, people) {
     ...(proj.teamMemberIds||[]).map(id=>[person(id),"Team Member",""]),
     ...blankRows(2),
   ];
-  const sec4Rows  = deliverables.map(d=>[`<b>${d.title||d.name||""}</b>`,"","","",fmtDate(d.requestedDeliveryDate||d.end),"",""]);
-  const sec10Rows = deliverables.map(d=>[`<b>${d.title||d.name||""}</b>`,"","","",""]);
+  const sec4Rows  = deliverables.map(d=>[d.title||d.name||"","","","",fmtDate(d.requestedDeliveryDate||d.end),"",""]);
+  const sec10Rows = deliverables.map(d=>[d.title||d.name||"","","","",""]);
   const dateStr   = new Date().toLocaleDateString("en-US",{month:"long",day:"numeric",year:"numeric"});
-  const progNum   = proj.projectNumber ? ` &nbsp;&middot;&nbsp; Program #: ${proj.projectNumber}` : "";
+  const progLine  = proj.projectNumber ? `Program #: ${proj.projectNumber}` : "";
 
-  return `<html xmlns:o='urn:schemas-microsoft-com:office:office'
-      xmlns:w='urn:schemas-microsoft-com:office:word'
-      xmlns='http://www.w3.org/TR/REC-html40'>
-<head><meta charset="UTF-8"><title>Project Brief</title>
-<style>
-body{font-family:Calibri,Arial,sans-serif;margin:0;padding:40px 56px;color:#1f2937;font-size:11pt}
-h2{font-size:12pt;font-weight:bold;color:#002A4E;margin:24px 0 8px;padding-bottom:5px;border-bottom:2px solid #00B5B5}
-h3{font-size:10.5pt;font-weight:bold;color:#374151;margin:12px 0 4px}
-p{margin:0 0 6px;line-height:1.5;font-size:10.5pt}
-table{width:100%;border-collapse:collapse;margin-bottom:8px;font-size:10pt}
-th{background:#002A4E;color:#fff;padding:7px 10px;text-align:left;font-weight:bold;font-size:9pt}
-td{border:1px solid #e5e7eb;padding:7px 10px;vertical-align:top}
-</style>
-</head>
-<body>
-<table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;margin-bottom:24px">
-  <tr>
-    <td bgcolor="#002A4E" style="background:#002A4E;padding:22px 26px">
-      <h1 style="font-size:17pt;color:#fff;margin:0 0 5px;font-weight:bold">${proj.name}</h1>
-      <p style="color:#ccc;font-size:10pt;margin:0">Project Brief - ${proj.client||"—"} &nbsp;&middot;&nbsp; Generated ${dateStr}${progNum}</p>
-    </td>
-  </tr>
-</table>
+  // ── Cover block ─────────────────────────────────────────────────────────
+  const coverTable = new Table({
+    width:{ size:100, type:WidthType.PERCENTAGE },
+    rows:[new TableRow({ children:[new TableCell({
+      shading:{ type:ShadingType.SOLID, color:NAVY },
+      margins:{ top:240, bottom:240, left:300, right:300 },
+      children:[
+        new Paragraph({ children:[boldRun(proj.name, { color:WHITE, size:36 })], spacing:{after:80} }),
+        new Paragraph({ children:[
+          run("Project Brief - "+(proj.client||"—"), { color:"CCCCCC", size:20 }),
+          run(progLine ? `   ·   Generated ${dateStr}   ·   ${progLine}` : `   ·   Generated ${dateStr}`, { color:"AAAAAA", size:18 }),
+        ], spacing:{after:0} }),
+      ],
+    })]})],
+  });
 
-<h2>1. Project Overview</h2>
-<table width="100%" cellpadding="4" cellspacing="0" style="border-collapse:collapse;margin:8px 0 16px">
-  <tr>
-    <td style="width:50%;border:none;padding:4px 4px 4px 0"><b>Project Name:</b> ${proj.name}</td>
-    <td style="width:50%;border:none;padding:4px"><b>Client:</b> ${proj.client||"—"}</td>
-  </tr>
-  <tr>
-    <td style="border:none;padding:4px 4px 4px 0"><b>Program Number:</b> ${proj.projectNumber||"—"}</td>
-    <td style="border:none;padding:4px"><b>Priority:</b> ${proj.priority||"—"}</td>
-  </tr>
-  <tr>
-    <td style="border:none;padding:4px 4px 4px 0"><b>Account Lead:</b> ${person(proj.accountLeadId)}</td>
-    <td style="border:none;padding:4px"><b>Project Manager:</b> ${person(proj.projectManagerId)}</td>
-  </tr>
-  <tr>
-    <td style="border:none;padding:4px 4px 4px 0"><b>Earliest Launch:</b> ${fmtDate(proj.earliestLaunchDate)}</td>
-    <td style="border:none;padding:4px"><b>Status:</b> ${proj.projectStatus||"—"}</td>
-  </tr>
-</table>
-${proj.objective?`<p style="background:#e1f5f5;border-left:3px solid #00B5B5;padding:8px 12px;margin:8px 0"><b>Objective:</b> ${proj.objective}</p>`:""}
-${tbl(["Deliverable","Requested Delivery Date"],deliverables.map(d=>[d.title||d.name||"",fmtDate(d.requestedDeliveryDate||d.end)]))}
+  // ── Document ─────────────────────────────────────────────────────────────
+  const doc = new Document({ sections:[{ children:[
+    coverTable,
+    ...sp(1),
 
-<h2>2. Audience &amp; Brand</h2>
-<h3>Target Audience</h3>${blank()}
-<h3>Brand / Voice Guidelines</h3>${blank()}
+    h2("1. Project Overview"),
+    metaTable([
+      ["Project Name", proj.name],       ["Client", proj.client||"—"],
+      ["Program Number", proj.projectNumber||"—"], ["Priority", proj.priority||"—"],
+      ["Account Lead", person(proj.accountLeadId)], ["Project Manager", person(proj.projectManagerId)],
+      ["Earliest Launch", fmtDate(proj.earliestLaunchDate)], ["Status", proj.projectStatus||"—"],
+    ]),
+    ...(proj.objective ? [para([boldRun("Objective: "), run(proj.objective)])] : []),
+    tbl(["Deliverable","Requested Delivery Date"],
+        deliverables.map(d=>[d.title||d.name||"", fmtDate(d.requestedDeliveryDate||d.end)])),
+    ...sp(),
 
-<h2>3. Program Team</h2>
-${tbl(["Name","Role","Responsibilities"],teamRows)}
+    h2("2. Audience & Brand"),
+    h3("Target Audience"), blankBox(), ...sp(),
+    h3("Brand / Voice Guidelines"), blankBox(), ...sp(),
 
-<h2>4. Deliverables</h2>
-${tbl(["Deliverable","Format","Platform / Placement","Audience","Due Date","Dependencies","Notes"],[...sec4Rows,...blankRows(3)],"Populate during Start of Work meeting.")}
+    h2("3. Program Team"),
+    tbl(["Name","Role","Responsibilities"], teamRows), ...sp(),
 
-<h2>5. Timeline &amp; Milestones</h2>${blank()}
+    h2("4. Deliverables"),
+    tbl(["Deliverable","Format","Platform","Audience","Due Date","Dependencies","Notes"],
+        [...sec4Rows, ...blankRows(3)]), ...sp(),
 
-<h2>6. Budget &amp; Resources</h2>
-<h3>Budget</h3>${blank()}
-<h3>Internal Resources</h3>${blank()}
-<h3>External Resources / Vendors</h3>${blank()}
+    h2("5. Timeline & Milestones"), blankBox(), ...sp(),
 
-<h2>7. Approval Process</h2>${blank("Describe internal review and client approval steps.")}
-<h2>8. Distribution &amp; Launch</h2>${blank()}
-<h2>9. Success Metrics</h2>${blank()}
+    h2("6. Budget & Resources"),
+    h3("Budget"), blankBox(),
+    h3("Internal Resources"), blankBox(),
+    h3("External Resources / Vendors"), blankBox(), ...sp(),
 
-<h2>10. Deliverable Strategy</h2>
-${tbl(["Deliverable","Messaging Angle","Format Rationale","Key Visual Direction","Notes"],[...sec10Rows,...blankRows(2)])}
+    h2("7. Approval Process"), blankBox("Describe internal review and client approval steps."), ...sp(),
+    h2("8. Distribution & Launch"), blankBox(), ...sp(),
+    h2("9. Success Metrics"), blankBox(), ...sp(),
 
-<h2>11. Inputs &amp; Assets Required</h2>
-${tbl(["Deliverable / Scope","Asset Type","Description","Owner","Needed By","Status"],delPlusProj(5))}
+    h2("10. Deliverable Strategy"),
+    tbl(["Deliverable","Messaging Angle","Format Rationale","Visual Direction","Notes"],
+        [...sec10Rows, ...blankRows(2)]), ...sp(),
 
-<h2>12. Risks &amp; Dependencies</h2>
-${tbl(["Deliverable / Scope","Risk or Dependency","Impact","Mitigation","Owner"],delPlusProj(4))}
+    h2("11. Inputs & Assets Required"),
+    tbl(["Deliverable / Scope","Asset Type","Description","Owner","Needed By","Status"], delPlusProj(5)), ...sp(),
 
-<h2>13. Open Questions</h2>
-${tbl(["Deliverable / Scope","Question","Owner","Due Date","Status"],delPlusProj(4))}
+    h2("12. Risks & Dependencies"),
+    tbl(["Deliverable / Scope","Risk or Dependency","Impact","Mitigation","Owner"], delPlusProj(4)), ...sp(),
 
-</body></html>`;
-}
+    h2("13. Open Questions"),
+    tbl(["Deliverable / Scope","Question","Owner","Due Date","Status"], delPlusProj(4)),
+  ]}]});
 
-
-
-function downloadBrief(proj, deliverables, people) {
-  // generateBriefHtml already produces a complete Word-compatible HTML document
-  // with proper XML namespaces and embedded CSS — use it directly, no manipulation needed.
-  const html = generateBriefHtml(proj, deliverables, people);
-  const blob = new Blob([html], { type: "application/octet-stream" });
+  const blob = await Packer.toBlob(doc);
   const url  = URL.createObjectURL(blob);
   const a    = document.createElement("a");
   a.href     = url;
-  a.download = `Brief — ${(proj.name||"Project").replace(/[^a-zA-Z0-9 ]/g,"")} — ${new Date().toISOString().slice(0,10)}.doc`;
+  a.download = `Brief — ${(proj.name||"Project").replace(/[^a-zA-Z0-9 ]/g,"")} — ${new Date().toISOString().slice(0,10)}.docx`;
   document.body.appendChild(a); a.click();
   document.body.removeChild(a);
-  setTimeout(() => URL.revokeObjectURL(url), 2000);
+  setTimeout(()=>URL.revokeObjectURL(url), 2000);
 }
+
+
 
 
 // ── ProjectInitiationModal ────────────────────────────────────────────────────
