@@ -1,14 +1,23 @@
-import { EFFORT_HOURS, WEEKLY_HOURS, HOURS_LIGHT, HOURS_MEDIUM } from "../constants/effort.js";
+import { EFFORT_HOURS, WEEKLY_HOURS } from "../constants/effort.js";
 import { isoWeekStart, weekKey } from "./dates.js";
 
 export const effortHours = (e) => EFFORT_HOURS[e] || EFFORT_HOURS["M"];
 
+// ── Workload thresholds — percentage of available hours ──────────────────────
+// All bands scale with the person's actual availability (PTO + holidays reduce it)
+// On a full 40h week: Light ≤20h · Moderate 21-44h · Busy 45-52h · Heavy 53h+
+const PCT_LIGHT    = 0.50;   // ≤ 50%  of available
+const PCT_MODERATE = 1.10;   // ≤ 110% of available
+const PCT_BUSY     = 1.30;   // ≤ 130% of available  (above = Heavy)
+
 export function classifyLoad(hoursPlanned, hoursAvailable) {
-  const pct = hoursAvailable > 0 ? hoursPlanned / hoursAvailable : hoursPlanned > 0 ? 2 : 0;
-  if (hoursPlanned <= HOURS_LIGHT)          return { label: "Light",    color: "#34d399", pct };
-  if (hoursPlanned <= HOURS_MEDIUM)         return { label: "Moderate", color: "#fbbf24", pct };
-  if (hoursPlanned <= hoursAvailable + 8)   return { label: "Busy",     color: "#fb923c", pct };
-  return                                           { label: "Heavy",     color: "#f87171", pct };
+  const pct = hoursAvailable > 0
+    ? hoursPlanned / hoursAvailable
+    : hoursPlanned > 0 ? 2 : 0;
+  if (pct <= PCT_LIGHT)    return { label: "Light",    color: "#34d399", pct };
+  if (pct <= PCT_MODERATE) return { label: "Moderate", color: "#fbbf24", pct };
+  if (pct <= PCT_BUSY)     return { label: "Busy",     color: "#fb923c", pct };
+  return                          { label: "Heavy",    color: "#f87171", pct };
 }
 
 export function ptoDaysInWeek(personId, weekStart, ptoList, holidaySet) {
@@ -16,7 +25,11 @@ export function ptoDaysInWeek(personId, weekStart, ptoList, holidaySet) {
   for (let i = 0; i < 5; i++) {
     const d  = new Date(weekStart.getTime() + i * 86400000);
     const ds = d.toISOString().slice(0, 10);
-    if (ptoList.some(p => p.personId === personId && ds >= p.start && ds <= p.end)) days++;
+    const ptoEntry = ptoList.find(p => p.personId === personId && ds >= p.start && ds <= p.end);
+    if (ptoEntry) {
+      const halfDays = ptoEntry.halfDayDates || [];
+      days += halfDays.includes(ds) ? 0.5 : 1;
+    }
     if (holidaySet && holidaySet.has(ds)) days++;
   }
   return Math.min(5, days);

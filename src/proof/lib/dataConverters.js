@@ -5,7 +5,8 @@ export function rowToSubtask(r) {
     id: r.id, title: r.title, status: r.status, priority: r.priority,
     department: r.department || "", start: r.start_date || "", end: r.end_date || "",
     progress: r.progress ?? 0, dependencies: r.dependencies ?? [], assignees: r.assignees ?? [],
-    effort: r.effort || "M",
+    effort: r.custom_hours ? "C" : (r.effort || "M"),  // restore "C" if custom_hours present
+    customHours: r.custom_hours ?? null,
     file_url: r.file_url || "",
     isWaiting: r.is_waiting ?? false,
     completedAt: r.completed_at || null,
@@ -17,7 +18,8 @@ export function rowToDeliverable(r, subs) {
     department: r.department || "", start: r.start_date || "", end: r.end_date || "",
     progress: r.progress ?? 0, dependencies: r.dependencies ?? [], assignees: r.assignees ?? [],
     trackOverride: r.track_override || null,
-    effort: r.effort || "M",
+    effort: r.custom_hours ? "C" : (r.effort || "M"),  // restore "C" if custom_hours present
+    customHours: r.custom_hours ?? null,
     file_url: r.file_url || "",
     isWaiting: r.is_waiting ?? false,
     completedAt: r.completed_at || null,
@@ -54,7 +56,9 @@ export function delToRow(d, projectId, pos = 0) {
     id: d.id, project_id: projectId, title: d.title, status: d.status, priority: d.priority,
     department: d.department || null, start_date: d.start || null, end_date: d.end || null,
     progress: d.progress ?? 0, dependencies: d.dependencies ?? [], assignees: d.assignees ?? [],
-    track_override: d.trackOverride || null, effort: d.effort || "M",
+    track_override: d.trackOverride || null,
+    effort: d.effort === "C" ? "M" : (d.effort || "M"),  // "C" is UI-only; "M" is DB placeholder
+    custom_hours: d.customHours ?? null,
     file_url: d.file_url || null, position: pos,
     is_waiting: d.isWaiting ?? false,
     requested_delivery_date: d.requestedDeliveryDate || null,
@@ -66,7 +70,9 @@ export function subToRow(s, delId, projId, pos = 0) {
     status: s.status, priority: s.priority, department: s.department || null,
     start_date: s.start || null, end_date: s.end || null,
     progress: s.progress ?? 0, dependencies: s.dependencies ?? [], assignees: s.assignees ?? [],
-    effort: s.effort || "M", file_url: s.file_url || null, position: pos,
+    effort: s.effort === "C" ? "M" : (s.effort || "M"),   // "C" is UI-only; "M" is DB placeholder
+    custom_hours: s.customHours ?? null,
+    file_url: s.file_url || null, position: pos,
     is_waiting: s.isWaiting ?? false,
   };
 }
@@ -75,10 +81,12 @@ export function ptoToRow(p) {
   return {
     id: p.id, person_id: p.personId, start_date: p.start,
     end_date: p.end, note: p.note || "",
+    half_day_dates: p.halfDayDates || [],
   };
 }
 export function rowToPto(r) {
-  return { id: r.id, personId: r.person_id, start: r.start_date, end: r.end_date, note: r.note || "" };
+  return { id: r.id, personId: r.person_id, start: r.start_date, end: r.end_date,
+    note: r.note || "", halfDayDates: r.half_day_dates || [] };
 }
 
 // ── PTO HELPERS ──────────────────────────────────────────────────────────────

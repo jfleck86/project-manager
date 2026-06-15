@@ -3,7 +3,7 @@ import React, { useState, useEffect, useCallback, useMemo, useRef } from "react"
 import { BRAND_TEAL, BRAND_NAVY, BRAND_TEAL_D, BRAND_TEAL_L } from "./constants/brand.js";
 import { STATUSES, statusMeta } from "./constants/statuses.js";
 import { PRIORITIES, priorityMeta, DEPARTMENTS, deptMeta } from "./constants/priorities.js";
-import { EFFORT_OPTS, EFFORT_LABEL, EFFORT_HOURS, EFFORT_VAL, WEEKLY_HOURS, HOURS_LIGHT, HOURS_MEDIUM } from "./constants/effort.js";
+import { EFFORT_OPTS, EFFORT_LABEL, EFFORT_HOURS, EFFORT_VAL, WEEKLY_HOURS } from "./constants/effort.js";
 import { TIMELINE_START, TIMELINE_END } from "./constants/timeline.js";
 import {
   allowedNavItems, canAccessKPIDashboard, canAccessHistory,
@@ -4260,6 +4260,11 @@ function WorkloadView({ projects, people, onEditItem, pto = [], holidays = [], a
         {people.map(person => {
           const myTasks = filteredTasks.filter(t => (t.assignees || []).includes(person.id));
           const totalPts = myTasks.reduce((s, t) => s + effortHours(t.effort), 0);
+          // Peak week — used for the bar/classification so it matches the chart
+          const peakWeekHrs  = Math.max(0, ...sortedWeeks.map(wk => weekMap[wk]?.[person.id]?.hrs || 0));
+          const peakWeekAvail = Math.max(1, ...sortedWeeks.map(wk =>
+            availableHours(person.id, wk, pto, holidaySet)
+          ));
           const bySize = { S: myTasks.filter(t => (t.effort || "M") === "S").length, M: myTasks.filter(t => (t.effort || "M") === "M").length, L: myTasks.filter(t => (t.effort || "M") === "L").length };
           return (
             <div key={person.id} style={{ background: "#fff", border: "1px solid rgba(0,0,0,0.07)", borderRadius: 10, padding: "14px 16px" }}>
@@ -4279,13 +4284,13 @@ function WorkloadView({ projects, people, onEditItem, pto = [], holidays = [], a
                 ))}
               </div>
               {(() => {
-                const cl = classifyLoad(totalPts, WEEKLY_HOURS);
+                const cl = classifyLoad(peakWeekHrs, peakWeekAvail);
                 return (
                   <div style={{ marginTop: 8 }}>
                     <div style={{ height: 4, borderRadius: 2, background: "rgba(0,0,0,0.06)", overflow: "hidden" }}>
-                      <div style={{ height: "100%", width: `${Math.min(100, (totalPts / (WEEKLY_HOURS * 2)) * 100)}%`, background: cl.color, borderRadius: 2, transition: "width 0.3s" }} />
+                      <div style={{ height: "100%", width: `${Math.min(100, (peakWeekHrs / (peakWeekAvail * 2)) * 100)}%`, background: cl.color, borderRadius: 2, transition: "width 0.3s" }} />
                     </div>
-                    {totalPts > WEEKLY_HOURS && (
+                    {peakWeekHrs > peakWeekAvail && (
                       <div style={{ fontSize: 9, color: "#f87171", fontWeight: 700, marginTop: 2 }}>Over capacity</div>
                     )}
                   </div>
@@ -4842,7 +4847,7 @@ function MyHubView({ projects, people, holidays, pto = [], currentUserId, onSetC
   const [showPtoForm,   setShowPtoForm]   = useState(false);
   const [showAssignModal, setShowAssignModal] = useState(false);
   const [editingAdminTask, setEditingAdminTask] = useState(null);
-  const [ptoForm, setPtoForm] = useState({ start: todayStr, end: todayStr, note: "" });
+  const [ptoForm, setPtoForm] = useState({ start: todayStr, end: todayStr, note: "", halfDayDates: [] });
   const [showTaskForm, setShowTaskForm] = useState(false);
   const [editingTask, setEditingTask] = useState(null);
   const [showWorkReport, setShowWorkReport] = useState(false);
@@ -5244,31 +5249,94 @@ function MyHubView({ projects, people, holidays, pto = [], currentUserId, onSetC
               <div style={{ fontSize: 10, color: "#9ca3af" }}>No upcoming PTO</div>
             ) : myPto.slice(0,3).map(p => (
               <div key={p.id} style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 4 }}>
-                <span style={{ fontSize: 10, color: "#374151" }}>{fmt(parseDate(p.start))} – {fmt(parseDate(p.end))}</span>
+                <span style={{ fontSize: 10, color: "#374151" }}>
+                    {fmt(parseDate(p.start))}{p.start !== p.end ? ` – ${fmt(parseDate(p.end))}` : ""}
+                    {(p.halfDayDates||[]).length > 0 && (
+                      <span style={{ fontSize: 9, color: "#00B5B5", marginLeft: 4, fontWeight: 700 }}>
+                        ({(p.halfDayDates||[]).length} half {(p.halfDayDates||[]).length===1?"day":"days"})
+                      </span>
+                    )}
+                  </span>
+                  
                 {p.note && <span style={{ fontSize: 9, color: "#9ca3af" }}>{p.note}</span>}
                 <button onClick={() => deletePto(p.id)} style={{ fontSize: 9, background: "none", border: "none", color: "#d1d5db", cursor: "pointer", padding: "0 2px" }}>×</button>
               </div>
             ))}
-            {showPtoForm && (
-              <div style={{ marginTop: 8, display: "flex", flexDirection: "column", gap: 6, background: "rgba(0,0,0,0.02)", borderRadius: 6, padding: 10 }}>
-                <div style={{ display: "flex", gap: 6 }}>
-                  <input type="date" value={ptoForm.start} onChange={e => setPtoForm(f => ({...f, start: e.target.value}))}
-                    style={{ fontSize: 10, border: "1px solid rgba(0,0,0,0.12)", borderRadius: 4, padding: "3px 6px", fontFamily: "inherit" }} />
-                  <span style={{ fontSize: 10, color: "#9ca3af", alignSelf: "center" }}>–</span>
-                  <input type="date" value={ptoForm.end} onChange={e => setPtoForm(f => ({...f, end: e.target.value}))}
-                    style={{ fontSize: 10, border: "1px solid rgba(0,0,0,0.12)", borderRadius: 4, padding: "3px 6px", fontFamily: "inherit" }} />
+            {showPtoForm && (() => {
+              // Build list of workdays in the selected range
+              const ptoDays = [];
+              if (ptoForm.start && ptoForm.end) {
+                let cur = new Date(ptoForm.start + "T00:00:00");
+                const endD = new Date(ptoForm.end + "T00:00:00");
+                while (cur <= endD) {
+                  const dow = cur.getDay();
+                  if (dow !== 0 && dow !== 6) ptoDays.push(cur.toISOString().slice(0,10));
+                  cur = new Date(cur.getTime() + 86400000);
+                }
+              }
+              const toggleHalf = (ds) => setPtoForm(f => {
+                const hd = f.halfDayDates || [];
+                return { ...f, halfDayDates: hd.includes(ds) ? hd.filter(d => d !== ds) : [...hd, ds] };
+              });
+              const fmtDay = ds => new Date(ds + "T00:00:00").toLocaleDateString("en-US",{weekday:"short",month:"short",day:"numeric"});
+              return (
+                <div style={{ marginTop: 8, display: "flex", flexDirection: "column", gap: 6,
+                  background: "rgba(0,181,181,0.04)", borderRadius: 6, padding: "10px 10px" }}>
+                  <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                    <input type="date" value={ptoForm.start}
+                      onChange={e => setPtoForm(f => ({...f, start: e.target.value, halfDayDates: []}))}
+                      style={{ fontSize: 10, border: "1px solid rgba(0,0,0,0.12)", borderRadius: 4, padding: "3px 6px", flex: 1 }} />
+                    <span style={{ fontSize: 10, color: "#9ca3af" }}>–</span>
+                    <input type="date" value={ptoForm.end}
+                      onChange={e => setPtoForm(f => ({...f, end: e.target.value, halfDayDates: []}))}
+                      style={{ fontSize: 10, border: "1px solid rgba(0,0,0,0.12)", borderRadius: 4, padding: "3px 6px", flex: 1 }} />
+                  </div>
+                  {ptoDays.length > 0 && (
+                    <div style={{ display: "flex", flexDirection: "column", gap: 3, marginTop: 2 }}>
+                      <div style={{ fontSize: 9, fontWeight: 700, color: "#6b7280", textTransform: "uppercase", letterSpacing: ".05em", marginBottom: 2 }}>
+                        Mark any as half day
+                      </div>
+                      {ptoDays.map(ds => {
+                        const isHalf = (ptoForm.halfDayDates || []).includes(ds);
+                        return (
+                          <div key={ds} style={{ display: "flex", alignItems: "center", justifyContent: "space-between",
+                            padding: "4px 8px", borderRadius: 5,
+                            background: isHalf ? "rgba(0,181,181,0.08)" : "rgba(0,0,0,0.02)",
+                            border: `1px solid ${isHalf ? "rgba(0,181,181,0.25)" : "rgba(0,0,0,0.06)"}` }}>
+                            <span style={{ fontSize: 10, color: "#374151" }}>{fmtDay(ds)}</span>
+                            <button onClick={() => toggleHalf(ds)} style={{
+                              fontSize: 9, fontWeight: 700, padding: "2px 8px", borderRadius: 4, cursor: "pointer",
+                              border: `1px solid ${isHalf ? "rgba(0,181,181,0.4)" : "rgba(0,0,0,0.12)"}`,
+                              background: isHalf ? "rgba(0,181,181,0.15)" : "transparent",
+                              color: isHalf ? "#00B5B5" : "#9ca3af",
+                              fontFamily: "inherit",
+                            }}>
+                              {isHalf ? "½ Half day" : "Full day"}
+                            </button>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                  <input value={ptoForm.note} onChange={e => setPtoForm(f => ({...f, note: e.target.value}))}
+                    placeholder="Optional note (Vacation, Conference…)"
+                    style={{ fontSize: 10, border: "1px solid rgba(0,0,0,0.12)", borderRadius: 4, padding: "3px 6px" }} />
+                  <div style={{ display: "flex", gap: 6 }}>
+                    <button onClick={() => {
+                      savePto({ ...ptoForm, personId: meId, id: "pto_" + Date.now() });
+                      setPtoForm({ start: todayStr, end: todayStr, note: "", halfDayDates: [] });
+                      setShowPtoForm(false);
+                    }} style={{ flex: 1, background: BRAND_TEAL, border: "none", borderRadius: 4, color: BRAND_NAVY, fontSize: 10, fontWeight: 700, padding: "5px 0", cursor: "pointer", fontFamily: "inherit" }}>
+                      Save
+                    </button>
+                    <button onClick={() => setShowPtoForm(false)}
+                      style={{ flex: 1, background: "none", border: "1px solid rgba(0,0,0,0.1)", borderRadius: 4, fontSize: 10, padding: "5px 0", cursor: "pointer", fontFamily: "inherit" }}>
+                      Cancel
+                    </button>
+                  </div>
                 </div>
-                <input value={ptoForm.note} onChange={e => setPtoForm(f => ({...f, note: e.target.value}))}
-                  placeholder="Optional note (Vacation, Conference…)"
-                  style={{ fontSize: 10, border: "1px solid rgba(0,0,0,0.12)", borderRadius: 4, padding: "3px 8px", fontFamily: "inherit" }} />
-                <div style={{ display: "flex", gap: 6 }}>
-                  <button onClick={() => { savePto({ ...ptoForm, personId: meId, id: "pto_" + Date.now() }); setShowPtoForm(false); setPtoForm({ start: todayStr, end: todayStr, note: "" }); }}
-                    style={{ flex: 1, background: BRAND_TEAL, border: "none", borderRadius: 4, color: BRAND_NAVY, fontSize: 10, fontWeight: 700, padding: "5px 0", cursor: "pointer", fontFamily: "inherit" }}>Save</button>
-                  <button onClick={() => setShowPtoForm(false)}
-                    style={{ flex: 1, background: "none", border: "1px solid rgba(0,0,0,0.1)", borderRadius: 4, color: "#6b7280", fontSize: 10, padding: "5px 0", cursor: "pointer", fontFamily: "inherit" }}>Cancel</button>
-                </div>
-              </div>
-            )}
+              );
+            })()}
 
       </div>
 
@@ -10020,8 +10088,8 @@ td{border:1px solid #e5e7eb;padding:8px 10px;vertical-align:top}
 <table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;margin-bottom:24px">
   <tr>
     <td bgcolor="#002A4E" style="background:#002A4E;padding:22px 26px">
-      <h1 style="font-size:17pt;color:#fff;margin:0 0 5px;font-weight:bold">${proj.name}</h1>
-      <p style="color:#ccc;font-size:10pt;margin:0">Audit Summary - ${proj.client || "—"} &nbsp;&middot;&nbsp; Generated ${new Date().toLocaleDateString("en-US",{month:"long",day:"numeric",year:"numeric"})}${proj.projectNumber ? ` &nbsp;&middot;&nbsp; Program #: ${proj.projectNumber}` : ""}</p>
+      <font face="Calibri,Arial" size="5" color="#FFFFFF"><b>${proj.name}</b></font><br><br>
+      <font face="Calibri,Arial" size="2" color="#CCCCCC">Audit Summary &nbsp;&middot;&nbsp; ${proj.client || "—"} &nbsp;&middot;&nbsp; Generated ${new Date().toLocaleDateString("en-US",{month:"long",day:"numeric",year:"numeric"})}${proj.projectNumber ? ` &nbsp;&middot;&nbsp; Program #: ${proj.projectNumber}` : ""}</font>
     </td>
   </tr>
 </table>
@@ -10081,197 +10149,104 @@ ${proj.kickoffRequested
 
 // ── Brief HTML Generator ──────────────────────────────────────────────────────
 
-// ── SOW Brief — generates a real .docx using the docx npm package ──────────
-async function downloadBrief(proj, deliverables, people) {
-  const { Document, Packer, Paragraph, TextRun, Table, TableRow, TableCell,
-          HeadingLevel, AlignmentType, WidthType, ShadingType, BorderStyle,
-          ImageRun, Header, Footer, PageBreak, TableBorder } =
-    await import("docx").catch(() => {
-      alert("Please run: npm install docx  — then reload the page.");
-      return {};
-    });
-  if (!Document) return;
-
-  const NAVY = "002A4E", TEAL = "00B5B5", GRAY = "F5F6F8", WHITE = "FFFFFF";
+// ── SOW Brief ────────────────────────────────────────────────────────────────
+function generateBriefHtml(proj, deliverables, people) {
   const fmtDate = d => d ? new Date(d+"T00:00:00").toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"}) : "—";
   const person  = id => people.find(p => p.id === id)?.name || "—";
 
-  // ── helpers ─────────────────────────────────────────────────────────────
-  const run = (text, opts={}) => new TextRun({ text: String(text||""), font:"Calibri", size:22, ...opts });
-  const boldRun = (text, opts={}) => run(text, { bold:true, ...opts });
-
-  const para = (children, opts={}) => new Paragraph({
-    children: Array.isArray(children) ? children : [run(children)],
-    spacing:{ after:60 }, ...opts
-  });
-
-  const h2 = (text) => new Paragraph({
-    children: [boldRun(text, { color:NAVY, size:24 })],
-    heading: HeadingLevel.HEADING_2,
-    spacing: { before:360, after:80 },
-    border: { bottom:{ style:BorderStyle.SINGLE, size:16, color:TEAL, space:4 } },
-  });
-
-  const h3 = (text) => new Paragraph({
-    children: [boldRun(text, { color:"374151", size:22 })],
-    spacing:{ before:180, after:60 },
-  });
-
-  const blankBox = (label) => new Table({
-    width:{ size:100, type:WidthType.PERCENTAGE },
-    borders: {
-      top:{ style:BorderStyle.DASHED, size:6, color:"D1D5DB" },
-      bottom:{ style:BorderStyle.DASHED, size:6, color:"D1D5DB" },
-      left:{ style:BorderStyle.DASHED, size:6, color:"D1D5DB" },
-      right:{ style:BorderStyle.DASHED, size:6, color:"D1D5DB" },
-    },
-    rows:[new TableRow({ children:[new TableCell({
-      shading:{ type:ShadingType.SOLID, color:"FAFAFA" },
-      margins:{ top:160, bottom:160, left:160, right:160 },
-      children:[para([run(label||"Complete prior to start of work meeting", { color:"9CA3AF", italics:true })])],
-    })]})]
-  });
-
-  const headerRow = (cols) => new TableRow({
-    tableHeader:true,
-    children: cols.map(c => new TableCell({
-      shading:{ type:ShadingType.SOLID, color:NAVY },
-      margins:{ top:80, bottom:80, left:120, right:120 },
-      children:[para([boldRun(c, { color:WHITE, size:18 })])],
-    }))
-  });
-
-  const dataRow = (cells, shade) => new TableRow({ children: cells.map(c =>
-    new TableCell({
-      shading: shade ? { type:ShadingType.SOLID, color:GRAY } : undefined,
-      margins:{ top:80, bottom:80, left:120, right:120 },
-      children:[para([run(c||"")])],
-    })
-  )});
-
-  const tbl = (cols, rows) => {
-    const colW = Math.floor(9360 / cols.length);
-    return new Table({
-      width:{ size:100, type:WidthType.PERCENTAGE },
-      rows: [
-        headerRow(cols),
-        ...rows.map((r,i) => dataRow(
-          cols.map((_,ci) => String(r[ci]||"")),
-          i % 2 === 1
-        )),
-      ],
-      columnWidths: cols.map(()=>colW),
-    });
-  };
-
-  const metaTable = (pairs) => new Table({
-    width:{ size:100, type:WidthType.PERCENTAGE },
-    borders:{
-      top:{style:BorderStyle.NONE},bottom:{style:BorderStyle.NONE},
-      left:{style:BorderStyle.NONE},right:{style:BorderStyle.NONE},
-      insideH:{style:BorderStyle.NONE},insideV:{style:BorderStyle.NONE},
-    },
-    rows: pairs.map(([l,v]) => new TableRow({ children:[
-      new TableCell({ width:{size:50,type:WidthType.PERCENTAGE}, margins:{top:40,bottom:40,left:0,right:80},
-        children:[para([boldRun(l+": "), run(v||"—")])] }),
-    ]})),
-    columnWidths:[4680],
-  });
-
-  const sp = (n=1) => Array(n).fill(new Paragraph({ children:[], spacing:{after:0,before:0} }));
-
-  // ── Deliverable helpers ─────────────────────────────────────────────────
-  const blankRows   = n => Array(n).fill(null).map(()=>[]);
-  const delPlusProj = cols => [
-    ...deliverables.map(d => [d.title||d.name||"", ...Array(cols).fill("")]),
-    ["Project-Wide", ...Array(cols).fill("")],
-  ];
-
-  const teamRows = [
-    [person(proj.accountLeadId)||"—","Account Lead",""],
+  const th = c => `<th>${c}</th>`;
+  const td = (c,s="") => `<td${s?` style="${s}"`:""}>${c||"&nbsp;"}</td>`;
+  const tbl = (cols, rows, note="") => `
+    <table><thead><tr>${cols.map(th).join("")}</tr></thead>
+    <tbody>${rows.map((r,i)=>`<tr>${cols.map((_,ci)=>td(r[ci]||"",i%2===1?"background:#f5f6f8":"")).join("")}</tr>`).join("")}
+    </tbody></table>${note?`<p style="font-size:9pt;color:#6b7280;font-style:italic;margin:-12px 0 14px">${note}</p>`:""}`;
+  const blank = (t="Complete prior to start of work meeting") =>
+    `<table><tr><td style="border:1px dashed #d1d5db;padding:14px;color:#9ca3af;font-style:italic;min-height:55px;background:#fafafa">${t}</td></tr></table>`;
+  const blankRows = n => Array(n).fill(null).map(()=>[]);
+  const delPlus = cols => [...deliverables.map(d=>[d.title||d.name||"",...Array(cols).fill("")]),["Project-Wide",...Array(cols).fill("")]];
+  const teamRows = [[person(proj.accountLeadId)||"—","Account Lead",""],
     [person(proj.projectManagerId)||"—","Project Manager",""],
     ...(proj.teamMemberIds||[]).map(id=>[person(id),"Team Member",""]),
-    ...blankRows(2),
-  ];
-  const sec4Rows  = deliverables.map(d=>[d.title||d.name||"","","","",fmtDate(d.requestedDeliveryDate||d.end),"",""]);
-  const sec10Rows = deliverables.map(d=>[d.title||d.name||"","","","",""]);
-  const dateStr   = new Date().toLocaleDateString("en-US",{month:"long",day:"numeric",year:"numeric"});
-  const progLine  = proj.projectNumber ? `Program #: ${proj.projectNumber}` : "";
+    ...blankRows(2)];
+  const s4 = deliverables.map(d=>[d.title||d.name||"","","","",fmtDate(d.requestedDeliveryDate||d.end),"",""]);
+  const s10 = deliverables.map(d=>[d.title||d.name||"","","","",""]);
+  const dateStr = new Date().toLocaleDateString("en-US",{month:"long",day:"numeric",year:"numeric"});
+  const prog = proj.projectNumber ? ` &nbsp;&middot;&nbsp; Program #: ${proj.projectNumber}` : "";
 
-  // ── Cover block ─────────────────────────────────────────────────────────
-  const coverTable = new Table({
-    width:{ size:100, type:WidthType.PERCENTAGE },
-    rows:[new TableRow({ children:[new TableCell({
-      shading:{ type:ShadingType.SOLID, color:NAVY },
-      margins:{ top:240, bottom:240, left:300, right:300 },
-      children:[
-        new Paragraph({ children:[boldRun(proj.name, { color:WHITE, size:36 })], spacing:{after:80} }),
-        new Paragraph({ children:[
-          run("Project Brief - "+(proj.client||"—"), { color:"CCCCCC", size:20 }),
-          run(progLine ? `   ·   Generated ${dateStr}   ·   ${progLine}` : `   ·   Generated ${dateStr}`, { color:"AAAAAA", size:18 }),
-        ], spacing:{after:0} }),
-      ],
-    })]})],
-  });
+  return `<html xmlns:o='urn:schemas-microsoft-com:office:office'
+    xmlns:w='urn:schemas-microsoft-com:office:word'
+    xmlns='http://www.w3.org/TR/REC-html40'>
+<head><meta charset="UTF-8"><title>Project Brief</title>
+<style>
+body{font-family:Calibri,Arial,sans-serif;margin:0;padding:48px 56px;color:#1f2937;font-size:11pt}
+h2{font-size:12pt;font-weight:700;color:#002A4E;margin:28px 0 10px;padding-bottom:6px;border-bottom:2px solid #00B5B5}
+h3{font-size:10.5pt;font-weight:700;color:#374151;margin:14px 0 5px}
+table{width:100%;border-collapse:collapse;margin-bottom:16px;font-size:10pt}
+th{background:#002A4E;color:white;padding:8px 10px;text-align:left;font-weight:600;font-size:10px;text-transform:uppercase}
+td{border:1px solid #e5e7eb;padding:8px 10px;vertical-align:top}
+</style>
+</head>
+<body>
+<table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;margin-bottom:28px">
+  <tr>
+    <td bgcolor="#002A4E" style="background:#002A4E;padding:22px 28px">
+      <font face="Calibri,Arial" size="5" color="#FFFFFF"><b>${proj.name}</b></font><br><br>
+      <font face="Calibri,Arial" size="2" color="#CCCCCC">Project Brief &nbsp;&middot;&nbsp; ${proj.client||"—"} &nbsp;&middot;&nbsp; Generated ${dateStr}${prog}</font>
+    </td>
+  </tr>
+</table>
 
-  // ── Document ─────────────────────────────────────────────────────────────
-  const doc = new Document({ sections:[{ children:[
-    coverTable,
-    ...sp(1),
+<h2>1. Project Overview</h2>
+<table style="border-collapse:collapse;margin-bottom:16px"><tbody>
+  <tr><td style="width:50%;border:none;padding:4px 8px 4px 0"><b>Project Name:</b> ${proj.name}</td><td style="width:50%;border:none;padding:4px 8px"><b>Client:</b> ${proj.client||"—"}</td></tr>
+  <tr><td style="border:none;padding:4px 8px 4px 0"><b>Program #:</b> ${proj.projectNumber||"—"}</td><td style="border:none;padding:4px 8px"><b>Priority:</b> ${proj.priority||"—"}</td></tr>
+  <tr><td style="border:none;padding:4px 8px 4px 0"><b>Account Lead:</b> ${person(proj.accountLeadId)}</td><td style="border:none;padding:4px 8px"><b>Project Manager:</b> ${person(proj.projectManagerId)}</td></tr>
+  <tr><td style="border:none;padding:4px 8px 4px 0"><b>Earliest Launch:</b> ${fmtDate(proj.earliestLaunchDate)}</td><td style="border:none;padding:4px 8px"><b>Status:</b> ${proj.projectStatus||"—"}</td></tr>
+</tbody></table>
+${proj.objective?`<p style="background:#e8f5f5;border-left:3px solid #00B5B5;padding:8px 12px;margin-bottom:14px"><b>Objective:</b> ${proj.objective}</p>`:""}
+${tbl(["Deliverable","Requested Delivery Date"],deliverables.map(d=>[d.title||d.name||"",fmtDate(d.requestedDeliveryDate||d.end)]))}
 
-    h2("1. Project Overview"),
-    metaTable([
-      ["Project Name", proj.name],       ["Client", proj.client||"—"],
-      ["Program Number", proj.projectNumber||"—"], ["Priority", proj.priority||"—"],
-      ["Account Lead", person(proj.accountLeadId)], ["Project Manager", person(proj.projectManagerId)],
-      ["Earliest Launch", fmtDate(proj.earliestLaunchDate)], ["Status", proj.projectStatus||"—"],
-    ]),
-    ...(proj.objective ? [para([boldRun("Objective: "), run(proj.objective)])] : []),
-    tbl(["Deliverable","Requested Delivery Date"],
-        deliverables.map(d=>[d.title||d.name||"", fmtDate(d.requestedDeliveryDate||d.end)])),
-    ...sp(),
+<h2>2. Audience &amp; Brand</h2>
+<h3>Target Audience</h3>${blank()}
+<h3>Brand / Voice Guidelines</h3>${blank()}
 
-    h2("2. Audience & Brand"),
-    h3("Target Audience"), blankBox(), ...sp(),
-    h3("Brand / Voice Guidelines"), blankBox(), ...sp(),
+<h2>3. Program Team</h2>
+${tbl(["Name","Role","Responsibilities"],teamRows)}
 
-    h2("3. Program Team"),
-    tbl(["Name","Role","Responsibilities"], teamRows), ...sp(),
+<h2>4. Deliverables</h2>
+${tbl(["Deliverable","Format","Platform","Audience","Due Date","Dependencies","Notes"],[...s4,...blankRows(3)],"Populate during Start of Work meeting.")}
 
-    h2("4. Deliverables"),
-    tbl(["Deliverable","Format","Platform","Audience","Due Date","Dependencies","Notes"],
-        [...sec4Rows, ...blankRows(3)]), ...sp(),
+<h2>5. Timeline &amp; Milestones</h2>${blank()}
 
-    h2("5. Timeline & Milestones"), blankBox(), ...sp(),
+<h2>6. Budget &amp; Resources</h2>
+<h3>Budget</h3>${blank()}<h3>Internal Resources</h3>${blank()}<h3>External Resources</h3>${blank()}
 
-    h2("6. Budget & Resources"),
-    h3("Budget"), blankBox(),
-    h3("Internal Resources"), blankBox(),
-    h3("External Resources / Vendors"), blankBox(), ...sp(),
+<h2>7. Approval Process</h2>${blank("Describe internal review and client approval steps.")}
+<h2>8. Distribution &amp; Launch</h2>${blank()}
+<h2>9. Success Metrics</h2>${blank()}
 
-    h2("7. Approval Process"), blankBox("Describe internal review and client approval steps."), ...sp(),
-    h2("8. Distribution & Launch"), blankBox(), ...sp(),
-    h2("9. Success Metrics"), blankBox(), ...sp(),
+<h2>10. Deliverable Strategy</h2>
+${tbl(["Deliverable","Messaging Angle","Format Rationale","Visual Direction","Notes"],[...s10,...blankRows(2)])}
 
-    h2("10. Deliverable Strategy"),
-    tbl(["Deliverable","Messaging Angle","Format Rationale","Visual Direction","Notes"],
-        [...sec10Rows, ...blankRows(2)]), ...sp(),
+<h2>11. Inputs &amp; Assets Required</h2>
+${tbl(["Deliverable / Scope","Asset Type","Description","Owner","Needed By","Status"],delPlus(5))}
 
-    h2("11. Inputs & Assets Required"),
-    tbl(["Deliverable / Scope","Asset Type","Description","Owner","Needed By","Status"], delPlusProj(5)), ...sp(),
+<h2>12. Risks &amp; Dependencies</h2>
+${tbl(["Deliverable / Scope","Risk or Dependency","Impact","Mitigation","Owner"],delPlus(4))}
 
-    h2("12. Risks & Dependencies"),
-    tbl(["Deliverable / Scope","Risk or Dependency","Impact","Mitigation","Owner"], delPlusProj(4)), ...sp(),
+<h2>13. Open Questions</h2>
+${tbl(["Deliverable / Scope","Question","Owner","Due Date","Status"],delPlus(4))}
 
-    h2("13. Open Questions"),
-    tbl(["Deliverable / Scope","Question","Owner","Due Date","Status"], delPlusProj(4)),
-  ]}]});
+</body></html>`;
+}
 
-  const blob = await Packer.toBlob(doc);
+function downloadBrief(proj, deliverables, people) {
+  const html = generateBriefHtml(proj, deliverables, people);
+  const blob = new Blob([html], { type:"application/octet-stream" });
   const url  = URL.createObjectURL(blob);
   const a    = document.createElement("a");
   a.href     = url;
-  a.download = `Brief — ${(proj.name||"Project").replace(/[^a-zA-Z0-9 ]/g,"")} — ${new Date().toISOString().slice(0,10)}.docx`;
+  a.download = `Brief — ${(proj.name||"Project").replace(/[^a-zA-Z0-9 ]/g,"")} — ${new Date().toISOString().slice(0,10)}.doc`;
   document.body.appendChild(a); a.click();
   document.body.removeChild(a);
   setTimeout(()=>URL.revokeObjectURL(url), 2000);
@@ -11495,10 +11470,25 @@ export default function App() {
         }
         return true;
       });
-      const toProj = (p) => ({
-        ...rowToProject(p, dR.data, cleanSubtasks),
+      // Inline custom_hours → effort:"C" fix for subtasks/deliverables (bypasses old dataConverters)
+      const fixCustomHours = (items) => (items || []).map(t => ({
+        ...t,
+        effort: t.customHours ? "C" : t.effort,
+      }));
+      const toProj = (p) => {
+        const proj = rowToProject(p, dR.data, cleanSubtasks);
+        return {
+          ...proj,
         // Inline Phase-1 fields so they survive any dataConverters version mismatch
-        priority:           p.priority            || "Medium",
+          deliverables: (proj.deliverables || []).map(d => ({
+            ...d,
+            effort: d.customHours ? "C" : d.effort,
+            subtasks: (d.subtasks || []).map(s => ({
+              ...s,
+              effort: s.customHours ? "C" : s.effort,
+            })),
+          })),
+          priority:           p.priority            || "Medium",
         accountLeadId:      p.account_lead_id     || p.owner_id || null,
         projectManagerId:   p.project_manager_id  || null,
         objective:          p.objective           || "",
@@ -11507,7 +11497,8 @@ export default function App() {
         kickoffRequested:   p.kickoff_requested   || false,
         kickoffDate:        p.kickoff_date        || null,
         kickoffNotifSentAt: p.kickoff_notif_sent_at || null,
-      });
+        };
+      };
       setProjects(active.map(p => toProj(p)));
       setArchivedProjects(archived.map(p => toProj(p)));
       setPeople((mR.data || []).map(p => ({ id: p.id, name: p.name, color: p.color, annualTarget: p.annual_target || 1850, department: p.department || "" })));
@@ -11902,13 +11893,25 @@ export default function App() {
         if (trueParentDel) {
           const pos = trueParentDel.subtasks.findIndex(s => s.id === updated.id);
           console.log("[PulseX] saving as SUBTASK — del:", trueParentDel.id, "pos:", pos);
-          const { error } = await sb.upsert("subtasks", subToRow(item, trueParentDel.id, trueProjectId, Math.max(0, pos)), { onConflict: "id" });
+          const subRow = {
+            ...subToRow(item, trueParentDel.id, trueProjectId, Math.max(0, pos)),
+            effort: item.effort === "C" ? "M" : (item.effort || "M"),
+            custom_hours: item.customHours ?? null,
+          };
+          const { error } = await sb.upsert("subtasks", subRow, { onConflict: "id" });
           primaryError = error;
+          if (error) console.error("[PulseX] subtask save error:", JSON.stringify(error), "\nRow:", JSON.stringify(subRow));
         } else if (isDeliverable) {
           const pos = trueProj.deliverables.findIndex(d => d.id === updated.id);
           console.log("[PulseX] saving as DELIVERABLE — proj:", trueProjectId, "pos:", pos);
-          const { error } = await sb.upsert("deliverables", delToRow(item, trueProjectId, Math.max(0, pos)), { onConflict: "id" });
+          const delRow = {
+            ...delToRow(item, trueProjectId, Math.max(0, pos)),
+            effort: item.effort === "C" ? "M" : (item.effort || "M"),
+            custom_hours: item.customHours ?? null,
+          };
+          const { error } = await sb.upsert("deliverables", delRow, { onConflict: "id" });
           primaryError = error;
+          if (error) console.error("[PulseX] deliverable save error:", JSON.stringify(error), "\nRow:", JSON.stringify(delRow));
         } else {
           console.error("[PulseX] handleSaveItem: could not classify item", updated.id, "— skipping save");
           return null;
@@ -12266,22 +12269,27 @@ export default function App() {
         notes: entry.notes || "", updated_at: new Date().toISOString(),
       });
     }
-    // Notify — fire regardless of people lookup so toast always works
+    // Notify only when the assignee actually changes
     {
-      const assignee = people.find(p => p.id === entry.assignedTo);
-      const assigneeName = assignee?.name || entry.assignedTo || "team member";
-      const assigner = people.find(p => p.id === currentUserId)?.name || "Admin";
-      const notifId = "notif_" + Date.now();
-      const msg = `"${entry.title}" assigned to ${assigneeName} by ${assigner}`;
-      const notif = { id:notifId, type:"task_assigned", message:msg, assignedToPersonId:entry.assignedTo,
-        taskId:id, isRead:false, reviewedAt:null, createdAt:new Date().toISOString() };
-      setNotifications(prev => [notif, ...prev]);
-      setToastNotif({ id:notifId, message:msg, type:"task_assigned" });
-      if (SB_READY) {
-        await safeNotifSave({
-          id:notifId, task_id:id, notification_type:"task_assigned", message:msg,
-          assigned_to_person_id:entry.assignedTo, is_read:false, created_at:notif.createdAt,
-        });
+      const prevTask = adminTasks.find(t => t.id === id);
+      const prevAssignee = prevTask?.assignedTo;
+      const assigneeChanged = !prevTask || prevAssignee !== entry.assignedTo;
+      if (assigneeChanged && entry.assignedTo) {
+        const assignee = people.find(p => p.id === entry.assignedTo);
+        const assigneeName = assignee?.name || entry.assignedTo || "team member";
+        const assigner = people.find(p => p.id === currentUserId)?.name || "Admin";
+        const notifId = "notif_" + Date.now();
+        const msg = `"${entry.title}" assigned to ${assigneeName} by ${assigner}`;
+        const notif = { id:notifId, type:"task_assigned", message:msg, assignedToPersonId:entry.assignedTo,
+          taskId:id, isRead:false, reviewedAt:null, createdAt:new Date().toISOString() };
+        setNotifications(prev => [notif, ...prev]);
+        setToastNotif({ id:notifId, message:msg, type:"task_assigned" });
+        if (SB_READY) {
+          await safeNotifSave({
+            id:notifId, task_id:id, notification_type:"task_assigned", message:msg,
+            assigned_to_person_id:entry.assignedTo, is_read:false, created_at:notif.createdAt,
+          });
+        }
       }
     }
 
