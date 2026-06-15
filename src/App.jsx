@@ -1,4 +1,3 @@
-// @ts-nocheck
 import React, { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { BRAND_TEAL, BRAND_NAVY, BRAND_TEAL_D, BRAND_TEAL_L } from "./constants/brand.js";
 import { STATUSES, statusMeta } from "./constants/statuses.js";
@@ -942,8 +941,19 @@ function ProjectDetailsModal({ proj, people, onClose, onSave, onArchive, onDelet
           {/* Client */}
           <div>
             <label style={labelStyle}>Client / Account</label>
-            <input value={form.client} onChange={e => set("client", e.target.value)}
-              placeholder="Client name" style={inputStyle} />
+            {buClients.length > 0 ? (
+              <select value={form.client} onChange={e => {
+                const sel = buClients.find(c => c.client_name === e.target.value);
+                set("client", e.target.value);
+                if (sel?.project_number) set("projectNumber", sel.project_number);
+              }} style={inputStyle}>
+                <option value="">— Select client —</option>
+                {buClients.map(c => <option key={c.id} value={c.client_name}>{c.client_name}</option>)}
+              </select>
+            ) : (
+              <input value={form.client} onChange={e => set("client", e.target.value)}
+                placeholder="Client name" style={inputStyle} />
+            )}
           </div>
 
           {/* Project Number */}
@@ -4968,8 +4978,6 @@ function MyHubView({ projects, people, holidays, pto = [], currentUserId, onSetC
       return dep && dep.status !== "Done" && !(dep.assignees || []).includes(meId);
     })
   )));
-  const recommended   = [...readyTasks].filter(t => !waitingIds.has(t.id)).sort((a,b) => score(b) - score(a)).slice(0, 8);
-  const topFocusTask  = recommended[0] || [...activeTasks].filter(t => !waitingIds.has(t.id)).sort((a,b) => score(b) - score(a))[0] || null;
   const weekTasks     = allMyTasks.filter(t => t.status !== "Done" && isDueThisWk(t));
   const highEffort    = allMyTasks.filter(t => t.status !== "Done" && efv(t.effort) >= 3 && isDueThisWk(t));
 
@@ -5152,73 +5160,6 @@ function MyHubView({ projects, people, holidays, pto = [], currentUserId, onSetC
             )}
           </div>
         </div>
-
-        {/* Focus strip — top recommended task */}
-        {topFocusTask && (() => {
-          const top = topFocusTask;
-          const d = daysDiff(top.end);
-          const urgency = d < 0 ? "Overdue" : d === 0 ? "Due today" : d <= 2 ? `Due in ${d}d` : "Next up";
-          const urgColor = d < 0 ? "#f87171" : d === 0 ? "#fb923c" : d <= 2 ? "#fbbf24" : BRAND_TEAL;
-          const handleStart = () => {
-            if (top.status === "In Progress") return;
-            if (top._type === "admin") { onUpdateAdminTaskStatus && onUpdateAdminTaskStatus(top.id, "In Progress"); }
-            else { saveStatus(top, "In Progress"); }
-          };
-          const handleDone = () => {
-            if (top._type === "admin") { onUpdateAdminTaskStatus && onUpdateAdminTaskStatus(top.id, "Done"); }
-            else { saveStatus(top, "Done"); }
-          };
-          const handleWaiting = () => {
-            setWaitingIds && setWaitingIds(prev => new Set([...(prev||[]), top.id]));
-          };
-          const handleOpen = () => onEditItem({
-            ...top, projectId: top.projId, projectName: top.projName,
-            projectColor: top.projColor,
-            deliverableId: top.isSubtask ? (top.deliverableId || top.delId) : null,
-          });
-          return (
-            <div style={{ marginTop:14, background:"rgba(255,255,255,0.08)", borderRadius:8, padding:"10px 14px", display:"flex", alignItems:"center", gap:12 }}>
-              <div style={{ flex:1, minWidth:0 }}>
-                <div style={{ fontSize:9, fontWeight:700, color:urgColor, textTransform:"uppercase", letterSpacing:"0.06em", marginBottom:3 }}>
-                  {urgency} · Focus
-                </div>
-                <div style={{ fontSize:13, fontWeight:700, color:"#fff", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{top.title}</div>
-                <div style={{ fontSize:10, color:"rgba(255,255,255,0.5)", marginTop:1 }}>{top.projName || top._label || ""}{top.delTitle ? ` · ${top.delTitle}` : ""}</div>
-              </div>
-              <div style={{ display:"flex", gap:6, flexShrink:0 }}>
-                {top.status !== "In Progress" && (
-                  <button
-                    type="button"
-                    onClick={handleStart}
-                    style={{ fontSize:10, fontWeight:700, color:BRAND_TEAL, background:"rgba(80,192,192,0.15)", border:"1px solid rgba(80,192,192,0.3)", borderRadius:6, padding:"6px 12px", cursor:"pointer", fontFamily:"inherit" }}>
-                    ▶ Start
-                  </button>
-                )}
-                <button
-                  type="button"
-                  onClick={handleOpen}
-                  style={{ fontSize:10, fontWeight:700, color:"rgba(255,255,255,0.7)", background:"rgba(255,255,255,0.1)", border:"1px solid rgba(255,255,255,0.2)", borderRadius:6, padding:"6px 12px", cursor:"pointer", fontFamily:"inherit" }}>
-                  Open
-                </button>
-                <button
-                  type="button"
-                  onClick={handleWaiting}
-                  title="Park this task and surface the next one"
-                  style={{ fontSize:10, fontWeight:700, color:"#fbbf24", background:"rgba(251,191,36,0.12)", border:"1px solid rgba(251,191,36,0.35)", borderRadius:6, padding:"6px 12px", cursor:"pointer", fontFamily:"inherit" }}>
-                  Waiting
-                </button>
-                <button
-                  type="button"
-                  onClick={handleDone}
-                  style={{ fontSize:10, fontWeight:700, color:"#34d399", background:"rgba(52,211,153,0.12)", border:"1px solid rgba(52,211,153,0.35)", borderRadius:6, padding:"6px 12px", cursor:"pointer", fontFamily:"inherit" }}>
-                  ✓ Done
-                </button>
-
-              </div>
-            </div>
-          );
-        })()}
-
         {/* Workload summary row */}
         <div style={{ marginTop:10, display:"flex", gap:20, flexWrap:"wrap" }}>
           {[
@@ -7238,7 +7179,8 @@ function ReportingDashboardView({ projects, people, holidays = [], pto = [], adm
         const allocHrs = alloc ? Number(alloc.allocated_hours) : 0;
         const forecastHrs = Math.round((forecastedByPersonClient[pid]?.[client] || 0) * 10) / 10;
         const pacedHrs = Math.round(allocHrs * pacePct);
-        const isOtherTeam = client.toLowerCase().includes("other") || !projects.some(p => p.client === client);
+        // Use explicit is_other_team flag set in the modal — not auto-detected
+        const isOtherTeam = alloc ? (alloc.is_other_team || false) : false;
         return { client, allocHrs, forecastHrs, pacedHrs, isOtherTeam };
       }).sort((a, b) => b.allocHrs - a.allocHrs);
       const totalForecasted  = Math.round(clientRows.reduce((s,r) => s + r.forecastHrs, 0) * 10) / 10;
@@ -7575,85 +7517,20 @@ function ReportingDashboardView({ projects, people, holidays = [], pto = [], adm
               </div>
             </div>
 
-            {/* allocation input — admin/leadership only */}
             {canEditAllocations && (
-              <div style={{ padding:"14px 18px", borderBottom:"1px solid rgba(0,0,0,0.06)", background:"rgba(0,181,181,0.03)" }}>
-                <div style={{ fontSize:11, fontWeight:700, color:NAVY2, marginBottom:10 }}>
-                  Allocation entries for {forecastYear}
-                  <span style={{ fontSize:10, fontWeight:400, color:"#9ca3af", marginLeft:8 }}>
-                    Enter hours sold per person per client. "Other Teams" for hours committed elsewhere.
-                  </span>
+              <div style={{ padding:"10px 18px", borderBottom:"1px solid rgba(0,0,0,0.06)",
+                background:"rgba(0,181,181,0.03)", display:"flex", alignItems:"center", justifyContent:"space-between" }}>
+                <div style={{ fontSize:11, color:"#6b7280" }}>
+                  Manage allocations per person and client in
+                  <span style={{ color:"#00B5B5", fontWeight:700 }}> Business Units</span>
                 </div>
-                {/* existing rows */}
-                {allocations.length > 0 && (
-                  <div style={{ marginBottom:12, display:"grid", gridTemplateColumns:"1fr 1fr auto auto", gap:"6px 10px", alignItems:"center",
-                    fontSize:11 }}>
-                    <div style={{ fontSize:9, fontWeight:700, color:"#9ca3af", textTransform:"uppercase", letterSpacing:".05em" }}>Person</div>
-                    <div style={{ fontSize:9, fontWeight:700, color:"#9ca3af", textTransform:"uppercase", letterSpacing:".05em" }}>Client / SOW</div>
-                    <div style={{ fontSize:9, fontWeight:700, color:"#9ca3af", textTransform:"uppercase", letterSpacing:".05em" }}>Hours</div>
-                    <div />
-                    {allocations.map(a => {
-                      const p = people.find(x => x.id === a.person_id);
-                      return editingAlloc === a.id ? (
-                        <React.Fragment key={a.id}>
-                          <select value={allocForm.person_id} onChange={e => setAllocForm(f=>({...f,person_id:e.target.value}))}
-                            style={{ fontSize:11, border:"1px solid rgba(0,0,0,0.15)", borderRadius:5, padding:"4px 6px" }}>
-                            <option value="">— person —</option>
-                            {people.map(p2=><option key={p2.id} value={p2.id}>{p2.name}</option>)}
-                          </select>
-                          <input value={allocForm.client} onChange={e=>setAllocForm(f=>({...f,client:e.target.value}))}
-                            placeholder="Client or SOW" style={{ fontSize:11, border:"1px solid rgba(0,0,0,0.15)", borderRadius:5, padding:"4px 6px" }} />
-                          <input type="number" value={allocForm.hours} onChange={e=>setAllocForm(f=>({...f,hours:e.target.value}))}
-                            placeholder="hrs" style={{ fontSize:11, border:"1px solid rgba(0,0,0,0.15)", borderRadius:5, padding:"4px 6px", width:70 }} />
-                          <div style={{ display:"flex", gap:4 }}>
-                            <button onClick={saveAlloc} style={{ fontSize:10, padding:"3px 8px", background:TEAL2, color:"#fff", border:"none", borderRadius:5, cursor:"pointer" }}>Save</button>
-                            <button onClick={()=>{setEditingAlloc(null);setAllocForm({person_id:"",client:"",hours:""});}} style={{ fontSize:10, padding:"3px 8px", background:"none", border:"1px solid rgba(0,0,0,0.15)", borderRadius:5, cursor:"pointer" }}>Cancel</button>
-                          </div>
-                        </React.Fragment>
-                      ) : (
-                        <React.Fragment key={a.id}>
-                          <div style={{ display:"flex", alignItems:"center", gap:6 }}>
-                            <div style={{ width:16, height:16, borderRadius:"50%", background:p?.color||"#ccc", fontSize:8, fontWeight:700, color:"#fff", display:"flex", alignItems:"center", justifyContent:"center" }}>
-                              {p?.name?.split(" ").map(w=>w[0]).join("").slice(0,2).toUpperCase()||"?"}
-                            </div>
-                            <span>{p?.name||"Unknown"}</span>
-                          </div>
-                          <div style={{ color:"#374151" }}>{a.client}</div>
-                          <div style={{ fontWeight:700, color:NAVY2 }}>{fmt(a.allocated_hours)}h</div>
-                          <div style={{ display:"flex", gap:4 }}>
-                            <button onClick={()=>{setEditingAlloc(a.id);setAllocForm({person_id:a.person_id,client:a.client,hours:String(a.allocated_hours)});}}
-                              style={{ fontSize:9, padding:"2px 6px", background:"none", border:"1px solid rgba(0,0,0,0.15)", borderRadius:4, cursor:"pointer" }}>Edit</button>
-                            <button onClick={()=>deleteAlloc(a.id)}
-                              style={{ fontSize:9, padding:"2px 6px", background:"none", border:"1px solid rgba(248,113,113,0.4)", color:"#f87171", borderRadius:4, cursor:"pointer" }}>✕</button>
-                          </div>
-                        </React.Fragment>
-                      );
-                    })}
-                  </div>
-                )}
-                {/* add new row */}
-                {!editingAlloc && (
-                  <div style={{ display:"flex", gap:8, alignItems:"center", flexWrap:"wrap" }}>
-                    <select value={allocForm.person_id} onChange={e=>setAllocForm(f=>({...f,person_id:e.target.value}))}
-                      style={{ fontSize:11, border:"1px solid rgba(0,0,0,0.15)", borderRadius:6, padding:"5px 8px" }}>
-                      <option value="">— select person —</option>
-                      {people.map(p=><option key={p.id} value={p.id}>{p.name}</option>)}
-                    </select>
-                    <input value={allocForm.client} onChange={e=>setAllocForm(f=>({...f,client:e.target.value}))}
-                      placeholder="Client / SOW (e.g. DPP, Other Teams)"
-                      style={{ fontSize:11, border:"1px solid rgba(0,0,0,0.15)", borderRadius:6, padding:"5px 10px", minWidth:200 }} />
-                    <input type="number" value={allocForm.hours} onChange={e=>setAllocForm(f=>({...f,hours:e.target.value}))}
-                      placeholder="Hours"
-                      style={{ fontSize:11, border:"1px solid rgba(0,0,0,0.15)", borderRadius:6, padding:"5px 8px", width:80 }} />
-                    <button onClick={saveAlloc} disabled={!allocForm.person_id||!allocForm.client.trim()||!allocForm.hours}
-                      style={{ fontSize:11, padding:"5px 14px", background:TEAL2, color:"#fff", border:"none", borderRadius:6, cursor:"pointer", opacity:(!allocForm.person_id||!allocForm.client.trim()||!allocForm.hours)?0.4:1 }}>
-                      + Add
-                    </button>
-                  </div>
-                )}
+                <button onClick={() => {}} style={{ fontSize:11, padding:"4px 12px",
+                  background:"none", border:"1px solid rgba(0,181,181,0.4)", borderRadius:6,
+                  color:"#00B5B5", cursor:"pointer", fontFamily:"inherit", fontWeight:600 }}>
+                  Go to Business Units ↗
+                </button>
               </div>
             )}
-
             {/* forecast summary table */}
             <div style={{ padding:"0 18px 18px" }}>
               {personForecastRows.length === 0 ? (
@@ -10259,7 +10136,7 @@ function downloadBrief(proj, deliverables, people) {
 const PROJECT_PRIORITIES = ["Critical", "High", "Medium", "Low"];
 const PROJECT_STATUSES   = ["Needs Timeline", "Timeline In Progress", "Ready for Start of Work", "Active", "Complete", "Archived"];
 
-function ProjectInitiationModal({ people, onClose, onSubmit, existingProj = null }) {
+function ProjectInitiationModal({ people, onClose, onSubmit, existingProj = null, buClients = [] }) {
   const isEdit = !!existingProj;
   const [step, setStep] = React.useState(1); // 1 = project info, 2 = deliverables
   const [form, setForm] = React.useState({
@@ -10351,8 +10228,21 @@ function ProjectInitiationModal({ people, onClose, onSubmit, existingProj = null
             <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12 }}>
               <div>
                 <label style={labelStyle2}>Client *</label>
-                <input value={form.client} onChange={e => set("client", e.target.value)}
-                  placeholder="e.g. Acme Corp" style={inputStyle} />
+                {buClients.length > 0 ? (
+                  <select value={form.client} onChange={e => {
+                    const sel = buClients.find(c => c.client_name === e.target.value);
+                    set("client", e.target.value);
+                    if (sel?.project_number) set("projectNumber", sel.project_number);
+                  }} style={inputStyle}>
+                    <option value="">— Select client —</option>
+                    {buClients.map(c => (
+                      <option key={c.id} value={c.client_name}>{c.client_name}</option>
+                    ))}
+                  </select>
+                ) : (
+                  <input value={form.client} onChange={e => set("client", e.target.value)}
+                    placeholder="e.g. Acme Corp" style={inputStyle} />
+                )}
               </div>
               <div>
                 <label style={labelStyle2}>Project Number</label>
@@ -11084,6 +10974,744 @@ function ChangeHistoryView({ people, projects, currentUserId, sb, SB_READY }) {
 }
 
 
+
+function BusinessUnitsView({ people, sb, SB_READY, currentRole, currentUserId, ownMemberId, onPersonSaved, sbUrl, sbKey, authToken }) {
+  const NAVY = "#002A4E", TEAL = "#00B5B5";
+  const canAdmin = currentRole === "admin" || currentRole === "leadership" || currentRole === "account_director";
+
+  // ── State ────────────────────────────────────────────────────────────────
+  const [activeTab,    setActiveTab]    = React.useState("people");
+  const [units,        setUnits]        = React.useState([]);
+  const [buClients,    setBuClients]    = React.useState([]);
+  const [buMembers,    setBuMembers]    = React.useState([]);
+  const [loading,      setLoading]      = React.useState(true);
+  const [expanded,     setExpanded]     = React.useState(new Set());
+  const [personSearch, setPersonSearch] = React.useState("");
+
+  // Modal state
+  const [scopeModal,   setScopeModal]   = React.useState(null); // null | { id, name, adId, isNew }
+  const [personModal,  setPersonModal]  = React.useState(null); // null | person obj (empty for add)
+  const [saving,       setSaving]       = React.useState(false);
+  const [hoursYear,    setHoursYear]    = React.useState(new Date().getFullYear());
+  const [hoursEdits,   setHoursEdits]   = React.useState({}); // key: personId_client → hours string
+  const [hoursSaving,  setHoursSaving]  = React.useState(false);
+  const [clientModal,  setClientModal]  = React.useState(null); // null | { id, business_unit_id, client_name, project_number }
+  const [clientSaving, setClientSaving] = React.useState(false);
+
+  const openClientModal = (c) => setClientModal({
+    id: c.id, business_unit_id: c.business_unit_id,
+    client_name: c.client_name, project_number: c.project_number || ""
+  });
+
+  const saveClientModal = async () => {
+    if (!clientModal || !clientModal.client_name.trim()) return;
+    setClientSaving(true);
+    const row = { id: clientModal.id, business_unit_id: clientModal.business_unit_id,
+                  client_name: clientModal.client_name.trim(),
+                  project_number: clientModal.project_number.trim() || null };
+    await sb.upsert("business_unit_clients", row).catch(() => {});
+    setBuClients(prev => prev.map(c => c.id === row.id ? { ...c, ...row } : c));
+    setClientSaving(false);
+    setClientModal(null);
+  };
+
+  const hoursKey = (pid, client) => pid + '|||' + client;
+
+  const getHours = (pid, client) => {
+    const k = hoursKey(pid, client);
+    if (hoursEdits[k] !== undefined) return hoursEdits[k];
+    const existing = allocations.find(a => a.person_id === pid && a.client === client && a.year === hoursYear);
+    return existing ? String(existing.allocated_hours) : '';
+  };
+
+  const [allocations, setAllocations] = React.useState([]);
+  React.useEffect(() => {
+    if (!SB_READY) return;
+    sb.select('annual_allocations', `year=eq.${hoursYear}&order=person_id.asc`)
+      .then(r => { if (r.data) setAllocations(r.data); }).catch(() => {});
+  }, [SB_READY, hoursYear]);
+
+  const saveHours = async (unitId) => {
+    setHoursSaving(true);
+    const mems  = unitMembers(unitId);
+    const clis  = unitClients(unitId);
+    await Promise.all(mems.flatMap(m => clis.map(async c => {
+      const k   = hoursKey(m.person_id, c.client_name);
+      const val = hoursEdits[k];
+      if (val === undefined) return; // not edited
+      const hrs = parseFloat(val) || 0;
+      const existing = allocations.find(a => a.person_id === m.person_id && a.client === c.client_name && a.year === hoursYear);
+      if (hrs === 0 && !existing) return;
+      const id  = existing?.id || ('alloc_' + Date.now() + '_' + Math.random().toString(36).slice(2,5));
+      const row = { id, year: hoursYear, person_id: m.person_id, client: c.client_name,
+                    allocated_hours: hrs, is_other_team: false };
+      await sb.upsert('annual_allocations', row).catch(() => {});
+      setAllocations(prev => {
+        const f = prev.filter(a => !(a.person_id === m.person_id && a.client === c.client_name && a.year === hoursYear));
+        return hrs > 0 ? [...f, row] : f;
+      });
+    })));
+    setHoursEdits(prev => {
+      const next = {...prev};
+      mems.forEach(m => clis.forEach(c => { delete next[hoursKey(m.person_id, c.client_name)]; }));
+      return next;
+    });
+    setHoursSaving(false);
+  };
+
+  const DISCIPLINES = ["Account","Creative","Project Management","Strategy","Leadership","Media","Data & Analytics","Other"];
+  const ROLE_OPTS   = [
+    { v:"admin",           l:"Admin",            adminOnly:true },
+    { v:"leadership",      l:"Leadership" },
+    { v:"account_director",l:"Account Director" },
+    { v:"project_manager", l:"Project Manager" },
+    { v:"contributor",     l:"Contributor" },
+    { v:"proofreading",    l:"Proofreading" },
+  ];
+  const visibleRoles = ROLE_OPTS.filter(o => !o.adminOnly || currentRole === "admin");
+
+  // ── Load ─────────────────────────────────────────────────────────────────
+  React.useEffect(() => {
+    if (!SB_READY) return;
+    Promise.all([
+      sb.select("business_units",  "order=name.asc"),
+      sb.select("business_unit_clients", "order=client_name.asc"),
+      sb.select("business_unit_members", "order=created_at.asc"),
+    ]).then(([u, c, m]) => {
+      if (u.data) setUnits(u.data);
+      if (c.data) setBuClients(c.data);
+      if (m.data) setBuMembers(m.data);
+    }).catch(() => {}).finally(() => setLoading(false));
+  }, [SB_READY]);
+
+  // ── Helpers ───────────────────────────────────────────────────────────────
+  const unitMembers  = uid => buMembers.filter(m => m.business_unit_id === uid);
+  const unitClients  = uid => buClients.filter(c => c.business_unit_id === uid);
+  const personScopes = pid => units.filter(u => buMembers.some(m => m.business_unit_id === u.id && m.person_id === pid)).map(u => u.name);
+  const adPerson     = uid => { const u = units.find(x => x.id === uid); return u ? people.find(p => p.id === u.account_director_id) : null; };
+  const ini          = n => (n||"").split(" ").map(w=>w[0]).join("").slice(0,2).toUpperCase();
+  const fmtRole      = r => ROLE_OPTS.find(o=>o.v===r)?.l || r;
+
+  const filteredPeople = people.filter(p =>
+    !personSearch || (p.name||"").toLowerCase().includes(personSearch.toLowerCase())
+  );
+
+  // ── Scope save ────────────────────────────────────────────────────────────
+  const saveScopeModal = async () => {
+    if (!scopeModal || !scopeModal.name.trim() || !scopeModal.adId) return;
+    setSaving(true);
+    const id   = scopeModal.id || ("bu_" + Date.now());
+    const row  = { id, name: scopeModal.name.trim(), account_director_id: scopeModal.adId };
+    await sb.upsert("business_units", row).catch(() => {});
+
+    // Save clients
+    const existingClients = buClients.filter(c => c.business_unit_id === id);
+    const toDelC = existingClients.filter(c => !scopeModal.clients.some(x => x.trim() && x.trim() === c.client_name));
+    await Promise.all(toDelC.map(c => sb.delete("business_unit_clients", c.id).catch(()=>{})));
+    const newClients = scopeModal.clients.filter(c => c.trim() && !existingClients.some(e => e.client_name === c.trim()));
+    await Promise.all(newClients.map(c => sb.upsert("business_unit_clients", {
+      id: "buc_"+Date.now()+"_"+Math.random().toString(36).slice(2,5),
+      business_unit_id: id, client_name: c.trim()
+    }).catch(()=>{})));
+
+    // Save members
+    const existingMembers = buMembers.filter(m => m.business_unit_id === id);
+    const toDelM = existingMembers.filter(m => !scopeModal.members.some(x => x.personId === m.person_id));
+    await Promise.all(toDelM.map(m => sb.delete("business_unit_members", m.id).catch(()=>{})));
+    await Promise.all(scopeModal.members.map(async m => {
+      const existing = existingMembers.find(e => e.person_id === m.personId);
+      const mrow = { id: existing?.id || ("bum_"+Date.now()+"_"+Math.random().toString(36).slice(2,5)),
+        business_unit_id: id, person_id: m.personId, discipline: m.discipline };
+      await sb.upsert("business_unit_members", mrow).catch(()=>{});
+    }));
+
+    // Reload
+    const [u, c, m2] = await Promise.all([
+      sb.select("business_units","order=name.asc"),
+      sb.select("business_unit_clients","order=client_name.asc"),
+      sb.select("business_unit_members","order=created_at.asc"),
+    ]);
+    if (u.data)  setUnits(u.data);
+    if (c.data)  setBuClients(c.data);
+    if (m2.data) setBuMembers(m2.data);
+    setScopeModal(null);
+    setSaving(false);
+  };
+
+  const openNewScope = () => setScopeModal({ id:null, name:"", adId:"", clients:[""], members:[], isNew:true });
+  const openEditScope = (u) => setScopeModal({
+    id: u.id, name: u.name, adId: u.account_director_id, isNew: false,
+    clients: unitClients(u.id).map(c=>c.client_name).concat([""]),
+    members: unitMembers(u.id).map(m => ({ personId:m.person_id, discipline:m.discipline||"" })),
+  });
+
+  // ── Person save ───────────────────────────────────────────────────────────
+  const savePersonModal = async () => {
+    if (!personModal || !personModal.name?.trim()) return;
+    setSaving(true);
+    const id  = personModal.id || ("p_" + Date.now());
+    // Save name/color/email to team_members
+    const tmRow = { id, name: personModal.name.trim(), color: personModal.color || "#6b7280", role: personModal.role || "contributor", email: personModal.email || "" };
+    await sb.upsert("team_members", tmRow).catch(() => {});
+    // Save role to app_users using sb.update (handles auth automatically)
+    const PERMANENT_ADMINS = ["61687e13-e232-43e3-8891-663f23cda222"];
+    const targetPerson     = people.find(p => p.id === tmRow.id);
+    const targetIsProtected = targetPerson?.appUserId &&
+      PERMANENT_ADMINS.includes(targetPerson.appUserId);
+    // Also try to sync role to app_users for login flow (best-effort — RLS may block)
+    if (personModal.role && !targetIsProtected) {
+      // Try by id first, fall back to team_member_id filter
+      let roleErr = null;
+      if (personModal.appUserId) {
+        const r = await sb.update("app_users", personModal.appUserId, { role: personModal.role });
+        roleErr = r.error;
+        console.log("[BU] role save by id:", personModal.appUserId, "→", personModal.role, "error:", roleErr);
+      }
+      // Always also try by team_member_id to handle cases where appUserId lookup failed
+      const r2 = await sb.updateWhere("app_users", "team_member_id", tmRow.id, { role: personModal.role });
+      if (r2.error) console.warn("[BU] role save by team_member_id failed:", r2.error);
+      else console.log("[BU] role save by team_member_id OK for", tmRow.id, "→", personModal.role);
+    }
+    const updated = { ...tmRow, role: personModal.role || "contributor", appUserId: personModal.appUserId };
+    if (onPersonSaved) onPersonSaved(updated);
+    setSaving(false);
+    setPersonModal(null);
+  };
+
+  const COLORS = ["#f59e0b","#06b6d4","#8b5cf6","#10b981","#f97316","#e879f9","#ef4444","#0ea5e9","#64748b","#1d9e75","#d97706","#7c3aed"];
+
+  // ── Shared styles ─────────────────────────────────────────────────────────
+  const card    = { background:"#fff", border:"1px solid rgba(0,0,0,0.07)", borderRadius:10, marginBottom:12, overflow:"hidden" };
+  const btn     = (col,bg) => ({ background:bg||"none", border:`1px solid ${col}`, borderRadius:6,
+                   padding:"5px 12px", fontSize:11, fontWeight:700, cursor:"pointer", fontFamily:"inherit", color:col });
+  const ghostBtn = { background:"none", border:"1px dashed "+TEAL, borderRadius:6,
+                     color:TEAL, fontSize:10, padding:"3px 10px", cursor:"pointer", fontFamily:"inherit", fontWeight:700 };
+  const inputSt = { fontSize:11, border:"1px solid rgba(0,0,0,0.12)", borderRadius:6,
+                    padding:"5px 9px", fontFamily:"inherit", background:"#fff", color:"#374151" };
+  const selectSt = { fontSize:11, border:"1px solid rgba(0,0,0,0.12)", borderRadius:6,
+                     padding:"4px 7px", fontFamily:"inherit", background:"#fff", color:"#374151" };
+  const lbl = { fontSize:10, fontWeight:700, color:"#9ca3af", textTransform:"uppercase", letterSpacing:".05em", marginBottom:6 };
+  const pill = (bg,col) => ({ display:"inline-flex", alignItems:"center", fontSize:10, fontWeight:700,
+                               padding:"2px 8px", borderRadius:10, background:bg, color:col });
+
+  const ROLE_PILLS = {
+    admin:           { bg:"#e6f1fb", col:"#0c447c" },
+    leadership:      { bg:"#e6f1fb", col:"#0c447c" },
+    account_director:{ bg:"#eeedfe", col:"#3c3489" },
+    project_manager: { bg:"#e1f5ee", col:"#085041" },
+    contributor:     { bg:"#f1f2f4", col:"#5f5e5a" },
+    member:          { bg:"#f1f2f4", col:"#5f5e5a" },
+  };
+  const rp = r => ROLE_PILLS[r] || ROLE_PILLS.contributor;
+
+  if (loading) return <div style={{ padding:40, textAlign:"center", color:"#9ca3af" }}>Loading…</div>;
+
+  return (
+    <div style={{ padding:"20px", background:"#f0f2f5", minHeight:"100vh" }}>
+
+      {/* Page header */}
+      <div style={{ display:"flex", alignItems:"flex-start", justifyContent:"space-between", marginBottom:16 }}>
+        <div>
+          <div style={{ fontSize:15, fontWeight:700, color:"#1e293b" }}>Business Units</div>
+          <div style={{ fontSize:11, color:"#6b7280", marginTop:2 }}>
+            Manage people, scopes and client assignments{canAdmin ? " · Admin and account directors only" : ""}
+          </div>
+        </div>
+        {canAdmin && (
+          <div style={{ display:"flex", gap:8 }}>
+            <button style={btn("#374151")} onClick={() => setPersonModal({ id:null, name:"", role:"contributor", color:COLORS[0], email:"" })}>
+              + Add person
+            </button>
+            <button style={{ ...btn(NAVY, TEAL), color:NAVY }} onClick={openNewScope}>
+              + New scope
+            </button>
+          </div>
+        )}
+      </div>
+
+      {/* Tabs */}
+      <div style={{ display:"flex", borderBottom:"1px solid rgba(0,0,0,0.08)", marginBottom:14 }}>
+        {[["people","All people"],["scopes","Scopes"]].map(([id,label]) => (
+          <button key={id} onClick={() => setActiveTab(id)} style={{
+            padding:"8px 16px", fontSize:12, cursor:"pointer", fontFamily:"inherit",
+            border:"none", borderBottom:`2px solid ${activeTab===id?TEAL:"transparent"}`,
+            background:"none", color:activeTab===id?"#334155":"#6b7280", fontWeight:activeTab===id?700:500,
+          }}>{label}</button>
+        ))}
+      </div>
+
+      {/* ── ALL PEOPLE TAB ── */}
+      {activeTab === "people" && (
+        <div>
+          <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:10 }}>
+            <div style={{ fontSize:11, color:"#6b7280" }}>{people.length} people · Add here before assigning to any scope or task</div>
+            <input value={personSearch} onChange={e=>setPersonSearch(e.target.value)}
+              placeholder="Search people…" style={{ ...inputSt, width:180 }} />
+          </div>
+          <div style={card}>
+            <div style={{ padding:"0 16px" }}>
+              {/* Header row */}
+              <div style={{ display:"grid", gridTemplateColumns:"28px 1fr 140px 130px 1fr 44px",
+                gap:8, padding:"7px 0 5px", fontSize:10, fontWeight:700, color:"#9ca3af",
+                textTransform:"uppercase", letterSpacing:".05em", borderBottom:"1px solid rgba(0,0,0,0.08)" }}>
+                <div/><div>Name</div><div>Role / access</div><div>Discipline</div><div>Scopes</div><div/>
+              </div>
+              {filteredPeople.length === 0 && (
+                <div style={{ padding:"24px 0", textAlign:"center", color:"#9ca3af", fontSize:12 }}>No people found</div>
+              )}
+              {filteredPeople.map(p => {
+                const scopes  = personScopes(p.id);
+                const rStyle  = rp(p.role);
+                const memInfo = buMembers.filter(m => m.person_id === p.id);
+                const disc    = [...new Set(memInfo.map(m=>m.discipline).filter(Boolean))].join(", ");
+                return (
+                  <div key={p.id} style={{ display:"grid", gridTemplateColumns:"28px 1fr 140px 130px 1fr 44px",
+                    gap:8, alignItems:"center", padding:"8px 0",
+                    borderBottom:"1px solid rgba(0,0,0,0.05)" }}>
+                    <div style={{ width:24, height:24, borderRadius:"50%", background:p.color||"#888",
+                      display:"flex", alignItems:"center", justifyContent:"center",
+                      fontSize:9, fontWeight:700, color:"#fff", flexShrink:0 }}>
+                      {ini(p.name)}
+                    </div>
+                    <div style={{ fontWeight:600, color:"#1e293b", fontSize:12 }}>{p.name}</div>
+                    <div>
+                      <span style={pill(rStyle.bg, rStyle.col)}>{fmtRole(p.role)}</span>
+                    </div>
+                    <div style={{ fontSize:11, color:"#374151" }}>{disc || "—"}</div>
+                    <div style={{ fontSize:10, color:"#6b7280" }}>{scopes.length ? scopes.join(", ") : "—"}</div>
+                    <div style={{ textAlign:"right" }}>
+                      {canAdmin && (
+                        <button onClick={() => setPersonModal({ ...p })}
+                          style={{ background:"none", border:"1px solid rgba(0,0,0,0.1)", borderRadius:4,
+                            padding:"2px 8px", fontSize:10, cursor:"pointer", fontFamily:"inherit", color:"#374151" }}>
+                          Edit
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+          <div style={{ fontSize:10, color:"#9ca3af", marginTop:6 }}>
+            People must be added here before they can be assigned to any scope, project or task.
+          </div>
+        </div>
+      )}
+
+      {/* ── SCOPES TAB ── */}
+      {activeTab === "scopes" && (
+        <div>
+          {units.length === 0 && (
+            <div style={{ ...card, padding:32, textAlign:"center", color:"#9ca3af" }}>
+              No scopes yet.{canAdmin && <span> Click <b>+ New scope</b> to create one.</span>}
+            </div>
+          )}
+          {units.map(u => {
+            const exp  = expanded.has(u.id);
+            const mems = unitMembers(u.id);
+            const clis = unitClients(u.id);
+            const ad   = people.find(p => p.id === u.account_director_id);
+            return (
+              <div key={u.id} style={card}>
+                {/* Card header */}
+                <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between",
+                  padding:"12px 16px", cursor:"pointer", background:"#fff" }}
+                  onClick={() => setExpanded(prev => { const n=new Set(prev); n.has(u.id)?n.delete(u.id):n.add(u.id); return n; })}>
+                  <div style={{ display:"flex", alignItems:"center", gap:10 }}>
+                    <div style={{ width:30, height:30, borderRadius:"50%", background:ad?.color||"#888",
+                      display:"flex", alignItems:"center", justifyContent:"center",
+                      fontSize:11, fontWeight:700, color:"#fff", flexShrink:0 }}>
+                      {ini(u.name)}
+                    </div>
+                    <div>
+                      <div style={{ fontWeight:700, fontSize:13, color:"#1e293b" }}>{u.name}</div>
+                      <div style={{ fontSize:10, color:"#6b7280", marginTop:1 }}>
+                        {clis.length} client{clis.length!==1?"s":""} &nbsp;·&nbsp; {mems.length} members
+                      </div>
+                    </div>
+                  </div>
+                  <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+                    {canAdmin && (
+                      <button onClick={e=>{e.stopPropagation();openEditScope(u);}}
+                        style={{ background:"none", border:"1px solid rgba(0,0,0,0.1)", borderRadius:4,
+                          padding:"3px 10px", fontSize:10, cursor:"pointer", fontFamily:"inherit", color:"#374151" }}>
+                        Edit scope
+                      </button>
+                    )}
+                    <span style={{ fontSize:11, color:"#9ca3af" }}>{exp?"▲":"▼"}</span>
+                  </div>
+                </div>
+
+                {/* Expanded body */}
+                {exp && (
+                  <div style={{ padding:"14px 16px", borderTop:"1px solid rgba(0,0,0,0.06)" }}>
+                    <div style={{ display:"flex", flexDirection:"column", gap:14, marginBottom:16 }}>
+                      {/* Clients */}
+                      <div>
+                        <div style={lbl}>Clients / scopes</div>
+                        <div style={{ marginBottom:8 }}>
+                          {clis.length === 0 && <span style={{ fontSize:11, color:"#9ca3af" }}>No clients yet</span>}
+                          {clis.map(c => (
+                            <span key={c.id} onClick={() => canAdmin && openClientModal(c)}
+                              style={{ display:"inline-flex", alignItems:"center", gap:4, fontSize:11,
+                                padding:"3px 9px", borderRadius:6, margin:"2px 2px 2px 0",
+                                border:"1px solid rgba(0,0,0,0.08)", background:"#f8fafc", color:"#374151",
+                                cursor: canAdmin ? "pointer" : "default",
+                                transition:"all .1s" }}
+                              onMouseEnter={e => { if(canAdmin) e.currentTarget.style.borderColor="#00B5B5"; }}
+                              onMouseLeave={e => { e.currentTarget.style.borderColor="rgba(0,0,0,0.08)"; }}>
+                              {c.client_name}
+                              {c.project_number && (
+                                <span style={{ fontSize:9, color:"#9ca3af", fontWeight:500 }}>#{c.project_number}</span>
+                              )}
+                              {canAdmin && <span style={{ fontSize:9, color:"#00B5B5", marginLeft:2 }}>✎</span>}
+                            </span>
+                          ))}
+                        </div>
+                        {canAdmin && <button style={ghostBtn} onClick={()=>openEditScope(u)}>+ Add client</button>}
+                      </div>
+                      {/* Annual hours — editable grid */}
+                      <div style={{ gridColumn:"1 / -1" }}>
+                        <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:8 }}>
+                          <div style={lbl}>Annual hours</div>
+                          <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+                            <select value={hoursYear} onChange={e=>setHoursYear(Number(e.target.value))}
+                              style={{ fontSize:10, border:"1px solid rgba(0,0,0,0.12)", borderRadius:5, padding:"2px 6px" }}>
+                              {[new Date().getFullYear()-1, new Date().getFullYear(), new Date().getFullYear()+1].map(y=>(
+                                <option key={y} value={y}>{y}</option>
+                              ))}
+                            </select>
+                            {canAdmin && (
+                              <button onClick={() => saveHours(u.id)} disabled={hoursSaving}
+                                style={{ fontSize:10, padding:"3px 10px", background:TEAL, color:NAVY,
+                                  border:"none", borderRadius:5, cursor:"pointer", fontWeight:700, fontFamily:"inherit",
+                                  opacity:hoursSaving?0.5:1 }}>
+                                {hoursSaving ? "Saving…" : "Save hours"}
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                        {unitClients(u.id).length === 0 ? (
+                          <div style={{ fontSize:11, color:"#9ca3af" }}>Add clients to this scope first</div>
+                        ) : (
+                          <div style={{ overflowX:"auto" }}>
+                            <table style={{ borderCollapse:"collapse", fontSize:11, width:"100%" }}>
+                              <thead>
+                                <tr style={{ borderBottom:"1px solid rgba(0,0,0,0.08)" }}>
+                                  <th style={{ padding:"5px 8px 5px 0", textAlign:"left", fontSize:10, fontWeight:700,
+                                    color:"#9ca3af", textTransform:"uppercase", letterSpacing:".05em", minWidth:120 }}>Person</th>
+                                  {unitClients(u.id).map(c => (
+                                    <th key={c.id} style={{ padding:"5px 8px", textAlign:"right", fontSize:10, fontWeight:700,
+                                      color:"#9ca3af", textTransform:"uppercase", letterSpacing:".05em", whiteSpace:"nowrap" }}>
+                                      {c.client_name}
+                                    </th>
+                                  ))}
+                                  <th style={{ padding:"5px 0 5px 8px", textAlign:"right", fontSize:10, fontWeight:700,
+                                    color:"#9ca3af", textTransform:"uppercase", letterSpacing:".05em" }}>Total</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {unitMembers(u.id).map(m => {
+                                  const mp = people.find(p => p.id === m.person_id);
+                                  if (!mp) return null;
+                                  const rowTotal = unitClients(u.id).reduce((s,c) => s + (parseFloat(getHours(m.person_id, c.client_name))||0), 0);
+                                  return (
+                                    <tr key={m.id} style={{ borderBottom:"1px solid rgba(0,0,0,0.05)" }}>
+                                      <td style={{ padding:"6px 8px 6px 0" }}>
+                                        <div style={{ display:"flex", alignItems:"center", gap:6 }}>
+                                          <div style={{ width:18, height:18, borderRadius:"50%", background:mp.color||"#888",
+                                            display:"flex", alignItems:"center", justifyContent:"center",
+                                            fontSize:7, fontWeight:700, color:"#fff", flexShrink:0 }}>
+                                            {ini(mp.name)}
+                                          </div>
+                                          <span style={{ fontWeight:600, color:"#1e293b" }}>{mp.name}</span>
+                                        </div>
+                                      </td>
+                                      {unitClients(u.id).map(c => (
+                                        <td key={c.id} style={{ padding:"4px 8px", textAlign:"right" }}>
+                                          {canAdmin ? (
+                                            <input
+                                              type="number" min="0" step="1"
+                                              value={getHours(m.person_id, c.client_name)}
+                                              onChange={e => setHoursEdits(prev => ({
+                                                ...prev, [hoursKey(m.person_id, c.client_name)]: e.target.value
+                                              }))}
+                                              placeholder="0"
+                                              style={{ width:70, textAlign:"right", fontSize:11,
+                                                border:"1px solid rgba(0,0,0,0.12)", borderRadius:5,
+                                                padding:"3px 6px", fontFamily:"inherit",
+                                                background: hoursEdits[hoursKey(m.person_id, c.client_name)] !== undefined
+                                                  ? "rgba(0,181,181,0.06)" : "#fff" }} />
+                                          ) : (
+                                            <span style={{ color:"#374151" }}>
+                                              {getHours(m.person_id, c.client_name) || "—"}
+                                            </span>
+                                          )}
+                                        </td>
+                                      ))}
+                                      <td style={{ padding:"6px 0 6px 8px", textAlign:"right", fontWeight:700,
+                                        color: rowTotal > 0 ? "#002A4E" : "#9ca3af" }}>
+                                        {rowTotal > 0 ? rowTotal.toLocaleString() + "h" : "—"}
+                                      </td>
+                                    </tr>
+                                  );
+                                })}
+                              </tbody>
+                            </table>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Members table */}
+                    <div>
+                      <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:8 }}>
+                        <div style={lbl}>Team members</div>
+                        {canAdmin && <button style={ghostBtn} onClick={()=>openEditScope(u)}>+ Add member</button>}
+                      </div>
+                      <div style={{ display:"grid", gridTemplateColumns:"24px 1fr 140px 140px",
+                        gap:8, padding:"5px 0 5px", fontSize:10, fontWeight:700, color:"#9ca3af",
+                        textTransform:"uppercase", letterSpacing:".05em",
+                        borderBottom:"1px solid rgba(0,0,0,0.08)" }}>
+                        <div/><div>Name</div><div>Discipline</div><div>Role / access</div>
+                      </div>
+                      {mems.length === 0 && (
+                        <div style={{ padding:"12px 0", color:"#9ca3af", fontSize:11 }}>No members yet</div>
+                      )}
+                      {mems.map(m => {
+                        const mp = people.find(p => p.id === m.person_id);
+                        if (!mp) return null;
+                        const rStyle = rp(mp.role);
+                        return (
+                          <div key={m.id} style={{ display:"grid", gridTemplateColumns:"24px 1fr 140px 140px",
+                            gap:8, alignItems:"center", padding:"7px 0",
+                            borderBottom:"1px solid rgba(0,0,0,0.05)" }}>
+                            <div style={{ width:22, height:22, borderRadius:"50%", background:mp.color||"#888",
+                              display:"flex", alignItems:"center", justifyContent:"center",
+                              fontSize:8, fontWeight:700, color:"#fff" }}>
+                              {ini(mp.name)}
+                            </div>
+                            <div style={{ fontWeight:600, color:"#1e293b", fontSize:12 }}>{mp.name}</div>
+                            <div style={{ fontSize:11, color:"#374151" }}>{m.discipline||"—"}</div>
+                            <div><span style={pill(rStyle.bg,rStyle.col)}>{fmtRole(mp.role)}</span></div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* ── CLIENT MODAL ── */}
+      {clientModal && (
+        <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.45)", zIndex:2100,
+          display:"flex", alignItems:"center", justifyContent:"center" }}
+          onClick={e=>e.target===e.currentTarget&&setClientModal(null)}>
+          <div style={{ background:"#fff", borderRadius:12, width:380,
+            boxShadow:"0 20px 60px rgba(0,0,0,0.25)", overflow:"hidden" }}>
+            <div style={{ padding:"14px 20px", background:"#f8fafc",
+              borderBottom:"1px solid rgba(0,0,0,0.07)",
+              display:"flex", alignItems:"center", justifyContent:"space-between" }}>
+              <div style={{ fontSize:14, fontWeight:700, color:"#1e293b" }}>Edit client</div>
+              <button onClick={()=>setClientModal(null)}
+                style={{ fontSize:20, background:"none", border:"none", cursor:"pointer", color:"#9ca3af" }}>×</button>
+            </div>
+            <div style={{ padding:"16px 20px", display:"flex", flexDirection:"column", gap:12 }}>
+              <div>
+                <div style={lbl}>Client name</div>
+                <input value={clientModal.client_name}
+                  onChange={e=>setClientModal(m=>({...m,client_name:e.target.value}))}
+                  placeholder="e.g. DPP" style={{ ...inputSt, width:"100%" }} />
+              </div>
+              <div>
+                <div style={lbl}>Project number</div>
+                <input value={clientModal.project_number}
+                  onChange={e=>setClientModal(m=>({...m,project_number:e.target.value}))}
+                  placeholder="e.g. 603039001001"
+                  style={{ ...inputSt, width:"100%" }} />
+                <div style={{ fontSize:10, color:"#9ca3af", marginTop:4 }}>
+                  Auto-fills when this client is selected in a new project
+                </div>
+              </div>
+            </div>
+            <div style={{ padding:"12px 20px", borderTop:"1px solid rgba(0,0,0,0.07)",
+              display:"flex", gap:8, justifyContent:"flex-end" }}>
+              <button onClick={()=>setClientModal(null)}
+                style={{ fontSize:12, padding:"7px 16px", background:"none",
+                  border:"1px solid rgba(0,0,0,0.12)", borderRadius:7, cursor:"pointer",
+                  fontFamily:"inherit", color:"#374151" }}>Cancel</button>
+              <button onClick={saveClientModal} disabled={!clientModal.client_name.trim()||clientSaving}
+                style={{ fontSize:12, padding:"7px 16px", background:TEAL, color:NAVY,
+                  border:"none", borderRadius:7, cursor:"pointer", fontWeight:700, fontFamily:"inherit",
+                  opacity:(!clientModal.client_name.trim()||clientSaving)?0.5:1 }}>
+                {clientSaving?"Saving…":"Save client"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── SCOPE MODAL ── */}
+      {scopeModal && (
+        <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.45)", zIndex:2000,
+          display:"flex", alignItems:"center", justifyContent:"center" }}
+          onClick={e=>e.target===e.currentTarget&&setScopeModal(null)}>
+          <div style={{ background:"#fff", borderRadius:12, width:560, maxHeight:"85vh",
+            overflow:"hidden", display:"flex", flexDirection:"column",
+            boxShadow:"0 20px 60px rgba(0,0,0,0.25)" }}>
+            <div style={{ padding:"14px 20px", background:"#f8fafc",
+              borderBottom:"1px solid rgba(0,0,0,0.07)",
+              display:"flex", alignItems:"center", justifyContent:"space-between" }}>
+              <div style={{ fontSize:14, fontWeight:700, color:"#1e293b" }}>
+                {scopeModal.isNew ? "New scope" : "Edit scope"}
+              </div>
+              <button onClick={()=>setScopeModal(null)}
+                style={{ fontSize:20, background:"none", border:"none", cursor:"pointer", color:"#9ca3af", lineHeight:1 }}>×</button>
+            </div>
+            <div style={{ flex:1, overflowY:"auto", padding:"16px 20px", display:"flex", flexDirection:"column", gap:14 }}>
+              {/* Name */}
+              <div>
+                <div style={lbl}>Account director name</div>
+                <input value={scopeModal.name} onChange={e=>setScopeModal(m=>({...m,name:e.target.value}))}
+                  placeholder="e.g. Emily Boven" style={{ ...inputSt, width:"100%" }} />
+              </div>
+              {/* AD picker */}
+              <div>
+                <div style={lbl}>Account director (person)</div>
+                <select value={scopeModal.adId} onChange={e=>setScopeModal(m=>({...m,adId:e.target.value}))}
+                  style={{ ...selectSt, width:"100%" }}>
+                  <option value="">— Select —</option>
+                  {people.map(p=><option key={p.id} value={p.id}>{p.name}</option>)}
+                </select>
+              </div>
+              {/* Clients */}
+              <div>
+                <div style={lbl}>Clients / scopes</div>
+                {(scopeModal.clients||[""]).map((c,i)=>(
+                  <div key={i} style={{ display:"flex", gap:6, marginBottom:6 }}>
+                    <input value={c} onChange={e=>setScopeModal(m=>({...m,clients:m.clients.map((x,xi)=>xi===i?e.target.value:x)}))}
+                      placeholder={`Client ${i+1} (e.g. DPP)`} style={{ ...inputSt, flex:1 }} />
+                    <button onClick={()=>setScopeModal(m=>({...m,clients:m.clients.filter((_,xi)=>xi!==i)}))}
+                      style={{ background:"none", border:"none", cursor:"pointer", color:"#f87171", fontSize:16, padding:"0 4px" }}>✕</button>
+                  </div>
+                ))}
+                <button style={ghostBtn} onClick={()=>setScopeModal(m=>({...m,clients:[...(m.clients||[]),""]}))} >
+                  + Add client
+                </button>
+              </div>
+              {/* Members */}
+              <div>
+                <div style={lbl}>Team members</div>
+                {(scopeModal.members||[]).map((m,i)=>(
+                  <div key={i} style={{ display:"grid", gridTemplateColumns:"1fr 1fr 24px", gap:6, marginBottom:6, alignItems:"center" }}>
+                    <select value={m.personId} onChange={e=>setScopeModal(sm=>({...sm,members:sm.members.map((x,xi)=>xi===i?{...x,personId:e.target.value}:x)}))}
+                      style={selectSt}>
+                      <option value="">— Select person —</option>
+                      {people.map(p=><option key={p.id} value={p.id}>{p.name}</option>)}
+                    </select>
+                    <select value={m.discipline} onChange={e=>setScopeModal(sm=>({...sm,members:sm.members.map((x,xi)=>xi===i?{...x,discipline:e.target.value}:x)}))}
+                      style={selectSt}>
+                      <option value="">— Discipline —</option>
+                      {DISCIPLINES.map(d=><option key={d} value={d}>{d}</option>)}
+                    </select>
+                    <button onClick={()=>setScopeModal(sm=>({...sm,members:sm.members.filter((_,xi)=>xi!==i)}))}
+                      style={{ background:"none", border:"none", cursor:"pointer", color:"#f87171", fontSize:16 }}>✕</button>
+                  </div>
+                ))}
+                <button style={ghostBtn}
+                  onClick={()=>setScopeModal(m=>({...m,members:[...(m.members||[]),{personId:"",discipline:""}]}))}>
+                  + Add member
+                </button>
+              </div>
+            </div>
+            <div style={{ padding:"12px 20px", borderTop:"1px solid rgba(0,0,0,0.07)",
+              display:"flex", gap:8, justifyContent:"flex-end" }}>
+              <button onClick={()=>setScopeModal(null)}
+                style={{ fontSize:12, padding:"7px 16px", background:"none",
+                  border:"1px solid rgba(0,0,0,0.12)", borderRadius:7, cursor:"pointer", fontFamily:"inherit", color:"#374151" }}>
+                Cancel
+              </button>
+              <button onClick={saveScopeModal} disabled={!scopeModal.name.trim()||!scopeModal.adId||saving}
+                style={{ fontSize:12, padding:"7px 16px", background:TEAL, color:NAVY,
+                  border:"none", borderRadius:7, cursor:"pointer", fontWeight:700, fontFamily:"inherit",
+                  opacity:(!scopeModal.name.trim()||!scopeModal.adId||saving)?0.5:1 }}>
+                {saving?"Saving…":"Save scope"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── PERSON MODAL ── */}
+      {personModal && (
+        <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.45)", zIndex:2000,
+          display:"flex", alignItems:"center", justifyContent:"center" }}
+          onClick={e=>e.target===e.currentTarget&&setPersonModal(null)}>
+          <div style={{ background:"#fff", borderRadius:12, width:420,
+            boxShadow:"0 20px 60px rgba(0,0,0,0.25)", overflow:"hidden" }}>
+            <div style={{ padding:"14px 20px", background:"#f8fafc",
+              borderBottom:"1px solid rgba(0,0,0,0.07)",
+              display:"flex", alignItems:"center", justifyContent:"space-between" }}>
+              <div style={{ fontSize:14, fontWeight:700, color:"#1e293b" }}>
+                {personModal.id ? "Edit person" : "Add person"}
+              </div>
+              <button onClick={()=>setPersonModal(null)}
+                style={{ fontSize:20, background:"none", border:"none", cursor:"pointer", color:"#9ca3af", lineHeight:1 }}>×</button>
+            </div>
+            <div style={{ padding:"16px 20px", display:"flex", flexDirection:"column", gap:12 }}>
+              <div>
+                <div style={lbl}>Full name</div>
+                <input value={personModal.name||""} onChange={e=>setPersonModal(m=>({...m,name:e.target.value}))}
+                  placeholder="First Last" style={{ ...inputSt, width:"100%" }} />
+              </div>
+              <div>
+                <div style={lbl}>Email</div>
+                <input value={personModal.email||""} onChange={e=>setPersonModal(m=>({...m,email:e.target.value}))}
+                  placeholder="name@company.com" style={{ ...inputSt, width:"100%" }} />
+              </div>
+              <div>
+                <div style={lbl}>Role / access level</div>
+                <select value={personModal.role||"contributor"} onChange={e=>setPersonModal(m=>({...m,role:e.target.value}))}
+                  style={{ ...selectSt, width:"100%" }}>
+                  {visibleRoles.map(o=><option key={o.v} value={o.v}>{o.l}</option>)}
+                </select>
+              </div>
+              <div>
+                <div style={lbl}>Color</div>
+                <div style={{ display:"flex", gap:6, flexWrap:"wrap" }}>
+                  {COLORS.map(c=>(
+                    <button key={c} onClick={()=>setPersonModal(m=>({...m,color:c}))}
+                      style={{ width:24, height:24, borderRadius:"50%", background:c, border:`2px solid ${personModal.color===c?"#002A4E":"transparent"}`,
+                        cursor:"pointer", padding:0 }} />
+                  ))}
+                </div>
+              </div>
+            </div>
+            <div style={{ padding:"12px 20px", borderTop:"1px solid rgba(0,0,0,0.07)",
+              display:"flex", gap:8, justifyContent:"flex-end" }}>
+              <button onClick={()=>setPersonModal(null)}
+                style={{ fontSize:12, padding:"7px 16px", background:"none", border:"1px solid rgba(0,0,0,0.12)", borderRadius:7, cursor:"pointer", fontFamily:"inherit", color:"#374151" }}>
+                Cancel
+              </button>
+              <button onClick={savePersonModal} disabled={!personModal.name?.trim()||saving}
+                style={{ fontSize:12, padding:"7px 16px", background:TEAL, color:NAVY,
+                  border:"none", borderRadius:7, cursor:"pointer", fontWeight:700, fontFamily:"inherit",
+                  opacity:(!personModal.name?.trim()||saving)?0.5:1 }}>
+                {saving?"Saving…":personModal.id?"Save changes":"Add person"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function App() {
   // ── Safe notification save — handles DB constraint mismatches gracefully ────
   // ── SUPABASE CONFIG — read after main.jsx has set window vars ────────────
@@ -11217,7 +11845,12 @@ export default function App() {
     setAuthSession(session); setAuthUser(user);
     const appUser = await fetchAppUser(user.id, session.access_token);
     if (appUser) {
-      setCurrentRole(appUser.role === 'member' ? 'contributor' : (appUser.role || 'viewer'));
+      // Protect designated permanent admins
+      const PERMANENT_ADMINS = ["61687e13-e232-43e3-8891-663f23cda222"];
+      const resolvedRole = PERMANENT_ADMINS.includes(user.id)
+        ? "admin"
+        : (appUser.role === "member" ? "contributor" : (appUser.role || "viewer"));
+      setCurrentRole(resolvedRole);
       setCurrentUser(appUser.teamMemberId);
       setOwnMemberId(appUser.teamMemberId);
       try { localStorage.setItem("planr_own_member_id", appUser.teamMemberId); } catch {}
@@ -11410,6 +12043,7 @@ export default function App() {
 
   const [archivedProjects, setArchivedProjects] = useState([]);
   const [people, setPeople] = useState([]);
+  const [buClients, setBuClients] = useState([]); // business unit clients for project form
   const [holidays, setHolidays] = useState([]);
   const [statusNotes, setStatusNotes] = useState({});
   const [savedTemplates, setSavedTemplates] = useState([]);
@@ -11430,7 +12064,7 @@ export default function App() {
     console.log("[PulseX] loadAll — URL:", SB_URL ? "set" : "MISSING");
     setDbError(null);
     try {
-      const [pR, dR, sR, mR, hR, nR, tR, ptR] = await Promise.all([
+      const [pR, dR, sR, mR, hR, nR, tR, ptR, auR] = await Promise.all([
         sb.select("projects",       "select=*&order=position.asc,created_at.asc"),
         sb.select("deliverables",   "deleted_at=is.null&order=position.asc,created_at.asc"),
         sb.select("subtasks",       "deleted_at=is.null&order=position.asc,created_at.asc"),
@@ -11439,7 +12073,7 @@ export default function App() {
         sb.select("status_notes",   ""),
         sb.select("templates",      "order=created_at.asc"),
         sb.select("pto",            "deleted_at=is.null&order=start_date.asc"),
-
+        sb.select("app_users",      "select=id,team_member_id,role,email"),
       ]);
       for (const r of [pR, dR, sR, mR, hR, nR, tR, ptR]) {
         if (r.error) throw new Error(r.error);
@@ -11501,13 +12135,24 @@ export default function App() {
       };
       setProjects(active.map(p => toProj(p)));
       setArchivedProjects(archived.map(p => toProj(p)));
-      setPeople((mR.data || []).map(p => ({ id: p.id, name: p.name, color: p.color, annualTarget: p.annual_target || 1850, department: p.department || "" })));
+      setPeople((mR.data || []).map(p => {
+        const au = (auR.data || []).find(u => u.team_member_id === p.id);
+        return { id: p.id, name: p.name, color: p.color,
+                 annualTarget: p.annual_target || 1850,
+                 department: p.department || "",
+                 role:       p.role  || au?.role  || "contributor",
+                 email:      p.email || au?.email  || "",
+                 appUserId:  au?.id  || null };
+      }));
       setHolidays((hR.data || []).map(h => ({ id: h.id, date: h.date, name: h.name })));
       const notes = {};
       (nR.data || []).forEach(n => { notes[`${n.project_id}::${n.deliverable_id}`] = n.note; });
       setStatusNotes(notes);
       setSavedTemplates((tR.data || []).map(t => ({ ...t.data, id: t.id, name: t.name })));
       setPto((ptR.data || []).map(rowToPto));
+      // Load business unit clients for project dropdown
+      sb.select("business_unit_clients", "order=client_name.asc")
+        .then(r => { if (r.data) setBuClients(r.data); }).catch(() => {});
 
     } catch (e) {
       console.warn("[PulseX] loadAll failed:", e.message, "— retrying in 1.5s");
@@ -12808,6 +13453,7 @@ export default function App() {
     { id: "reporting", label: "Reporting", icon: "◈" },
     { id: "history",   label: "History",   icon: "⟳" },
     { id: "kpi",       label: "KPI",       icon: "◉" },
+    { id: "business-units", label: "Bus. Units", icon: "◫" },
   ];
   const _allowed = allowedNavItems(currentRole);
   const navItems = ALL_NAV_ITEMS.filter(n => _allowed.has(n.id));
@@ -12979,13 +13625,11 @@ export default function App() {
                 boxShadow: "0 4px 20px rgba(0,0,0,0.12)", minWidth: 200, overflow: "hidden",
               }}>
                 {[
-                  { icon: "◎", label: "Team Members",   color: "#38bdf8", action: () => { setShowTeamSettings(true); setShowSettingsMenu(false); } },
-                  { icon: "⊙", label: "Backfill Task Depts", color: "#a78bfa", action: () => { handleBackfillDepts(); setShowSettingsMenu(false); } },
-                  { icon: "◧", label: "Templates",       color: "#a78bfa", action: () => { setShowTemplates(true); setShowSettingsMenu(false); } },
-                  { icon: "⊞", label: "Access",          color: "#34d399", action: () => { setShowAccess(true); setShowSettingsMenu(false); } },
-                  { icon: "🗓", label: "Holidays",        color: "#fb923c", action: () => { setShowHolidays(true); setShowSettingsMenu(false); } },
-                  { icon: "↑", label: "Import Excel",    color: "#34d399", action: () => { setShowImport(true); setShowSettingsMenu(false); } },
-                  { icon: "⊡", label: "Archived Projects",color: BRAND_TEAL, action: () => { setView("archived"); setShowSettingsMenu(false); } },
+                   { icon: "◫", label: "Business Units", color: "#38bdf8", action: () => { setView("business-units"); setShowSettingsMenu(false); } },
+                   { icon: "◧", label: "Templates",      color: "#a78bfa", action: () => { setShowTemplates(true); setShowSettingsMenu(false); } },
+                   { icon: "🗓", label: "Holidays",       color: "#fb923c", action: () => { setShowHolidays(true); setShowSettingsMenu(false); } },
+                   { icon: "↑", label: "Import Excel",   color: "#34d399", action: () => { setShowImport(true); setShowSettingsMenu(false); } },
+                   { icon: "⊡", label: "Archived",       color: "#00B5B5", action: () => { setView("archived"); setShowSettingsMenu(false); } },
                 ].map(item => (
                   <button key={item.label} onClick={item.action} style={{
                     display: "flex", alignItems: "center", gap: 10, width: "100%",
@@ -13202,6 +13846,21 @@ export default function App() {
           />
         )}
 
+        {view === "business-units" && (
+          <BusinessUnitsView
+            people={people} sb={sb} SB_READY={SB_READY}
+            currentRole={currentRole}
+            currentUserId={currentUserId}
+            ownMemberId={ownMemberId}
+            sbUrl={SB_URL} sbKey={SB_KEY}
+            authToken={authSession?.access_token}
+            onPersonSaved={(updated) => setPeople(prev =>
+              prev.some(p => p.id === updated.id)
+                ? prev.map(p => p.id === updated.id ? { ...p, ...updated } : p)
+                : [...prev, { ...updated }]
+            )}
+          />
+        )}
         {view === "reporting" && (
           <ReportingDashboardView
             projects={projects} people={people} holidays={holidays} pto={pto}
@@ -13329,6 +13988,7 @@ export default function App() {
         {showInitiation && (
         <ProjectInitiationModal
           people={people}
+          buClients={buClients}
           onClose={() => setShowInitiation(false)}
           onSubmit={handleProjectInitiation}
         />
@@ -13473,4 +14133,6 @@ export default function App() {
 
     </div>
   );
+
+
 }

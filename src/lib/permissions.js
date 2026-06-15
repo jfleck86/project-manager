@@ -21,6 +21,7 @@ export const ROLES = {
   PROJECT_MANAGER: "project_manager",
   CONTRIBUTOR:     "contributor",
   VIEWER:          "viewer",
+  PROOFREADING:    "proofreading",
 };
 
 /** All valid role values (matches the DB check constraint). */
@@ -33,6 +34,7 @@ export const ROLE_LABELS = {
   project_manager: "Project Manager",
   contributor:     "Contributor",
   viewer:          "Viewer",  // unused — kept for fallback only
+  proofreading:    "Proofreading",
 };
 
 // ─── Internal helpers ────────────────────────────────────────────────────────
@@ -41,6 +43,7 @@ export const ROLE_LABELS = {
 export function normalize(role) {
   if (!role) return ROLES.VIEWER;
   if (role === "member") return ROLES.CONTRIBUTOR;   // legacy migration
+
   return role;
 }
 
@@ -187,7 +190,7 @@ export function canViewStatus(role) {
  * Viewer: no My Hub by default.
  */
 export function canAccessMyHub(role) {
-  return is(role, ROLES.ADMIN, ROLES.LEADERSHIP, ROLES.PROJECT_MANAGER, ROLES.CONTRIBUTOR);
+  return is(role, ROLES.ADMIN, ROLES.LEADERSHIP, ROLES.PROJECT_MANAGER, ROLES.CONTRIBUTOR) || role === "proofreading";
 }
 
 /**
@@ -270,10 +273,12 @@ export function canManageTemplates(role) {
 export function allowedNavItems(role) {
   const r = normalize(role);
   const map = {
-    admin:           ["myhub","dashboard","timeline","people","status","workload","reporting","history","kpi"],
-    leadership:      ["myhub","dashboard","timeline","people","status","workload"],
+    admin:           ["myhub","dashboard","timeline","people","status","workload","reporting","history","kpi","business-units"],
+    leadership:      ["myhub","dashboard","timeline","people","status","workload","reporting","business-units"],
+    account_director: ["myhub","dashboard","timeline","people","status","workload","reporting","business-units"],
     project_manager: ["myhub","dashboard","timeline","people","status","workload"],
     contributor:     ["myhub","dashboard","timeline","people","status"],
+    proofreading:    ["myhub"],
     viewer:          ["timeline"],
   };
   return new Set(map[r] || map.viewer);
