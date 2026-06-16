@@ -9,7 +9,7 @@ import {
   fetchProofreaders, archiveRequest, unarchiveRequest, findByTaskId,
   DB_READY, getProofCurrentUser, fetchMemberName, deleteRequest, findMemberIdByName
 } from "./lib/proofDb";
-import { readAndClearPrefill, markPulseXTaskDone, createProofCompletionNotification } from "../lib/proofIntegration";
+import { readAndClearPrefill, markPulseXTaskDone, createProofCompletionNotification, notifyNewProofRequest, findScopedProofreaders, findAllProofreadersByRole } from "../lib/proofIntegration";
 
 import QueueView    from "./components/QueueView";
 import MyQueueView  from "./components/MyQueueView";
@@ -46,6 +46,14 @@ export default function ProofApp() {
   const [quickAssigning, setQuickAssigning] = useState(null);
   const [showArchived,   setShowArchived]   = useState(false);
   const [syncWarning,    setSyncWarning]    = useState(null);
+
+  // Re-fetch requests periodically so badge counts (e.g. "unassigned" on the
+  // Queue tab) stay live without requiring a manual page reload.
+  async function refreshRequests() {
+    if (!DB_READY) return;
+    const { data: reqs } = await fetchRequestsFiltered(false);
+    if (reqs) setRequests(reqs);
+  }
 
   // ── Boot: load data from Supabase ──────────────────────────
   useEffect(() => {
@@ -95,6 +103,20 @@ export default function ProofApp() {
     boot();
   }, []);
 
+  // ── Keep the queue current: poll periodically + refresh when the tab
+  // regains focus, so a new request shows up without a manual reload.
+  useEffect(() => {
+    if (!DB_READY) return;
+    refreshRequests(); // check immediately once currentUser/currentUserId are resolved
+    const interval = setInterval(refreshRequests, 45000); // every 45s
+    const onVisible = () => { if (document.visibilityState === "visible") refreshRequests(); };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      clearInterval(interval);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
+  }, [currentUser, currentUserId]);
+
   // ── Save new / edit existing ────────────────────────────────
   async function handleSave(form) {
     const isNew = !form.id || form._prefill;
@@ -116,6 +138,24 @@ export default function ProofApp() {
       } else if (saved?.id && saved.id !== tempId) {
         // Replace the temp placeholder ID with the real DB-assigned ID
         setRequests(rs => rs.map(r => r.id === tempId ? saved : r));
+      }
+      // Notify every proofreader that a new request has entered the queue.
+      // Prefer proofreaders scoped to the account director's business unit
+      // (matched via client name) — fall back to everyone with the
+      // proofreading role if no one in that scope has it yet.
+      if (isNew && !error) {
+        const scopedIds = await findScopedProofreaders(record.client);
+        const candidateIds = scopedIds.length ? scopedIds : await findAllProofreadersByRole();
+        const recipientIds = candidateIds.filter(id => id !== currentUserId);
+        if (recipientIds.length) {
+          notifyNewProofRequest({
+            proofreaderMemberIds: recipientIds,
+            client: record.client,
+            projectName: record.project_name,
+            submittedBy: currentUser,
+            proofRequestId: saved?.id || record.id,
+          });
+        }
       }
     }
   }

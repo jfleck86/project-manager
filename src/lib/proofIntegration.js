@@ -118,6 +118,120 @@ export async function createProofCompletionNotification({
   }
 }
 
+// ── Find proofreaders scoped to the account director's business unit ────
+// Matches the proof request's client name against business_unit_clients,
+// then returns person_ids of members in that scope whose team_members.role
+// is "proofreading" (the access-level role set in Business Units → All
+// people, not a separate discipline tag). Returns [] if no client match or
+// no one in that scope has the proofreading role yet — callers should fall
+// back to findAllProofreadersByRole() in that case.
+
+export async function findScopedProofreaders(clientName) {
+  if (!BASE() || !clientName) return [];
+  const hdrs = { apikey: KEY(), Authorization: `Bearer ${KEY()}` };
+  try {
+    const clientRes = await fetch(
+      `${BASE()}/rest/v1/business_unit_clients?client_name=eq.${encodeURIComponent(clientName)}&select=business_unit_id&limit=1`,
+      { headers: hdrs }
+    );
+    if (!clientRes.ok) return [];
+    const clientRows = await clientRes.json();
+    const businessUnitId = clientRows?.[0]?.business_unit_id;
+    if (!businessUnitId) return [];
+
+    const memberRes = await fetch(
+      `${BASE()}/rest/v1/business_unit_members?business_unit_id=eq.${businessUnitId}&select=person_id`,
+      { headers: hdrs }
+    );
+    if (!memberRes.ok) return [];
+    const memberRows = await memberRes.json();
+    const scopeMemberIds = (memberRows || []).map(r => r.person_id).filter(Boolean);
+    if (!scopeMemberIds.length) return [];
+
+    const idList = scopeMemberIds.map(id => `"${id}"`).join(",");
+    const roleRes = await fetch(
+      `${BASE()}/rest/v1/team_members?id=in.(${idList})&role=eq.proofreading&select=id`,
+      { headers: hdrs }
+    );
+    if (!roleRes.ok) return [];
+    const roleRows = await roleRes.json();
+    return (roleRows || []).map(r => r.id).filter(Boolean);
+  } catch (e) {
+    console.warn("[ProofIntegration] findScopedProofreaders failed:", e.message);
+    return [];
+  }
+}
+
+// ── Global fallback: everyone with role = "proofreading", regardless of
+// business unit. Used when a proof request's client doesn't match any
+// configured scope, or no one in that scope has the proofreading role yet.
+
+export async function findAllProofreadersByRole() {
+  if (!BASE()) return [];
+  const hdrs = { apikey: KEY(), Authorization: `Bearer ${KEY()}` };
+  try {
+    const res = await fetch(
+      `${BASE()}/rest/v1/team_members?role=eq.proofreading&select=id`,
+      { headers: hdrs }
+    );
+    if (!res.ok) return [];
+    const rows = await res.json();
+    return (rows || []).map(r => r.id).filter(Boolean);
+  } catch (e) {
+    console.warn("[ProofIntegration] findAllProofreadersByRole failed:", e.message);
+    return [];
+  }
+}
+
+// ── Notify all proofreaders when a new request enters the queue ──────────
+// Sends one task_notifications row per proofreader. Uses notification_type
+// "proof_new_request" — make sure the SQL CHECK constraint on task_notifications
+// allows this value (see proof_queue setup SQL), otherwise the insert fails
+// and proofreaders simply won't be notified (no silent type-swap fallback,
+// since that previously caused the wrong action button to render in PulseX).
+
+export async function notifyNewProofRequest({
+  proofreaderMemberIds = [], client, projectName, submittedBy, proofRequestId,
+}) {
+  if (!BASE() || !proofreaderMemberIds.length) return;
+
+  const token = (() => {
+    try {
+      const s = JSON.parse((() => { try { return localStorage.getItem("sb_session"); } catch(e) { return null; } })() || "null");
+      return s?.access_token || KEY();
+    } catch { return KEY(); }
+  })();
+
+  const hdrs = { "Content-Type": "application/json", apikey: KEY(), Authorization: `Bearer ${token}`, Prefer: "return=minimal" };
+  const url  = `${BASE()}/rest/v1/task_notifications`;
+  const msg  = `New proof request from ${submittedBy || "a team member"}: "${projectName || "Untitled"}"${client ? ` (${client})` : ""}.`;
+
+  await Promise.all(proofreaderMemberIds.map(async (memberId) => {
+    const notifId = `notif_proofnew_${Date.now()}_${memberId}`;
+    const notif = {
+      id: notifId,
+      notification_type: "proof_new_request",
+      message: msg,
+      assigned_to_person_id: memberId,
+      related_proof_request_id: proofRequestId || null,
+      link_type: "proof_request",
+      is_read: false,
+      created_at: new Date().toISOString(),
+    };
+    try {
+      const res = await fetch(url, { method: "POST", headers: hdrs, body: JSON.stringify(notif) });
+      if (!res.ok) {
+        const errText = await res.text().catch(() => "");
+        console.warn("[ProofIntegration] New-request notification failed for", memberId, ":", res.status, errText.slice(0, 300));
+      } else {
+        console.log("[ProofIntegration] ✓ New-request notification sent → member:", memberId);
+      }
+    } catch (e) {
+      console.error("[ProofIntegration] new-request notification threw:", e.message);
+    }
+  }));
+}
+
 // ── Build pre-fill object from PulseX task context ────────────
 
 export function buildPrefill({ project, deliverable, task, currentUserName, currentMemberId }) {

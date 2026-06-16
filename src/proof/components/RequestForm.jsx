@@ -78,18 +78,6 @@ export default function RequestForm({ initial, currentUser, proofreaders, proofr
           )}
         </div>
 
-        {/* Department — kept in form for categorisation but not a primary reporting dimension */}
-        <div style={{ gridColumn:"1 / -1" }}>
-          <label style={ls}>
-            Department{" "}
-            <span style={{ fontWeight:400, color:"#94a3b8" }}>(optional)</span>
-          </label>
-          <select style={fs} value={form.department} onChange={e=>set("department",e.target.value)}>
-            <option value="">— No department —</option>
-            {DEPARTMENTS.map(d=><option key={d} value={d}>{d}</option>)}
-          </select>
-        </div>
-
         <div style={{ gridColumn:"1 / -1" }}><label style={ls}>SharePoint Link</label><input style={fs} value={form.sharepoint_link} onChange={e=>set("sharepoint_link",e.target.value)} placeholder="https://sharepoint.com/..." /></div>
         <div style={{ gridColumn:"1 / -1" }}><label style={ls}>Instructions</label><textarea style={{...fs,height:80,resize:"vertical"}} value={form.instructions} onChange={e=>set("instructions",e.target.value)} placeholder="Proofing instructions..." /></div>
         <div style={{ gridColumn:"1 / -1" }}><label style={ls}>Comments</label><textarea style={{...fs,height:60,resize:"vertical"}} value={form.comments} onChange={e=>set("comments",e.target.value)} /></div>

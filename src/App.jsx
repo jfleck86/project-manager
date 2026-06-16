@@ -21,7 +21,27 @@ import { rowToSubtask, rowToDeliverable, rowToProject, delToRow, subToRow, ptoTo
 import { signOut, getStoredSession, fetchAppUser, refreshSession } from "./lib/supabaseAuth.js";
 import LoginScreen from "./components/LoginScreen.jsx";
 
-const PROOF_QUEUE_URL = window.location.origin.replace(":5173", ":5174");
+const PROOF_QUEUE_URL = (() => {
+  // 1. Explicit override — set VITE_PROOF_QUEUE_URL if the Proof Queue is ever
+  //    deployed at a completely different origin than PulseX.
+  if (typeof import.meta !== "undefined" && import.meta.env?.VITE_PROOF_QUEUE_URL) {
+    return import.meta.env.VITE_PROOF_QUEUE_URL;
+  }
+  // 2. Default — the Proof Queue is served from the same origin at the /proof route
+  //    (confirmed local dev URL: http://localhost:5173/proof). This also works in
+  //    production as long as the deployed app serves /proof the same way.
+  return window.location.origin + "/proof";
+})();
+
+// Opens the Proof Queue in a new tab, or warns if no URL is configured.
+function openProofQueueTab(onWarn) {
+  if (!PROOF_QUEUE_URL) {
+    const msg = "Proof Queue URL is not configured. Set VITE_PROOF_QUEUE_URL.";
+    if (onWarn) onWarn(msg); else alert(msg);
+    return;
+  }
+  window.open(PROOF_QUEUE_URL, "_blank", "noopener,noreferrer");
+}
 
 // ── AccessDenied ─────────────────────────────────────────────────────────────
 function AccessDenied({ message }) {
@@ -867,7 +887,7 @@ function CheckButton({ isDone, onClick }) {
 }
 
 // ─── PROJECT DETAILS MODAL ───────────────────────────────────────────────────
-function ProjectDetailsModal({ proj, people, onClose, onSave, onArchive, onDelete, onSaveAsTemplate }) {
+function ProjectDetailsModal({ proj, people, onClose, onSave, onArchive, onDelete, onSaveAsTemplate, buClients = [] }) {
   // Use proj as the source of truth; local edits stored as overrides.
   // This avoids useState timing issues where proj arrives after first render.
   const [overrides, setOverrides] = useState({});
@@ -1510,7 +1530,7 @@ function TaskModal({ item, projectColor, allItems, onClose, onSave, allPeople, o
               <button
                 onClick={() => {
                   if (linkedProof) {
-                    window.open(PROOF_QUEUE_URL, "_blank", "noopener,noreferrer");
+                    openProofQueueTab();
                   } else if (onSendToProof) {
                     onSendToProof(form);
                   }
@@ -2565,7 +2585,7 @@ function TimelineView({ projects, people, onEditItem, onAddDeliverable, onAddSub
           onAddDeliverable={onAddDeliverable} onAddSubtask={onAddSubtask}
           onMarkDone={onMarkDone} onSaveItem={onSaveItem} rowIndex={rowIndex} DAY_W={DAY_W}
           colWidths={colWidths} LEFT_W={LEFT_W} holidays={holidays}
-          onInsertSubtask={onInsertSubtask} onReorderDeliverables={onReorderDeliverables} onReorderSubtasks={onReorderSubtasks} deliverableTemplates={deliverableTemplates} onApplyTemplate={onApplyTemplate} onDeleteSubtask={onDeleteSubtask} deliverableTemplates={deliverableTemplates} onApplyTemplate={onApplyTemplate}
+          onInsertSubtask={onInsertSubtask} onReorderDeliverables={onReorderDeliverables} onReorderSubtasks={onReorderSubtasks} deliverableTemplates={deliverableTemplates} onApplyTemplate={onApplyTemplate} onDeleteSubtask={onDeleteSubtask}
           statusNotes={statusNotes} onUpdateNote={onUpdateNote}
           clipboard={clipboard} onCopySubtask={onCopySubtask} onCopyDeliverable={onCopyDeliverable}
           onPasteSubtask={onPasteSubtask} onPasteDeliverable={onPasteDeliverable}
@@ -4840,7 +4860,7 @@ function AssignedTasksManager({ tasks, people, onEdit, onDelete, onAssign }) {
 }
 
 
-function MyHubView({ projects, people, holidays, pto = [], currentUserId, onSetCurrentUser, onEditItem, onMarkDone, onSaveItem, savePto, deletePto, personalTasks = [], onSavePersonalTask, onDeletePersonalTask, currentRole = "member", authMemberId = "", authUUID = "", adminTasks = [], onSaveAdminTask, onUpdateAdminTaskStatus, onDeleteAdminTask, notifications = [], onDismissNotification, onOpenNotifTask, setToastNotif }) {
+function MyHubView({ projects, people, holidays, pto = [], currentUserId, onSetCurrentUser, onEditItem, onMarkDone, onSaveItem, savePto, deletePto, personalTasks = [], onSavePersonalTask, onDeletePersonalTask, currentRole = "member", authMemberId = "", authUUID = "", adminTasks = [], onSaveAdminTask, onUpdateAdminTaskStatus, onDeleteAdminTask, notifications = [], onDismissNotification, onOpenNotifTask, setToastNotif, onOpenProject }) {
   const TODAY = new Date(); TODAY.setHours(0,0,0,0);
 
   // Week bounds (Mon–Sun)
@@ -5028,7 +5048,11 @@ function MyHubView({ projects, people, holidays, pto = [], currentUserId, onSetC
   else { onSaveItem && onSaveItem({ ...item, status: next, projectId: item.projId, projectName: item.projName, deliverableId: item.isSubtask ? (item.deliverableId || item.delId) : null }); }
   };
   const handleOpenItem = (item) => {
-  if (item._type === "admin") { setEditingAdminTask(adminTasks.find(t=>t.id===item._key)||null); setShowAssignModal(true); }
+  if (item._type === "admin") {
+    const task = adminTasks.find(t=>t.id===item._key);
+    if (task?.projectId && onOpenProject) { onOpenProject(task.projectId); return; }
+    setEditingAdminTask(task||null); setShowAssignModal(true);
+  }
   else { onEditItem({ ...item, projectId: item.projId, projectName: item.projName, projectColor: item.projColor, deliverableId: item.isSubtask ? (item.deliverableId || item.delId) : null }); }
   };
   const in14  = new Date(todayD); in14.setDate(todayD.getDate()+14);
@@ -5289,13 +5313,14 @@ function MyHubView({ projects, people, holidays, pto = [], currentUserId, onSetC
         const readyToStart = allUnread.filter(n => n.type === "task_ready"     && n.assignedToPersonId === meId);
         const kickoffs     = allUnread.filter(n => n.type === "kickoff_requested" && n.assignedToPersonId === meId);
         const projDone     = allUnread.filter(n => n.type === "project_completed" && n.assignedToPersonId === meId);
+        const proofNew     = allUnread.filter(n => n.type === "proof_new_request" && n.assignedToPersonId === meId);
         const visibleNotifs = currentRole === "admin"
-          ? [...completions, ...assignments, ...readyToStart, ...kickoffs, ...projDone]
-          : [...assignments, ...readyToStart, ...kickoffs, ...projDone];
+          ? [...completions, ...assignments, ...readyToStart, ...kickoffs, ...projDone, ...proofNew]
+          : [...assignments, ...readyToStart, ...kickoffs, ...projDone, ...proofNew];
         if (!visibleNotifs.length) return null;
-        const typeIcon  = { task_completed:"✓", task_assigned:"+", task_ready:"▶", due_soon:"⏰", overdue:"🔴", project_completed:"🎉", kickoff_requested:"📅" };
-        const typeColor = { task_completed:"#f97316", task_assigned:BRAND_TEAL, task_ready:"#6366f1", due_soon:"#d97706", overdue:"#e24b4a", project_completed:"#10b981", kickoff_requested:"#0ea5e9" };
-        const typeLabel = { task_completed:"Task Completed", task_assigned:"Assigned to You", task_ready:"Up Next", due_soon:"Due Soon", overdue:"Overdue", project_completed:"Project Complete", kickoff_requested:"Kickoff Requested" };
+        const typeIcon  = { task_completed:"✓", task_assigned:"+", task_ready:"▶", due_soon:"⏰", overdue:"🔴", project_completed:"🎉", kickoff_requested:"📅", proof_new_request:"🔍" };
+        const typeColor = { task_completed:"#f97316", task_assigned:BRAND_TEAL, task_ready:"#6366f1", due_soon:"#d97706", overdue:"#e24b4a", project_completed:"#10b981", kickoff_requested:"#0ea5e9", proof_new_request:"#a855f7" };
+        const typeLabel = { task_completed:"Task Completed", task_assigned:"Assigned to You", task_ready:"Up Next", due_soon:"Due Soon", overdue:"Overdue", project_completed:"Project Complete", kickoff_requested:"Kickoff Requested", proof_new_request:"New Proof Request" };
         return (
           <div style={{ background:"#fff", border:"1px solid rgba(0,0,0,0.08)", borderRadius:10, overflow:"hidden" }}>
             <div style={{ padding:"12px 16px", background:"#f8fafc", borderBottom:"1px solid rgba(0,0,0,0.07)", display:"flex", alignItems:"center", justifyContent:"space-between", gap:10 }}>
@@ -5374,6 +5399,22 @@ function MyHubView({ projects, people, holidays, pto = [], currentUserId, onSetC
                         }}
                           style={{ fontSize:10, fontWeight:700, color:BRAND_TEAL, background:"rgba(80,192,192,0.1)", border:"1px solid rgba(80,192,192,0.25)", borderRadius:5, padding:"4px 9px", cursor:"pointer", fontFamily:"inherit" }}>
                           View Task
+                        </button>
+                      )}
+                      {n.type === "kickoff_requested" && n.projectId && (
+                        <button onClick={e => { e.stopPropagation(); onOpenProject && onOpenProject(n.projectId); }}
+                          style={{ fontSize:10, fontWeight:700, color:"#0ea5e9", background:"rgba(14,165,233,0.1)",
+                            border:"1px solid rgba(14,165,233,0.3)", borderRadius:5, padding:"3px 9px",
+                            cursor:"pointer", fontFamily:"inherit", whiteSpace:"nowrap" }}>
+                          Open Project ↗
+                        </button>
+                      )}
+                      {n.type === "proof_new_request" && (
+                        <button onClick={e => { e.stopPropagation(); openProofQueueTab(msg => setToastNotif({ message: msg, type: "overdue" })); }}
+                          style={{ fontSize:10, fontWeight:700, color:"#a855f7", background:"rgba(168,85,247,0.1)",
+                            border:"1px solid rgba(168,85,247,0.3)", borderRadius:5, padding:"3px 9px",
+                            cursor:"pointer", fontFamily:"inherit", whiteSpace:"nowrap" }}>
+                          Open Proof Queue ↗
                         </button>
                       )}
                       {n.type === "task_ready" && (() => {
@@ -11059,7 +11100,7 @@ function BusinessUnitsView({ people, sb, SB_READY, currentRole, currentUserId, o
     setHoursSaving(false);
   };
 
-  const DISCIPLINES = ["Account","Creative","Project Management","Strategy","Leadership","Media","Data & Analytics","Other"];
+  const DISCIPLINES = ["Account","Creative","Project Management","Strategy","Leadership","Media","Data & Analytics","Proofreading","Other"];
   const ROLE_OPTS   = [
     { v:"admin",           l:"Admin",            adminOnly:true },
     { v:"leadership",      l:"Leadership" },
@@ -12260,6 +12301,7 @@ export default function App() {
             assignedBy: t.assigned_by || "", effort: t.effort || "M",
             customHours: t.custom_hours || null, status: t.status || "Not Started",
             dueDate: t.due_date || null, notes: t.notes || "", createdAt: t.created_at,
+            projectId: t.project_id || null,
           })));
         }
       }).catch(() => {});
@@ -12337,7 +12379,7 @@ export default function App() {
       storePrefill(prefill);
       // Store people for the proofreader dropdown in the Proof Queue
       try { localStorage.setItem("proof_queue_people", JSON.stringify(people.filter(p => p.department === "Proof" || p.department === "Proofreading").map(p => ({ id: p.id, name: p.name })))); } catch {}
-      window.open(PROOF_QUEUE_URL, "_blank", "noopener,noreferrer");
+      openProofQueueTab(msg => setToastNotif({ message: msg, type: "overdue" }));
     });
   };
 
@@ -12620,10 +12662,14 @@ export default function App() {
       objective: formData.objective, earliestLaunchDate: formData.earliestLaunchDate,
       projectStatus: formData.projectStatus || "Needs Timeline",
       ownerId: formData.accountLeadId || null, teamMemberIds: [], notes: "", meta: {},
+      kickoffRequested: formData.kickoffRequested || false,
+      kickoffDate:      formData.kickoffDate      || "",
     };
 
-    // Create project
-    handleAddProject(proj);
+    // Create project — must AWAIT the DB write before creating deliverables,
+    // otherwise deliverables (which FK-reference this project) can hit the DB
+    // before the project row exists, causing a 409 Conflict.
+    await handleAddProject(proj);
 
     // Create deliverables
     const newDels = deliverableList.map((d, i) => ({
@@ -12660,13 +12706,32 @@ export default function App() {
       }, ...prev]);
       await safeNotifSave({
         id: kickoffNotifId, project_id: projId,
-        notification_type: "task_assigned",
+        notification_type: "kickoff_requested",
         message: `Kickoff meeting requested for "${formData.name}" — please schedule the Program Launch meeting.`,
         assigned_to_person_id: formData.projectManagerId,
         is_read: false, created_at: sentNow,
       });
       // Record that notification was sent
       await sb.update("projects", projId, { kickoff_notif_sent_at: sentNow }).catch(() => {});
+
+      // Also add a task to the PM's "Assigned to Me" list, linked to this project
+      const kickoffTaskId = "at_kickoff_" + projId + "_" + Date.now();
+      const kickoffTaskEntry = {
+        id: kickoffTaskId, title: `Schedule kickoff meeting: ${formData.name}`,
+        assignedTo: formData.projectManagerId, assignedBy: ownMemberId || formData.accountLeadId || null,
+        effort: "S", customHours: null, status: "Not Started",
+        dueDate: formData.kickoffDate || null,
+        notes: `Requested kickoff date: ${formData.kickoffDate || "TBD"}`,
+        createdAt: sentNow, projectId: projId,
+      };
+      setAdminTasks(prev => [kickoffTaskEntry, ...prev]);
+      await sb.upsert("admin_tasks", {
+        id: kickoffTaskId, title: kickoffTaskEntry.title, assigned_to: formData.projectManagerId,
+        assigned_by: ownMemberId || formData.accountLeadId || null,
+        effort: "S", custom_hours: null, status: "Not Started",
+        due_date: formData.kickoffDate || null, notes: kickoffTaskEntry.notes,
+        project_id: projId, created_at: sentNow,
+      }).catch(() => {});
     }
 
     // PM timeline planning notification via admin_task
@@ -12751,6 +12816,7 @@ export default function App() {
           (kickoffJustRequested || (proj.kickoffRequested && !kickoffNotifAlreadySent))) {
         const pmName = people.find(p => p.id === proj.projectManagerId)?.name || "Project Manager";
         const notifId = `notif_kickoff_${proj.id}_${Date.now()}`;
+        const sentNowDetail = new Date().toISOString();
         // Only add to local state for the PM — others see it via DB on next load
         if (ownMemberId === proj.projectManagerId) {
           setNotifications(prev => [{
@@ -12758,18 +12824,39 @@ export default function App() {
             message: `Kickoff meeting requested for "${proj.name}" — please schedule the Program Launch meeting.`,
             assignedToPersonId: proj.projectManagerId,
             projectId: proj.id, isRead: false,
-            createdAt: new Date().toISOString(),
+            createdAt: sentNowDetail,
             _projName: proj.name, _projColor: proj.color,
           }, ...prev]);
         }
         setToastNotif({ message: `Kickoff notification sent to ${pmName}`, type: "kickoff_requested" });
         if (SB_READY) safeNotifSave({
           id: notifId, project_id: proj.id,
-          notification_type: "task_assigned",   // fallback type — kickoff_requested may not be in constraint
+          notification_type: "kickoff_requested",
           message: `Kickoff meeting requested for "${proj.name}" — please schedule the Program Launch meeting.`,
           assigned_to_person_id: proj.projectManagerId,
-          is_read: false, created_at: new Date().toISOString(),
+          is_read: false, created_at: sentNowDetail,
         });
+
+        // Also add a task to the PM's "Assigned to Me" list, linked to this project
+        const kickoffTaskId2 = "at_kickoff_" + proj.id + "_" + Date.now();
+        const kickoffTaskEntry2 = {
+          id: kickoffTaskId2, title: `Schedule kickoff meeting: ${proj.name}`,
+          assignedTo: proj.projectManagerId, assignedBy: ownMemberId || proj.accountLeadId || null,
+          effort: "S", customHours: null, status: "Not Started",
+          dueDate: proj.kickoffDate || null,
+          notes: `Requested kickoff date: ${proj.kickoffDate || "TBD"}`,
+          createdAt: sentNowDetail, projectId: proj.id,
+        };
+        if (ownMemberId === proj.projectManagerId) {
+          setAdminTasks(prev => [kickoffTaskEntry2, ...prev]);
+        }
+        if (SB_READY) await sb.upsert("admin_tasks", {
+          id: kickoffTaskId2, title: kickoffTaskEntry2.title, assigned_to: proj.projectManagerId,
+          assigned_by: ownMemberId || proj.accountLeadId || null,
+          effort: "S", custom_hours: null, status: "Not Started",
+          due_date: proj.kickoffDate || null, notes: kickoffTaskEntry2.notes,
+          project_id: proj.id, created_at: sentNowDetail,
+        }).catch(() => {});
       }
 
       const payload = {
@@ -12911,7 +12998,8 @@ export default function App() {
         assigned_by: entry.assignedBy || currentUserId,
         effort: entry.effort || "M", custom_hours: entry.customHours || null,
         status: entry.status || "Not Started", due_date: entry.dueDate || null,
-        notes: entry.notes || "", updated_at: new Date().toISOString(),
+        notes: entry.notes || "", project_id: entry.projectId || null,
+        updated_at: new Date().toISOString(),
       });
     }
     // Notify only when the assignee actually changes
@@ -13375,6 +13463,7 @@ export default function App() {
           assignedToPersonId:  row.assigned_to_person_id  || null,
           completedByPersonId: row.completed_by_person_id || null,
           taskId:              row.task_id                 || null,
+          projectId:           row.project_id              || null,
           isRead:              row.is_read                 || false,
           reviewedAt:          row.reviewed_at             || null,
           createdAt:           row.created_at              || new Date().toISOString(),
@@ -13382,6 +13471,11 @@ export default function App() {
         setNotifications(prev => {
           const existingIds = new Set(prev.map(n => n.id));
           const fresh = loaded.filter(n => !existingIds.has(n.id));
+          // Pop a toast for newly-arrived proof requests so a proofreader sitting
+          // on an already-open My Hub tab actually notices, not just a quiet badge.
+          fresh.filter(n => n.type === "proof_new_request").forEach(n => {
+            setToastNotif({ id: n.id, message: n.message, type: "proof_new_request" });
+          });
           return fresh.length ? [...fresh, ...prev] : prev;
         });
       });
@@ -13389,6 +13483,11 @@ export default function App() {
 
     // Load immediately on login
     fetchNotifs();
+
+    // Keep checking periodically — without this, a proofreader sitting on an
+    // already-open My Hub tab the whole time would never see a new request
+    // notification arrive until they switched tabs or reloaded.
+    const pollInterval = setInterval(fetchNotifs, 45000);
 
     // Re-fetch when the user returns to this tab (e.g. from Proof Queue)
     const onVisible = () => {
@@ -13421,7 +13520,10 @@ export default function App() {
       } catch {}
     };
     document.addEventListener("visibilitychange", onVisible);
-    return () => document.removeEventListener("visibilitychange", onVisible);
+    return () => {
+      clearInterval(pollInterval);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
   }, [ownMemberId, SB_READY]);
 
 
@@ -13583,7 +13685,7 @@ export default function App() {
         <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }} >
 
           {/* ── PROOF QUEUE ── */}
-          <button onClick={() => { try { localStorage.setItem("proof_queue_people", JSON.stringify(people)); } catch(e){} window.open(PROOF_QUEUE_URL, "_blank", "noopener,noreferrer"); }} 
+          <button onClick={() => { try { localStorage.setItem("proof_queue_people", JSON.stringify(people)); } catch(e){} openProofQueueTab(msg => setToastNotif({ message: msg, type: "overdue" })); }} 
             title="Open Proof Queue in new tab"
             style={{ background:"rgba(80,192,192,0.15)", border:"1px solid rgba(80,192,192,0.4)", color:"#50C0C0",
               borderRadius:6, padding:"4px 10px", cursor:"pointer", fontSize:12, fontFamily:"inherit", fontWeight:700, flexShrink:0 }}>
@@ -13770,13 +13872,14 @@ export default function App() {
                 // Proof queue completion — open proof queue with the request pre-highlighted
                 try { localStorage.setItem("proof_queue_people", JSON.stringify(people)); } catch(e) {}
                 if (notif.taskId) try { localStorage.setItem("proof_open_request_id", notif.taskId); } catch(e) {}
-                window.open(PROOF_QUEUE_URL, "_blank", "noopener,noreferrer");
+                openProofQueueTab(msg => setToastNotif({ message: msg, type: "overdue" }));
               } else {
                 const proj = projects.find(p => p.id === notif.projectId);
                 const del  = proj?.deliverables.find(d => d.id === notif.deliverableId);
                 if (del) handleEditItem({ ...del, projectId: proj.id, projectName: proj.name, projectColor: proj.color });
               }
             }}
+            onOpenProject={(id) => setProjectDetailsId(id)}
           />
         )}
         {view === "dashboard" && <DashboardView projects={projects} people={people} holidays={holidays} pto={pto} savePto={savePto} onEditItem={handleEditItem} onAddDeliverable={(proj) => setNewDeliverable(proj)} onAddSubtask={(proj, del) => setNewSubtask({ project: proj, deliverable: del })} onNewProject={() => setShowInitiation(true)} onOpenProject={id => setProjectDetailsId(id)} />}
@@ -14049,6 +14152,7 @@ export default function App() {
           onArchive={(id) => { handleArchiveProject(id); setProjectDetailsId(null); }}
           onDelete={(id) => { handleDeleteProject(id); setProjectDetailsId(null); }}
           onSaveAsTemplate={(proj) => { handleSaveAsTemplate(proj); }}
+          buClients={buClients}
         />
       )}
       {editingItem && (
@@ -14110,12 +14214,18 @@ export default function App() {
         <div style={{ position:"fixed", bottom:24, right:24, zIndex:9999, maxWidth:360, width:"calc(100vw - 48px)",
           background:"#1e293b", color:"#f8fafc", borderRadius:12, padding:"14px 16px",
           boxShadow:"0 8px 32px rgba(0,0,0,0.35)", display:"flex", alignItems:"flex-start", gap:12 }}>
-          <div style={{ width:32, height:32, borderRadius:"50%", background:toastNotif.type==="task_assigned"?BRAND_TEAL:"#34d399", display:"flex", alignItems:"center", justifyContent:"center", fontSize:15, flexShrink:0 }}>
-            {toastNotif.type === "task_assigned" ? "◎" : "✓"}
+          <div style={{ width:32, height:32, borderRadius:"50%",
+            background: toastNotif.type==="task_assigned" ? BRAND_TEAL
+                      : toastNotif.type==="proof_new_request" ? "#a855f7"
+                      : "#34d399",
+            display:"flex", alignItems:"center", justifyContent:"center", fontSize:15, flexShrink:0 }}>
+            {toastNotif.type === "task_assigned" ? "◎" : toastNotif.type === "proof_new_request" ? "🔍" : "✓"}
           </div>
           <div style={{ flex:1, minWidth:0 }}>
             <div style={{ fontSize:12, fontWeight:700, color:"#f8fafc", marginBottom:3 }}>
-              {toastNotif.type === "task_assigned" ? "Task Assigned" : "Task Completed"}
+              {toastNotif.type === "task_assigned" ? "Task Assigned"
+                : toastNotif.type === "proof_new_request" ? "New Proof Request"
+                : "Task Completed"}
             </div>
             <div style={{ fontSize:11, color:"rgba(248,250,252,0.7)", lineHeight:1.45 }}>{toastNotif.message}</div>
           </div>
