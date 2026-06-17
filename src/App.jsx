@@ -7168,7 +7168,7 @@ function KPIDashboardView({ projects, people, notifications, adminTasks = [], sb
 }
 
 
-function ReportingDashboardView({ projects, people, holidays = [], pto = [], adminTasks = [], sb, SB_READY, currentRole }) {
+function ReportingDashboardView({ projects, people, holidays = [], pto = [], adminTasks = [], sb, SB_READY, currentRole, onNavigateToBusinessUnits }) {
   // Export center data is passed from parent props
   const [drawer, setDrawer] = useState(null); // { title, subtitle, rows, cols, groupBy }
   const [drillClient, setDrillClient] = useState(null);
@@ -7196,6 +7196,57 @@ function ReportingDashboardView({ projects, people, holidays = [], pto = [], adm
       .catch(() => {})
       .finally(() => setAllocLoading(false));
   }, [SB_READY, forecastYear]);
+
+  // ── Business unit scope data — used to automatically determine whether a
+  // client is "this person's own team" vs. "other team," based on actual
+  // scope membership rather than a manually-set flag.
+  const [buClientsRDV, setBuClientsRDV] = React.useState([]);
+  const [buMembersRDV, setBuMembersRDV] = React.useState([]);
+  React.useEffect(() => {
+    if (!SB_READY) return;
+    Promise.all([
+      sb.select("business_unit_clients", "select=client_name,business_unit_id"),
+      sb.select("business_unit_members", "select=person_id,business_unit_id"),
+    ]).then(([c, m]) => {
+      if (c.error) console.warn("[Forecast] business_unit_clients fetch error:", c.error);
+      if (m.error) console.warn("[Forecast] business_unit_members fetch error:", m.error);
+      console.log("[Forecast] business_unit_clients loaded:", c.data?.length || 0, c.data);
+      console.log("[Forecast] business_unit_members loaded:", m.data?.length || 0, m.data);
+      if (c.data) setBuClientsRDV(c.data);
+      if (m.data) setBuMembersRDV(m.data);
+    }).catch(e => console.warn("[Forecast] BU scope fetch threw:", e.message));
+  }, [SB_READY]);
+
+  // client name → business_unit_id (which scope a client belongs to, if any)
+  const clientToBuId = React.useMemo(() => {
+    const map = {};
+    buClientsRDV.forEach(c => { map[c.client_name] = c.business_unit_id; });
+    return map;
+  }, [buClientsRDV]);
+
+  // person_id → Set of business_unit_ids they're a member of (can be multiple —
+  // e.g. a shared resource on more than one account director's scope)
+  const personBuIds = React.useMemo(() => {
+    const map = {};
+    buMembersRDV.forEach(m => {
+      if (!map[m.person_id]) map[m.person_id] = new Set();
+      map[m.person_id].add(m.business_unit_id);
+    });
+    return map;
+  }, [buMembersRDV]);
+
+  // A client only counts as "other team" for a person if it's configured
+  // under some account director's scope AND that person isn't a member of
+  // that scope. Clients with no configured scope, or scopes the person does
+  // belong to, are always treated as the person's own team — so someone
+  // belonging to multiple scopes (e.g. Jennifer) sees everything in any of
+  // her scopes as her own team, never flagged as "other."
+  const isClientOtherTeamFor = (pid, client) => {
+    const buId = clientToBuId[client];
+    if (!buId) return false; // unconfigured client — treat as own team by default
+    const memberOf = personBuIds[pid];
+    return !memberOf || !memberOf.has(buId);
+  };
 
   const saveAlloc = async () => {
     if (!allocForm.person_id || !allocForm.client.trim() || !allocForm.hours) return;
@@ -7239,6 +7290,30 @@ function ReportingDashboardView({ projects, people, holidays = [], pto = [], adm
     return map;
   }, [projects, forecastYear]);
 
+  // ── Spent hours: sum effort by person × client for COMPLETED tasks ending in forecastYear ──
+  // This is the "actual hours used so far" figure — a subset of the full forecastedByPersonClient
+  // total above, narrowed to work that's actually Done rather than still scheduled/planned.
+  const spentByPersonClient = React.useMemo(() => {
+    const map = {};
+    projects.forEach(proj => {
+      if (!proj.client) return;
+      const tasks = proj.deliverables.flatMap(d =>
+        d.subtasks.length > 0 ? d.subtasks : [d]
+      );
+      tasks.forEach(t => {
+        if (t.status !== "Done") return;
+        const endYear = t.end ? new Date(t.end + "T00:00:00").getFullYear() : null;
+        if (endYear !== forecastYear) return;
+        const hrs = eHrs(t);
+        (t.assignees || []).forEach(pid => {
+          if (!map[pid]) map[pid] = {};
+          map[pid][proj.client] = (map[pid][proj.client] || 0) + hrs;
+        });
+      });
+    });
+    return map;
+  }, [projects, forecastYear]);
+
   const today = new Date(); today.setHours(0,0,0,0);
   // ── Pace: % of year elapsed at today ─────────────────────────────────────
   const yearStart = new Date(forecastYear, 0, 1);
@@ -7268,23 +7343,66 @@ function ReportingDashboardView({ projects, people, holidays = [], pto = [], adm
       const clientRows = Array.from(clients).map(client => {
         const alloc = personAllocs.find(a => a.client === client);
         const allocHrs = alloc ? Number(alloc.allocated_hours) : 0;
+        const billedHrs = alloc ? Number(alloc.billed_hours || 0) : 0;
+        // Forecasted = pure PulseX number — every task ending this year, done or not.
+        // This answers "based on what's currently scheduled in PulseX, how many
+        // hours am I on track to log this client by year end."
         const forecastHrs = Math.round((forecastedByPersonClient[pid]?.[client] || 0) * 10) / 10;
+        // Spent = hours actually used so far — completed PulseX tasks, plus any
+        // manually entered billed hours (real work that may not be reflected as
+        // a Done task yet, e.g. work billed before adopting task-level tracking).
+        const taskSpentHrs = spentByPersonClient[pid]?.[client] || 0;
+        const spentHrs = Math.round((taskSpentHrs + billedHrs) * 10) / 10;
         const pacedHrs = Math.round(allocHrs * pacePct);
-        // Use explicit is_other_team flag set in the modal — not auto-detected
-        const isOtherTeam = alloc ? (alloc.is_other_team || false) : false;
-        return { client, allocHrs, forecastHrs, pacedHrs, isOtherTeam };
+        // taskFuture = forward-looking scheduled work still ahead in PulseX
+        // (forecastHrs includes done+not-done task hours; subtracting the
+        // task-only spent portion isolates what's still planned ahead).
+        // This catches the case where "Spent" looks fine only because of a
+        // manual billed entry, while nothing is actually scheduled in PulseX
+        // to cover the rest of the allocation — billed-to-date alone doesn't
+        // mean there's a plan for what's left.
+        const taskFuture = Math.max(0, forecastHrs - taskSpentHrs);
+        const remainingAlloc = Math.max(0, allocHrs - spentHrs);
+        const needsPlanning = allocHrs > 0 && remainingAlloc > allocHrs * 0.1 && taskFuture === 0;
+        // A client is individually behind pace if its own spent-to-date falls
+        // short of its own paced target — checked per client so a large
+        // on-track client can't mathematically hide a small lagging one when
+        // everything gets summed together at the person level.
+        const clientBehind = pacedHrs > 0 && spentHrs < pacedHrs * 0.85;
+        // Automatically derived from actual scope membership — see isClientOtherTeamFor.
+        const isOtherTeam = isClientOtherTeamFor(pid, client);
+        if (typeof window !== "undefined" && window.__PULSEX_DEBUG_SCOPE__) {
+          console.log(`[Forecast] ${person.name} / "${client}" → buId=${clientToBuId[client] || "none"}, ` +
+            `personBuIds=${[...(personBuIds[pid] || [])].join(",") || "none"}, isOtherTeam=${isOtherTeam}`);
+        }
+        return { client, allocHrs, billedHrs, spentHrs, forecastHrs, pacedHrs, taskFuture, needsPlanning, clientBehind, isOtherTeam };
       }).sort((a, b) => b.allocHrs - a.allocHrs);
       const totalForecasted  = Math.round(clientRows.reduce((s,r) => s + r.forecastHrs, 0) * 10) / 10;
       const myClientRows     = clientRows.filter(r => !r.isOtherTeam);
       const myAllocated      = myClientRows.reduce((s,r) => s + r.allocHrs, 0);
       const myForecasted     = Math.round(myClientRows.reduce((s,r) => s + r.forecastHrs, 0) * 10) / 10;
+      const mySpent          = Math.round(myClientRows.reduce((s,r) => s + r.spentHrs, 0) * 10) / 10;
       const myPaced          = Math.round(myAllocated * pacePct);
-      const gap              = myForecasted - myPaced;
-      const status           = myPaced === 0 ? "no-data"
-                             : myForecasted >= myPaced * 0.85 ? "on-track" : "behind";
-      return { person, totalAllocated, totalForecasted, myAllocated, myForecasted, myPaced, gap, status, clientRows };
+      // Position is based primarily on actual hours spent to date vs. the
+      // paced target — but a client with no forward-looking PulseX plan to
+      // cover its remaining allocation is flagged regardless of how the
+      // to-date pace ratio looks, since "spent okay so far" doesn't mean
+      // "on track to finish," if nothing is scheduled to get there.
+      // Likewise, the BLENDED total can look fine purely because a large
+      // client's surplus offsets a smaller client's shortfall — so the
+      // status also escalates to "behind" if any individual client is
+      // significantly behind its own pace, even if the net sum isn't.
+      const gap              = mySpent - myPaced;
+      const anyNeedsPlanning = myClientRows.some(r => r.needsPlanning);
+      const anyClientBehind  = myClientRows.some(r => r.clientBehind);
+      const isBehindPace     = anyClientBehind || (myPaced > 0 && mySpent < myPaced * 0.85);
+      const status           = anyNeedsPlanning ? "needs-planning"
+                             : isBehindPace ? "behind"
+                             : myPaced === 0 ? "no-data"
+                             : "on-track";
+      return { person, totalAllocated, totalForecasted, myAllocated, myForecasted, mySpent, myPaced, gap, status, isBehindPace, clientRows };
     }).filter(Boolean).sort((a,b) => (b.totalAllocated||0) - (a.totalAllocated||0));
-  }, [allocations, forecastedByPersonClient, people, pacePct]);
+  }, [allocations, forecastedByPersonClient, spentByPersonClient, people, pacePct, clientToBuId, personBuIds]);
 
   // today defined above
   const todayStr = today.toISOString().slice(0,10);
@@ -7577,9 +7695,10 @@ function ReportingDashboardView({ projects, people, holidays = [], pto = [], adm
         const NAVY2 = "#002A4E", TEAL2 = "#00B5B5";
         const fmt = n => typeof n === "number" ? Math.round(n).toLocaleString() : n;
         const statusMeta = {
-          "on-track":  { label: "On pace",     color: "#10b981", bg: "rgba(16,185,129,0.08)"  },
-          "behind":    { label: "Behind pace", color: "#f97316", bg: "rgba(249,115,22,0.08)"  },
-          "no-data":   { label: "No data",     color: "#9ca3af", bg: "rgba(0,0,0,0.04)"       },
+          "on-track":      { label: "On pace",        color: "#10b981", bg: "rgba(16,185,129,0.08)"  },
+          "behind":        { label: "Behind pace",     color: "#f97316", bg: "rgba(249,115,22,0.08)"  },
+          "needs-planning":{ label: "Needs planning",  color: "#ef4444", bg: "rgba(239,68,68,0.08)"   },
+          "no-data":       { label: "No data",         color: "#9ca3af", bg: "rgba(0,0,0,0.04)"       },
         };
         return (
           <div style={{ background:"#fff", border:"1px solid rgba(0,0,0,0.08)", borderRadius:10, overflow:"hidden" }}>
@@ -7615,7 +7734,7 @@ function ReportingDashboardView({ projects, people, holidays = [], pto = [], adm
                   Manage allocations per person and client in
                   <span style={{ color:"#00B5B5", fontWeight:700 }}> Business Units</span>
                 </div>
-                <button onClick={() => {}} style={{ fontSize:11, padding:"4px 12px",
+                <button onClick={() => onNavigateToBusinessUnits && onNavigateToBusinessUnits()} style={{ fontSize:11, padding:"4px 12px",
                   background:"none", border:"1px solid rgba(0,181,181,0.4)", borderRadius:6,
                   color:"#00B5B5", cursor:"pointer", fontFamily:"inherit", fontWeight:600 }}>
                   Go to Business Units ↗
@@ -7633,8 +7752,9 @@ function ReportingDashboardView({ projects, people, holidays = [], pto = [], adm
                   <thead>
                     <tr style={{ borderBottom:"1.5px solid rgba(0,0,0,0.08)" }}>
                       <th style={{ fontSize:9, fontWeight:700, color:"#9ca3af", textTransform:"uppercase", letterSpacing:".05em", padding:"6px 0", textAlign:"left" }}>Person</th>
-                      <th style={{ fontSize:9, fontWeight:700, color:"#9ca3af", textTransform:"uppercase", letterSpacing:".05em", padding:"6px 8px", textAlign:"right" }}>Total allocated</th>
-                      <th style={{ fontSize:9, fontWeight:700, color:"#9ca3af", textTransform:"uppercase", letterSpacing:".05em", padding:"6px 8px", textAlign:"right" }}>My scope forecast</th>
+                      <th style={{ fontSize:9, fontWeight:700, color:"#9ca3af", textTransform:"uppercase", letterSpacing:".05em", padding:"6px 8px", textAlign:"right" }}>Allocated</th>
+                      <th style={{ fontSize:9, fontWeight:700, color:"#9ca3af", textTransform:"uppercase", letterSpacing:".05em", padding:"6px 8px", textAlign:"right" }}>Spent</th>
+                      <th style={{ fontSize:9, fontWeight:700, color:"#9ca3af", textTransform:"uppercase", letterSpacing:".05em", padding:"6px 8px", textAlign:"right" }}>Forecasted (PulseX)</th>
                       <th style={{ fontSize:9, fontWeight:700, color:"#9ca3af", textTransform:"uppercase", letterSpacing:".05em", padding:"6px 8px", textAlign:"right" }}>Paced target</th>
                       <th style={{ fontSize:9, fontWeight:700, color:"#9ca3af", textTransform:"uppercase", letterSpacing:".05em", padding:"6px 8px", textAlign:"right" }}>Gap</th>
                       <th style={{ fontSize:9, fontWeight:700, color:"#9ca3af", textTransform:"uppercase", letterSpacing:".05em", padding:"6px 8px", textAlign:"left" }}>Status</th>
@@ -7646,8 +7766,7 @@ function ReportingDashboardView({ projects, people, holidays = [], pto = [], adm
                       const expanded = expandedPersons.has(row.person.id);
                       const sm = statusMeta[row.status];
                       const gapColor = row.gap >= 0 ? "#10b981" : "#f97316";
-                      const otherRows = row.clientRows.filter(r => r.isOtherTeam || !projects.some(p => p.client === r.client));
-                      const myRows    = row.clientRows.filter(r => !r.isOtherTeam && projects.some(p => p.client === r.client));
+                      const otherRows = row.clientRows.filter(r => r.isOtherTeam);
                       return (
                         <React.Fragment key={row.person.id}>
                           <tr style={{ borderBottom:"1px solid rgba(0,0,0,0.05)", cursor:"pointer" }}
@@ -7673,6 +7792,9 @@ function ReportingDashboardView({ projects, people, holidays = [], pto = [], adm
                               )}
                             </td>
                             <td style={{ padding:"10px 8px", textAlign:"right", fontVariantNumeric:"tabular-nums", fontWeight:600 }}>
+                              {fmt(row.mySpent)}h
+                            </td>
+                            <td style={{ padding:"10px 8px", textAlign:"right", fontVariantNumeric:"tabular-nums", fontWeight:600 }}>
                               {fmt(row.myForecasted)}h
                             </td>
                             <td style={{ padding:"10px 8px", textAlign:"right", fontVariantNumeric:"tabular-nums", color:"#6b7280" }}>
@@ -7685,8 +7807,16 @@ function ReportingDashboardView({ projects, people, holidays = [], pto = [], adm
                             <td style={{ padding:"10px 8px" }}>
                               <span style={{ fontSize:10, fontWeight:700, padding:"2px 8px", borderRadius:10,
                                 color:sm.color, background:sm.bg }}>
-                                {sm.label}
+                                {row.status === "needs-planning" && row.isBehindPace ? "Behind & needs planning" : sm.label}
                               </span>
+                              {row.status === "behind" && row.gap >= 0 && (() => {
+                                const laggingCount = row.clientRows.filter(r => !r.isOtherTeam && r.clientBehind).length;
+                                return laggingCount > 0 ? (
+                                  <div style={{ fontSize:9, color:"#f97316", marginTop:3 }}>
+                                    {laggingCount} client{laggingCount !== 1 ? "s" : ""} lagging despite net total
+                                  </div>
+                                ) : null;
+                              })()}
                             </td>
                             <td style={{ padding:"10px 0", textAlign:"right", color:"#9ca3af", fontSize:11 }}>
                               {expanded ? "▲" : "▼"}
@@ -7702,9 +7832,25 @@ function ReportingDashboardView({ projects, people, holidays = [], pto = [], adm
                               <td style={{ padding:"6px 8px", textAlign:"right", fontSize:11, color:"#6b7280" }}>
                                 {fmt(cr.allocHrs)}h allocated
                               </td>
+                              <td style={{ padding:"6px 8px", textAlign:"right", fontSize:11, fontWeight:cr.spentHrs>0?600:400,
+                                color:cr.isOtherTeam?"#9ca3af":cr.spentHrs>0?"#374151":"#9ca3af" }}>
+                                {cr.isOtherTeam ? "—" : fmt(cr.spentHrs)+"h"}
+                                {!cr.isOtherTeam && cr.billedHrs > 0 && (
+                                  <span title={`Includes ${fmt(cr.billedHrs)}h manually entered as billed`}
+                                    style={{ fontSize:9, color:"#0ea5e9", fontWeight:700, marginLeft:4 }}>
+                                    (+{fmt(cr.billedHrs)} billed)
+                                  </span>
+                                )}
+                              </td>
                               <td style={{ padding:"6px 8px", textAlign:"right", fontSize:11, fontWeight:cr.forecastHrs>0?600:400,
                                 color:cr.isOtherTeam?"#9ca3af":cr.forecastHrs>0?"#374151":"#9ca3af" }}>
                                 {cr.isOtherTeam ? "—" : fmt(cr.forecastHrs)+"h"}
+                                {!cr.isOtherTeam && cr.needsPlanning && (
+                                  <span title="No remaining work scheduled in PulseX for this client"
+                                    style={{ fontSize:9, color:"#ef4444", fontWeight:700, marginLeft:4 }}>
+                                    ⚠ nothing scheduled
+                                  </span>
+                                )}
                               </td>
                               <td style={{ padding:"6px 8px", textAlign:"right", fontSize:11, color:"#9ca3af" }}>
                                 {cr.isOtherTeam ? "—" : fmt(cr.pacedHrs)+"h"}
@@ -7713,11 +7859,11 @@ function ReportingDashboardView({ projects, people, holidays = [], pto = [], adm
                                 {!cr.isOtherTeam && cr.allocHrs > 0 && (
                                   <div style={{ display:"flex", alignItems:"center", gap:6, padding:"0 8px" }}>
                                     <div style={{ flex:1, height:4, background:"#f3f4f6", borderRadius:2, maxWidth:120 }}>
-                                      <div style={{ height:4, borderRadius:2, background:cr.forecastHrs/cr.allocHrs>=0.85?"#10b981":"#f97316",
-                                        width:`${Math.min(100,Math.round(cr.forecastHrs/cr.allocHrs*100))}%` }} />
+                                      <div style={{ height:4, borderRadius:2, background:cr.needsPlanning?"#ef4444":cr.spentHrs/cr.allocHrs>=0.85?"#10b981":"#f97316",
+                                        width:`${Math.min(100,Math.round(cr.spentHrs/cr.allocHrs*100))}%` }} />
                                     </div>
                                     <span style={{ fontSize:10, color:"#6b7280", whiteSpace:"nowrap" }}>
-                                      {cr.allocHrs>0?Math.round(cr.forecastHrs/cr.allocHrs*100):0}% of allocation
+                                      {cr.allocHrs>0?Math.round(cr.spentHrs/cr.allocHrs*100):0}% of allocation spent
                                     </span>
                                   </div>
                                 )}
@@ -7967,173 +8113,6 @@ function ReportingDashboardView({ projects, people, holidays = [], pto = [], adm
           ))}
         </div>
       </Card>
-
-
-      {/* ── Client Hour Forecasting ── */}
-      {(() => {
-        const yearStart = new Date(today.getFullYear(), 0, 1);
-        const yearEnd   = new Date(today.getFullYear(), 11, 31);
-        const yearStartStr = yearStart.toISOString().slice(0,10);
-        const yearEndStr   = yearEnd.toISOString().slice(0,10);
-        const daysInYear   = Math.ceil((yearEnd - yearStart) / 86400000) + 1;
-        const dayOfYear    = Math.ceil((today - yearStart) / 86400000) + 1;
-        const pctYearElapsed = dayOfYear / daysInYear;
-
-        // Client tasks = project tasks + admin-assigned tasks
-        const projectClientTasks = projects.flatMap(p =>
-          p.deliverables.flatMap(d => {
-            const tasks = d.subtasks.length > 0 ? d.subtasks : [d];
-            return tasks.map(t => ({
-              ...t,
-              proj: p,
-              hrs: effortHrs(t.effort, t.customHours),
-              assignees: t.assignees || [],
-            }));
-          })
-        );
-        // Admin-assigned tasks count as a single-person assignment
-        const adminClientTasks = adminTasks.map(t => ({
-          ...t,
-          assignees: [t.assignedTo],
-          hrs: effortHrs(t.effort, t.customHours),
-          end: t.dueDate || todayStr,
-          isAdminTask: true,
-        }));
-        const clientTasks = [...projectClientTasks, ...adminClientTasks];
-
-        const forecasts = people.map(person => {
-          const myTasks = clientTasks.filter(t =>
-            (t.assignees || []).includes(person.id)
-          );
-          const target = person.annualTarget || 1850;
-
-          // YTD completed: tasks marked Done with end date this year
-          const ytdDone = myTasks
-            .filter(t => t.status === "Done" && t.end >= yearStartStr && t.end <= todayStr)
-            .reduce((s, t) => s + t.hrs, 0);
-
-          // Planned future: not Done, end date from today through year end
-          const plannedFuture = myTasks
-            .filter(t => t.status !== "Done" && t.end > todayStr && t.end <= yearEndStr)
-            .reduce((s, t) => s + t.hrs, 0);
-
-          // In-progress partial: count at 50%
-          const inProgressPartial = myTasks
-            .filter(t => t.status === "In Progress" && t.end <= todayStr)
-            .reduce((s, t) => s + t.hrs * 0.5, 0);
-
-          const completedHrs = Math.round(ytdDone + inProgressPartial);
-          const forecastedHrs = Math.round(completedHrs + plannedFuture);
-          const pctOfTarget = target > 0 ? Math.round((forecastedHrs / target) * 100) : 0;
-
-          // Neutral pace label — not surveillance language
-          let paceLabel, paceColor;
-          if (forecastedHrs === 0 && completedHrs === 0) {
-            paceLabel = "No Tasks Planned"; paceColor = "#9ca3af";
-          } else if (pctOfTarget >= 95 && pctOfTarget <= 110) {
-            paceLabel = "On Pace";         paceColor = "#34d399";
-          } else if (pctOfTarget > 110) {
-            paceLabel = "Above Forecast";  paceColor = "#6366f1";
-          } else if (pctOfTarget >= 75) {
-            paceLabel = "Below Forecast";  paceColor = "#fbbf24";
-          } else {
-            paceLabel = "Capacity Not Planned"; paceColor = "#f97316";
-          }
-
-          return { person, target, completedHrs, plannedFuture: Math.round(plannedFuture), forecastedHrs, pctOfTarget, paceLabel, paceColor, myTasks: myTasks.length };
-        });
-
-        const totalForecasted = forecasts.reduce((s, f) => s + f.forecastedHrs, 0);
-        const totalTarget     = forecasts.reduce((s, f) => s + f.target, 0);
-        const portfolioPct    = totalTarget > 0 ? Math.round((totalForecasted / totalTarget) * 100) : 0;
-
-        return (
-          <Card style={{ gridColumn: "1 / -1" }}>
-            <div style={{ display:"flex", alignItems:"flex-start", justifyContent:"space-between", marginBottom:14, flexWrap:"wrap", gap:10 }}>
-              <div>
-                <SectionTitle>Client Hour Forecasting</SectionTitle>
-                <div style={{ fontSize:10, color:"#9ca3af", marginTop:2 }}>
-                  Based on planned task estimates, not actual time entry. · {today.getFullYear()} · {Math.round(pctYearElapsed*100)}% of year elapsed
-                </div>
-              </div>
-              <div style={{ display:"flex", alignItems:"center", gap:10 }}>
-                <div style={{ textAlign:"right" }}>
-                  <div style={{ fontSize:11, color:"#6b7280", fontWeight:600 }}>Portfolio Forecast</div>
-                  <div style={{ fontSize:20, fontWeight:900, color: portfolioPct >= 90 ? "#34d399" : portfolioPct >= 70 ? "#fbbf24" : "#f97316" }}>
-                    {totalForecasted.toLocaleString()}h
-                  </div>
-                  <div style={{ fontSize:10, color:"#9ca3af" }}>vs {totalTarget.toLocaleString()}h target · {portfolioPct}%</div>
-                </div>
-              </div>
-            </div>
-
-            {/* Progress bar for portfolio */}
-            <div style={{ height:6, background:"rgba(0,0,0,0.06)", borderRadius:3, overflow:"hidden", marginBottom:18 }}>
-              <div style={{ height:"100%", width:`${Math.min(100,portfolioPct)}%`, background: portfolioPct>=90?"#34d399":portfolioPct>=70?"#fbbf24":"#f97316", borderRadius:3, transition:"width 0.4s" }} />
-            </div>
-
-            {/* Per-person rows */}
-            <div style={{ display:"flex", flexDirection:"column", gap:0 }}>
-              {/* Header */}
-              <div style={{ display:"grid", gridTemplateColumns:"160px 1fr 70px 70px 80px 80px 110px", gap:0, padding:"0 0 8px 0", borderBottom:"1px solid rgba(0,0,0,0.07)", marginBottom:4 }}>
-                {["Person","Forecast Progress","Done","Planned","Forecast","Target","Status"].map((h,i) => (
-                  <div key={i} style={{ fontSize:9, fontWeight:700, color:"#9ca3af", letterSpacing:"0.07em", textTransform:"uppercase", padding:"0 8px" }}>{h}</div>
-                ))}
-              </div>
-
-              {forecasts.map(({ person, target, completedHrs, plannedFuture, forecastedHrs, pctOfTarget, paceLabel, paceColor }) => {
-                const barCompleted = target > 0 ? Math.min(100, Math.round((completedHrs / target) * 100)) : 0;
-                const barPlanned   = target > 0 ? Math.min(100 - barCompleted, Math.round((plannedFuture / target) * 100)) : 0;
-                return (
-                  <div key={person.id} style={{ display:"grid", gridTemplateColumns:"160px 1fr 70px 70px 80px 80px 110px", gap:0, padding:"10px 0", borderBottom:"1px solid rgba(0,0,0,0.04)", alignItems:"center" }}>
-                    {/* Person */}
-                    <div style={{ display:"flex", alignItems:"center", gap:8, padding:"0 8px" }}>
-                      <div style={{ width:24, height:24, borderRadius:"50%", background:person.color, display:"flex", alignItems:"center", justifyContent:"center", fontSize:8, fontWeight:800, color:"#fff", flexShrink:0 }}>
-                        {person.name.split(" ").map(n=>n[0]).join("").slice(0,2)}
-                      </div>
-                      <span style={{ fontSize:11, fontWeight:600, color:"#1f2937", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{person.name}</span>
-                    </div>
-
-                    {/* Stacked progress bar */}
-                    <div style={{ padding:"0 8px" }}>
-                      <div style={{ height:8, background:"rgba(0,0,0,0.06)", borderRadius:4, overflow:"hidden", display:"flex" }}>
-                        <div style={{ height:"100%", width:`${barCompleted}%`, background:"#34d399", borderRadius:"4px 0 0 4px", flexShrink:0 }} />
-                        <div style={{ height:"100%", width:`${barPlanned}%`, background:"rgba(99,102,241,0.35)", flexShrink:0 }} />
-                      </div>
-                      <div style={{ fontSize:9, color:"#9ca3af", marginTop:3 }}>
-                        <span style={{ color:"#059669" }}>■</span> Done &nbsp;
-                        <span style={{ color:"#6366f1" }}>■</span> Planned
-                      </div>
-                    </div>
-
-                    {/* Numbers */}
-                    <div style={{ padding:"0 8px", fontSize:11, fontWeight:700, color:"#059669", textAlign:"right" }}>{completedHrs}h</div>
-                    <div style={{ padding:"0 8px", fontSize:11, fontWeight:600, color:"#6366f1", textAlign:"right" }}>{plannedFuture}h</div>
-                    <div style={{ padding:"0 8px", fontSize:12, fontWeight:800, color:"#1f2937", textAlign:"right" }}>{forecastedHrs}h</div>
-                    <div style={{ padding:"0 8px", fontSize:11, color:"#9ca3af", textAlign:"right" }}>{target.toLocaleString()}h</div>
-
-                    {/* Status badge */}
-                    <div style={{ padding:"0 8px" }}>
-                      <span style={{ fontSize:9, fontWeight:700, color:paceColor, background:`${paceColor}18`, borderRadius:4, padding:"3px 7px", whiteSpace:"nowrap" }}>
-                        {paceLabel}
-                      </span>
-                      <div style={{ fontSize:9, color:"#9ca3af", marginTop:2 }}>{pctOfTarget}% of target</div>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-
-            {/* Disclaimer */}
-            <div style={{ marginTop:16, padding:"10px 14px", background:"rgba(0,0,0,0.02)", borderRadius:6, borderLeft:"3px solid rgba(0,0,0,0.08)" }}>
-              <div style={{ fontSize:10, color:"#9ca3af", lineHeight:1.6 }}>
-                <b style={{ color:"#6b7280" }}>About this view:</b> Hours are estimated from task size (S=1h, M=4h, L=8h, Custom=entered value). Completed hours reflect tasks marked Done or In Progress this year. Forecasted hours add planned future tasks through year-end. This is a planning tool — adjust annual targets per person in ⚙ Team Settings.
-              </div>
-            </div>
-          </Card>
-        );
-      })()}
-
 
       {/* TIME ALLOCATION REPORT — by person → project number / client */}
 
@@ -11085,6 +11064,7 @@ function BusinessUnitsView({ people, sb, SB_READY, currentRole, currentUserId, o
   const [saving,       setSaving]       = React.useState(false);
   const [hoursYear,    setHoursYear]    = React.useState(new Date().getFullYear());
   const [hoursEdits,   setHoursEdits]   = React.useState({}); // key: personId_client → hours string
+  const [billedEdits,  setBilledEdits]  = React.useState({}); // key: personId_client → billed hours string
   const [hoursSaving,  setHoursSaving]  = React.useState(false);
   const [clientModal,  setClientModal]  = React.useState(null); // null | { id, business_unit_id, client_name, project_number }
   const [clientSaving, setClientSaving] = React.useState(false);
@@ -11115,6 +11095,13 @@ function BusinessUnitsView({ people, sb, SB_READY, currentRole, currentUserId, o
     return existing ? String(existing.allocated_hours) : '';
   };
 
+  const getBilledHours = (pid, client) => {
+    const k = hoursKey(pid, client);
+    if (billedEdits[k] !== undefined) return billedEdits[k];
+    const existing = allocations.find(a => a.person_id === pid && a.client === client && a.year === hoursYear);
+    return existing && existing.billed_hours != null ? String(existing.billed_hours) : '';
+  };
+
   const [allocations, setAllocations] = React.useState([]);
   React.useEffect(() => {
     if (!SB_READY) return;
@@ -11127,22 +11114,30 @@ function BusinessUnitsView({ people, sb, SB_READY, currentRole, currentUserId, o
     const mems  = unitMembers(unitId);
     const clis  = unitClients(unitId);
     await Promise.all(mems.flatMap(m => clis.map(async c => {
-      const k   = hoursKey(m.person_id, c.client_name);
-      const val = hoursEdits[k];
-      if (val === undefined) return; // not edited
-      const hrs = parseFloat(val) || 0;
-      const existing = allocations.find(a => a.person_id === m.person_id && a.client === c.client_name && a.year === hoursYear);
-      if (hrs === 0 && !existing) return;
+      const k         = hoursKey(m.person_id, c.client_name);
+      const allocVal  = hoursEdits[k];
+      const billedVal = billedEdits[k];
+      if (allocVal === undefined && billedVal === undefined) return; // nothing changed for this cell
+      const existing  = allocations.find(a => a.person_id === m.person_id && a.client === c.client_name && a.year === hoursYear);
+      const hrs       = allocVal  !== undefined ? (parseFloat(allocVal)  || 0) : (existing ? Number(existing.allocated_hours) : 0);
+      const billed    = billedVal !== undefined ? (parseFloat(billedVal) || 0) : (existing ? Number(existing.billed_hours || 0) : 0);
+      if (hrs === 0 && billed === 0 && !existing) return;
       const id  = existing?.id || ('alloc_' + Date.now() + '_' + Math.random().toString(36).slice(2,5));
       const row = { id, year: hoursYear, person_id: m.person_id, client: c.client_name,
-                    allocated_hours: hrs, is_other_team: false };
+                    allocated_hours: hrs, billed_hours: billed,
+                    is_other_team: existing?.is_other_team || false };
       await sb.upsert('annual_allocations', row).catch(() => {});
       setAllocations(prev => {
         const f = prev.filter(a => !(a.person_id === m.person_id && a.client === c.client_name && a.year === hoursYear));
-        return hrs > 0 ? [...f, row] : f;
+        return (hrs > 0 || billed > 0) ? [...f, row] : f;
       });
     })));
     setHoursEdits(prev => {
+      const next = {...prev};
+      mems.forEach(m => clis.forEach(c => { delete next[hoursKey(m.person_id, c.client_name)]; }));
+      return next;
+    });
+    setBilledEdits(prev => {
       const next = {...prev};
       mems.forEach(m => clis.forEach(c => { delete next[hoursKey(m.person_id, c.client_name)]; }));
       return next;
@@ -11486,6 +11481,11 @@ function BusinessUnitsView({ people, sb, SB_READY, currentRole, currentUserId, o
                         {unitClients(u.id).length === 0 ? (
                           <div style={{ fontSize:11, color:"#9ca3af" }}>Add clients to this scope first</div>
                         ) : (
+                          <div>
+                            <div style={{ fontSize:10, color:"#9ca3af", marginBottom:6 }}>
+                              Top field: allocated hours for the year · <span style={{ color:"#0ea5e9" }}>Bottom field (blue): hours actually billed</span>,
+                              entered manually to supplement the task-based forecast — useful mid-year when real billed work isn't fully reflected as scheduled tasks yet.
+                            </div>
                           <div style={{ overflowX:"auto" }}>
                             <table style={{ borderCollapse:"collapse", fontSize:11, width:"100%" }}>
                               <thead>
@@ -11522,22 +11522,45 @@ function BusinessUnitsView({ people, sb, SB_READY, currentRole, currentUserId, o
                                       {unitClients(u.id).map(c => (
                                         <td key={c.id} style={{ padding:"4px 8px", textAlign:"right" }}>
                                           {canAdmin ? (
-                                            <input
-                                              type="number" min="0" step="1"
-                                              value={getHours(m.person_id, c.client_name)}
-                                              onChange={e => setHoursEdits(prev => ({
-                                                ...prev, [hoursKey(m.person_id, c.client_name)]: e.target.value
-                                              }))}
-                                              placeholder="0"
-                                              style={{ width:70, textAlign:"right", fontSize:11,
-                                                border:"1px solid rgba(0,0,0,0.12)", borderRadius:5,
-                                                padding:"3px 6px", fontFamily:"inherit",
-                                                background: hoursEdits[hoursKey(m.person_id, c.client_name)] !== undefined
-                                                  ? "rgba(0,181,181,0.06)" : "#fff" }} />
+                                            <div style={{ display:"flex", flexDirection:"column", gap:3, alignItems:"flex-end" }}>
+                                              <input
+                                                type="number" min="0" step="1"
+                                                value={getHours(m.person_id, c.client_name)}
+                                                onChange={e => setHoursEdits(prev => ({
+                                                  ...prev, [hoursKey(m.person_id, c.client_name)]: e.target.value
+                                                }))}
+                                                placeholder="0"
+                                                title="Allocated"
+                                                style={{ width:70, textAlign:"right", fontSize:11,
+                                                  border:"1px solid rgba(0,0,0,0.12)", borderRadius:5,
+                                                  padding:"3px 6px", fontFamily:"inherit",
+                                                  background: hoursEdits[hoursKey(m.person_id, c.client_name)] !== undefined
+                                                    ? "rgba(0,181,181,0.06)" : "#fff" }} />
+                                              <input
+                                                type="number" min="0" step="1"
+                                                value={getBilledHours(m.person_id, c.client_name)}
+                                                onChange={e => setBilledEdits(prev => ({
+                                                  ...prev, [hoursKey(m.person_id, c.client_name)]: e.target.value
+                                                }))}
+                                                placeholder="Billed"
+                                                title="Billed (manual — supplements forecast for hours not yet reflected as tasks)"
+                                                style={{ width:70, textAlign:"right", fontSize:10, color:"#0ea5e9",
+                                                  border:"1px solid rgba(14,165,233,0.3)", borderRadius:5,
+                                                  padding:"2px 6px", fontFamily:"inherit",
+                                                  background: billedEdits[hoursKey(m.person_id, c.client_name)] !== undefined
+                                                    ? "rgba(14,165,233,0.08)" : "rgba(14,165,233,0.03)" }} />
+                                            </div>
                                           ) : (
-                                            <span style={{ color:"#374151" }}>
-                                              {getHours(m.person_id, c.client_name) || "—"}
-                                            </span>
+                                            <div>
+                                              <div style={{ color:"#374151" }}>
+                                                {getHours(m.person_id, c.client_name) || "—"}
+                                              </div>
+                                              {getBilledHours(m.person_id, c.client_name) && (
+                                                <div style={{ fontSize:9, color:"#0ea5e9" }}>
+                                                  {getBilledHours(m.person_id, c.client_name)}h billed
+                                                </div>
+                                              )}
+                                            </div>
                                           )}
                                         </td>
                                       ))}
@@ -11550,6 +11573,7 @@ function BusinessUnitsView({ people, sb, SB_READY, currentRole, currentUserId, o
                                 })}
                               </tbody>
                             </table>
+                          </div>
                           </div>
                         )}
                       </div>
@@ -14028,6 +14052,7 @@ export default function App() {
           <ReportingDashboardView
             projects={projects} people={people} holidays={holidays} pto={pto}
             adminTasks={adminTasks} sb={sb} SB_READY={SB_READY} currentRole={currentRole}
+            onNavigateToBusinessUnits={() => setView("business-units")}
           />
         )}
         {view === "archived" && (
