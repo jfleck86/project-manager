@@ -4879,12 +4879,13 @@ function MyHubView({ projects, people, holidays, pto = [], currentUserId, onSetC
   const [editingAdminTask, setEditingAdminTask] = useState(null);
   const [ptoForm, setPtoForm] = useState({ start: todayStr, end: todayStr, note: "", halfDayDates: [] });
   const [showTaskForm, setShowTaskForm] = useState(false);
+  const [showCompletedTasks, setShowCompletedTasks] = useState(false);
   const [editingTask, setEditingTask] = useState(null);
   const [showWorkReport, setShowWorkReport] = useState(false);
   const [waitingIds, setWaitingIds] = useState(new Set()); // tasks parked from Focus strip
   const [sortBy, setSortBy] = useState("date"); // "date" | "project"
   const [filterProject, setFilterProject] = useState(""); // "" = all, or projId
-  const [taskForm, setTaskForm] = useState({ title: "", status: "Not Started", priority: "Medium", dueDate: "", notes: "" });
+  const [taskForm, setTaskForm] = useState({ title: "", status: "Not Started", priority: "Medium", dueDate: "", notes: "", effort: "M" });
   const hubHolidaySet = new Set((holidays||[]).map(h => h.date));
 
   // ── Resolve current user ──────────────────────────────────────────────────
@@ -5477,7 +5478,7 @@ function MyHubView({ projects, people, holidays, pto = [], currentUserId, onSetC
               {personalTasks.filter(t=>t.status!=="Done").length} active
             </span>
           </div>
-          <button onClick={() => { setEditingTask(null); setTaskForm({ title:"", priority:"Medium", dueDate:"", notes:"" }); setShowTaskForm(true); }}
+          <button onClick={() => { setEditingTask(null); setTaskForm({ title:"", priority:"Medium", dueDate:"", notes:"", effort:"M" }); setShowTaskForm(true); }}
             style={{ fontSize:11, fontWeight:700, color:BRAND_TEAL, background:"rgba(80,192,192,0.08)", border:"1px solid rgba(80,192,192,0.25)", borderRadius:6, padding:"5px 12px", cursor:"pointer", fontFamily:"inherit" }}>
             + Add Task
           </button>
@@ -5509,6 +5510,12 @@ function MyHubView({ projects, people, holidays, pto = [], currentUserId, onSetC
                   <select value={taskForm.priority} onChange={e => setTaskForm(f=>({...f,priority:e.target.value}))}
                     style={{ fontSize:11, padding:"4px 8px", border:"1px solid rgba(0,0,0,0.15)", borderRadius:5, fontFamily:"inherit" }}>
                     {["Low","Medium","High","Urgent"].map(p=><option key={p}>{p}</option>)}
+                  </select>
+                  <select value={taskForm.effort} onChange={e => setTaskForm(f=>({...f,effort:e.target.value}))}
+                    title="Size" style={{ fontSize:11, padding:"4px 8px", border:"1px solid rgba(0,0,0,0.15)", borderRadius:5, fontFamily:"inherit" }}>
+                    <option value="S">S — Small</option>
+                    <option value="M">M — Medium</option>
+                    <option value="L">L — Large</option>
                   </select>
                   <input type="date" value={taskForm.dueDate} onChange={e=>setTaskForm(f=>({...f,dueDate:e.target.value}))}
                     style={{ fontSize:11, padding:"4px 8px", border:"1px solid rgba(0,0,0,0.15)", borderRadius:5, fontFamily:"inherit" }} />
@@ -5548,18 +5555,61 @@ function MyHubView({ projects, people, holidays, pto = [], currentUserId, onSetC
                     style={{ width:15, height:15, accentColor:BRAND_TEAL, cursor:"pointer" }} />
                 </label>
                 <div style={{ flex:1, minWidth:0 }}>
-                  <div style={{ fontSize:12, fontWeight:600, color:"#1f2937" }}>{task.title}</div>
+                  <div style={{ display:"flex", alignItems:"center", gap:6 }}>
+                    <span style={{ fontSize:12, fontWeight:600, color:"#1f2937" }}>{task.title}</span>
+                    <span style={{ fontSize:9, fontWeight:700, color:"#6b7280", background:"rgba(0,0,0,0.05)", borderRadius:4, padding:"1px 5px" }}>{task.effort || "M"}</span>
+                  </div>
                   {task.dueDate && <div style={{ fontSize:10, color:isOD?"#f87171":isDT?"#f97316":"#9ca3af", fontWeight:isOD||isDT?700:400, marginTop:1 }}>
                     {isOD?"Overdue · ":isDT?"Due today · ":""}{task.dueDate}
                   </div>}
                 </div>
-                <button onClick={() => { setEditingTask(task); setTaskForm({ title:task.title, priority:task.priority||"Medium", dueDate:task.dueDate||"", notes:task.notes||"" }); setShowTaskForm(true); }}
+                <button onClick={() => { setEditingTask(task); setTaskForm({ title:task.title, priority:task.priority||"Medium", dueDate:task.dueDate||"", notes:task.notes||"", effort:task.effort||"M" }); setShowTaskForm(true); }}
                   style={{ background:"none", border:"none", color:"#9ca3af", cursor:"pointer", fontSize:12, padding:"0 2px" }}>✎</button>
                 <button onClick={() => onDeletePersonalTask(task.id)}
                   style={{ background:"none", border:"none", color:"#fca5a5", cursor:"pointer", fontSize:15, padding:"0 2px" }}>×</button>
               </div>
             );
           })}
+
+          {/* ── Completed tasks dropdown ── */}
+          {personalTasks.filter(t=>t.status==="Done").length > 0 && (
+            <div style={{ borderTop:"1px solid rgba(0,0,0,0.06)", marginTop:4 }}>
+              <button onClick={() => setShowCompletedTasks(v => !v)}
+                style={{ display:"flex", alignItems:"center", justifyContent:"space-between", width:"100%",
+                  padding:"9px 16px", background:"none", border:"none", cursor:"pointer", fontFamily:"inherit" }}>
+                <span style={{ fontSize:11, fontWeight:700, color:"#6b7280" }}>
+                  Completed ({personalTasks.filter(t=>t.status==="Done").length})
+                </span>
+                <span style={{ fontSize:10, color:"#9ca3af" }}>{showCompletedTasks ? "▲" : "▼"}</span>
+              </button>
+              {showCompletedTasks && (
+                <div style={{ maxHeight:260, overflowY:"auto", borderTop:"1px solid rgba(0,0,0,0.05)" }}>
+                  <div style={{ display:"grid", gridTemplateColumns:"1fr 36px 76px 76px 76px 24px", gap:6,
+                    padding:"6px 16px 4px", fontSize:9, fontWeight:700, color:"#9ca3af", textTransform:"uppercase",
+                    letterSpacing:".04em", position:"sticky", top:0, background:"#fff" }}>
+                    <div>Task</div><div>Size</div><div>Due</div><div>Added</div><div>Done</div><div></div>
+                  </div>
+                  {personalTasks
+                    .filter(t => t.status === "Done")
+                    .sort((a,b) => (b.completedAt||"").localeCompare(a.completedAt||""))
+                    .map(task => (
+                      <div key={task.id} style={{ display:"grid", gridTemplateColumns:"1fr 36px 76px 76px 76px 24px",
+                        gap:6, alignItems:"center", padding:"7px 16px", borderBottom:"1px solid rgba(0,0,0,0.04)" }}>
+                        <div style={{ fontSize:11, color:"#374151", textDecoration:"line-through", textDecorationColor:"rgba(0,0,0,0.2)" }}>
+                          {task.title}
+                        </div>
+                        <div style={{ fontSize:9, fontWeight:700, color:"#6b7280" }}>{task.effort || "M"}</div>
+                        <div style={{ fontSize:9, color:"#9ca3af" }}>{task.dueDate || "—"}</div>
+                        <div style={{ fontSize:9, color:"#9ca3af" }}>{task.createdAt ? task.createdAt.slice(0,10) : "—"}</div>
+                        <div style={{ fontSize:9, color:"#9ca3af" }}>{task.completedAt ? task.completedAt.slice(0,10) : "—"}</div>
+                        <button onClick={() => onDeletePersonalTask(task.id)}
+                          style={{ background:"none", border:"none", color:"#fca5a5", cursor:"pointer", fontSize:14, padding:0 }}>×</button>
+                      </div>
+                    ))}
+                </div>
+              )}
+            </div>
+          )}
         </div>
       </div>
     )}
@@ -12317,6 +12367,8 @@ export default function App() {
             priority: r.priority  || "Medium",
             dueDate:  r.due_date  || null,
             notes:    r.notes     || "",
+            effort:   r.effort    || "M",
+            completedAt: r.completed_at || null,
             createdAt:r.created_at,
           })));
         }
@@ -13117,7 +13169,13 @@ export default function App() {
   const savePersonalTask = async (task) => {
     // [security] auth token log removed
     const id = task.id && task.id.startsWith("pt_") ? task.id : ("pt_" + Date.now());
-    const entry = { ...task, id, personId: authUUID, updated_at: new Date().toISOString() };
+    const prevTask = personalTasks.find(t => t.id === id);
+    const justCompleted = task.status === "Done" && prevTask?.status !== "Done";
+    const unCompleted   = task.status !== "Done" && prevTask?.status === "Done";
+    const completedAt = justCompleted ? new Date().toISOString()
+                       : unCompleted   ? null
+                       : (prevTask?.completedAt ?? task.completedAt ?? null);
+    const entry = { ...task, id, personId: authUUID, completedAt, updated_at: new Date().toISOString() };
     setPersonalTasks(prev => {
       const idx = prev.findIndex(t => t.id === id);
       return idx >= 0 ? prev.map(t => t.id === id ? entry : t) : [...prev, entry];
@@ -13125,13 +13183,15 @@ export default function App() {
     if (SB_READY && authUUID) {
       const result = await sb.upsert("personal_tasks", {
         id,
-        person_id:  authUUID,
-        title:      entry.title || "",
-        status:     entry.status || "Not Started",
-        priority:   entry.priority || "Medium",
-        due_date:   entry.dueDate || null,
-        notes:      entry.notes || "",
-        updated_at: entry.updated_at,
+        person_id:    authUUID,
+        title:        entry.title || "",
+        status:       entry.status || "Not Started",
+        priority:     entry.priority || "Medium",
+        due_date:     entry.dueDate || null,
+        notes:        entry.notes || "",
+        effort:       entry.effort || "M",
+        completed_at: entry.completedAt || null,
+        updated_at:   entry.updated_at,
       });
       console.log("[PT] upsert result:", JSON.stringify(result).slice(0,200));
       if (result?.error) console.error("[PulseX] savePersonalTask error:", result.error);
