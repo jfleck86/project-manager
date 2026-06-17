@@ -598,7 +598,7 @@ function InlineNoteCell({ width, note = "", onChange, color, last = false }) {
   const inputRef = React.useRef(null);
 
   React.useEffect(() => { setVal(note); }, [note]);
-  React.useEffect(() => { if (editing) inputRef.current?.focus(); }, [editing]);
+  React.useEffect(() => { if (editing) inputRef.current?.focus({ preventScroll: true }); }, [editing]);
 
   const commit = () => {
     setEditing(false);
@@ -2304,6 +2304,11 @@ function TimelineView({ projects, people, onEditItem, onAddDeliverable, onAddSub
     try {
       const saved = JSON.parse(localStorage.getItem('planr_colWidths') || '{}');
       const merged = { ...COL_DEFAULTS, ...saved };
+      // Clamp every individual column width in case any stored value is
+      // corrupted (e.g. from the unbounded-drag bug) — not just the total.
+      Object.keys(merged).forEach(k => {
+        merged[k] = Math.min(600, Math.max(36, Number(merged[k]) || COL_DEFAULTS[k] || 80));
+      });
       // If saved widths total more than the viewport, reset to defaults
       const total = Object.values(merged).reduce((a,b) => a+b, 0);
       if (total > window.innerWidth * 0.95) return { ...COL_DEFAULTS };
@@ -2327,6 +2332,7 @@ function TimelineView({ projects, people, onEditItem, onAddDeliverable, onAddSub
   const dragRef = useRef(null);
   const COL_KEYS = ["num","title","start","end","dur","deps","assignees","notes"];
   const MIN_COL = 36;
+  const MAX_COL = 600; // hard ceiling — without this, a wild drag in Gantt view had no upper bound at all
   const startResizeCol = (colKey, e) => {
     e.preventDefault();
     const startX = e.clientX;
@@ -2334,7 +2340,7 @@ function TimelineView({ projects, people, onEditItem, onAddDeliverable, onAddSub
     const onMove = (mv) => {
       const delta = mv.clientX - startX;
       setColWidths(cw => {
-        const newW = Math.max(MIN_COL, startW + delta);
+        const newW = Math.min(MAX_COL, Math.max(MIN_COL, startW + delta));
         if (!showGantt && containerRef.current) {
           // In list view: cap so total never exceeds container width
           const others = COL_KEYS.filter(k => k !== colKey).reduce((s, k) => s + (cw[k] || 0), 0);
@@ -3348,6 +3354,8 @@ function SubtaskRow({ sub, del, proj, people, weeks, todayOff, allItemsFlat, onE
 // ─── InlineDate — click-to-edit date cell ────────────────────────────────────
 function InlineDate({ value, onChange }) {
   const [editing, setEditing] = useState(false);
+  const inputRef = useRef(null);
+  useEffect(() => { if (editing) inputRef.current?.focus({ preventScroll: true }); }, [editing]);
   const fmt = (d) => {
     if (!d) return "—";
     return d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
@@ -3359,7 +3367,7 @@ function InlineDate({ value, onChange }) {
   };
   if (editing) return (
     <input
-      autoFocus
+      ref={inputRef}
       type="date"
       defaultValue={value || ""}
       onBlur={e => { onChange(e.target.value || ""); setEditing(false); }}
@@ -3396,10 +3404,12 @@ function InlineDeps({ deps = [], rowIndex, onChange }) {
 
   const [editing, setEditing] = useState(false);
   const display = toDisplay(deps);
+  const inputRef = useRef(null);
+  useEffect(() => { if (editing) inputRef.current?.focus({ preventScroll: true }); }, [editing]);
 
   if (editing) return (
     <input
-      autoFocus
+      ref={inputRef}
       defaultValue={display}
       placeholder="e.g. 3, 5"
       onBlur={e => { onChange(fromDisplay(e.target.value)); setEditing(false); }}
@@ -3541,15 +3551,32 @@ function PersonPanel({ person, compact = false, allActive, projects, collapsed, 
 
   // scrollRef: no longer needed for auto-scroll (gStart IS calAnchor so offset is always 0)
   const scrollRef = React.useRef(null);
+  const lastScrollLeft = React.useRef(0);
+  const prevAnchorKey = React.useRef(null);
   React.useLayoutEffect(() => {
-    if (scrollRef.current) scrollRef.current.scrollLeft = 0;
-  }, [calAnchor.toISOString().slice(0,10), person.id]);
+    if (!scrollRef.current) return;
+    const anchorKey = calAnchor.toISOString().slice(0,10) + "|" + person.id;
+    if (prevAnchorKey.current !== anchorKey) {
+      // Week or person changed — always start fresh at the left edge.
+      scrollRef.current.scrollLeft = 0;
+      prevAnchorKey.current = anchorKey;
+    } else {
+      // Same week/person, but content width changed for another reason (e.g.
+      // a drag that temporarily widened the range got reverted on Cancel,
+      // shrinking it back). Without this, the browser auto-clamps scrollLeft
+      // to the new narrower max, which looks like the view snapping left.
+      const maxScroll = Math.max(0, scrollRef.current.scrollWidth - scrollRef.current.clientWidth);
+      scrollRef.current.scrollLeft = Math.min(lastScrollLeft.current, maxScroll);
+    }
+  }, [calAnchor.toISOString().slice(0,10), person.id, ganttDays]);
 
   // Drag-to-reschedule
   const startDrag = (item, e) => {
     e.preventDefault();
     const startX = e.clientX;
     const dur = Math.ceil((parseDate(item.end) - parseDate(item.start)) / 86400000);
+    const origStart = item.start; // true pre-drag position — used to revert on Cancel
+    const origEnd   = item.end;
     const onMove = (mv) => {
       const d = Math.round((mv.clientX - startX) / GDAY_W);
       if (!d) return;
@@ -3560,7 +3587,7 @@ function PersonPanel({ person, compact = false, allActive, projects, collapsed, 
       const delEnd = parentDel?.end;
       if (delEnd && ne > delEnd && onTimelineReview) {
         const daysPast = Math.ceil((new Date(ne+"T00:00:00") - new Date(delEnd+"T00:00:00")) / 86400000);
-        onTimelineReview({ item, newEnd: ne, delEnd, daysPast, pendingSave: () => onSaveItem({ ...item, start: ns, end: ne }) });
+        onTimelineReview({ item, newEnd: ne, delEnd, daysPast, origStart, origEnd, pendingSave: () => onSaveItem({ ...item, start: ns, end: ne }) });
       } else {
         onSaveItem({ ...item, start: ns, end: ne });
       }
@@ -3654,7 +3681,8 @@ function PersonPanel({ person, compact = false, allActive, projects, collapsed, 
                 </div>
 
                 {/* Scrollable date area */}
-                <div ref={scrollRef} style={{ flex:1, overflowX:"auto", WebkitOverflowScrolling:"touch", minWidth:0 }}>
+                <div ref={scrollRef} onScroll={e => { lastScrollLeft.current = e.currentTarget.scrollLeft; }}
+                  style={{ flex:1, overflowX:"auto", WebkitOverflowScrolling:"touch", minWidth:0 }}>
                   <div style={{ minWidth: ganttDays * GDAY_W, position:"relative" }}>
                     {/* Date header */}
                     <div style={{ height:26, position:"relative", background:"#f7f8fa", borderBottom:"1px solid rgba(0,0,0,0.06)" }}>
@@ -3896,7 +3924,12 @@ function PeopleView({ projects, people, onEditItem, onMarkDone, onSaveItem, holi
                 style={{ flex:1, padding:"9px 0", borderRadius:7, background:"#f97316", border:"none", color:"#fff", fontSize:12, fontWeight:700, cursor:"pointer", fontFamily:"inherit" }}>
                 Continue Anyway
               </button>
-              <button onClick={() => setTimelineAlert(null)}
+              <button onClick={() => {
+                if (timelineAlert.origStart && timelineAlert.origEnd) {
+                  onSaveItem({ ...timelineAlert.item, start: timelineAlert.origStart, end: timelineAlert.origEnd });
+                }
+                setTimelineAlert(null);
+              }}
                 style={{ flex:1, padding:"9px 0", borderRadius:7, background:"rgba(0,0,0,0.06)", border:"none", color:"#374151", fontSize:12, fontWeight:600, cursor:"pointer", fontFamily:"inherit" }}>
                 Cancel
               </button>
@@ -12789,6 +12822,10 @@ export default function App() {
       });
       // Record that notification was sent
       await sb.update("projects", projId, { kickoff_notif_sent_at: sentNow }).catch(() => {});
+      // Patch local state too — without this, re-saving the project's details
+      // before a full page reload would see kickoffNotifSentAt as still null
+      // and resend the notification.
+      setProjects(projs => projs.map(p => p.id === projId ? { ...p, kickoffNotifSentAt: sentNow } : p));
 
       // Also add a task to the PM's "Assigned to Me" list, linked to this project
       const kickoffTaskId = "at_kickoff_" + projId + "_" + Date.now();
@@ -12933,6 +12970,13 @@ export default function App() {
           due_date: proj.kickoffDate || null, notes: kickoffTaskEntry2.notes,
           project_id: proj.id, created_at: sentNowDetail,
         }).catch(() => {});
+      }
+
+      // Patch the freshly-computed sent timestamp into local state — without
+      // this, the next save in the same session (without a full reload)
+      // would still see kickoffNotifSentAt as null and resend the notification.
+      if (sentAt && sentAt !== prevProj?.kickoffNotifSentAt) {
+        setProjects(projs => projs.map(p => p.id === proj.id ? { ...p, kickoffNotifSentAt: sentAt } : p));
       }
 
       const payload = {
