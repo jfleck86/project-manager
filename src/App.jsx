@@ -8624,6 +8624,156 @@ function ReportingDashboardView({ projects, people, holidays = [], pto = [], adm
 }
 
 
+// ── Mobile Dashboard ───────────────────────────────────────────────────────
+// Lightweight overview designed for 375–430px phone screens: shows overdue
+// tasks (most urgent), workload by person, and upcoming time off. Intentionally
+// avoids charts and wide tables — everything is readable in a single column.
+
+function MobileDashboard({ projects, people, pto = [], holidays = [], adminTasks = [], ownMemberId, onEditItem, today }) {
+  const TEAL = "#00B5B5", NAVY = "#002A4E";
+
+  // ── Overdue tasks ──
+  const overdueTasks = projects.flatMap(proj =>
+    proj.deliverables.flatMap(del => {
+      const tasks = del.subtasks.length > 0 ? del.subtasks : [del];
+      return tasks
+        .filter(t => t.status !== "Done" && t.end && t.end < today)
+        .map(t => ({ ...t, projName: proj.name, projColor: proj.color, projId: proj.id, delId: del.id }));
+    })
+  ).sort((a, b) => (a.end || "").localeCompare(b.end || ""));
+
+  // ── Workload by person: count active (not Done) tasks per person ──
+  const tasksByPerson = {};
+  projects.forEach(proj => {
+    proj.deliverables.forEach(del => {
+      const tasks = del.subtasks.length > 0 ? del.subtasks : [del];
+      tasks.filter(t => t.status !== "Done").forEach(t => {
+        (t.assignees || []).forEach(id => {
+          if (!tasksByPerson[id]) tasksByPerson[id] = { total: 0, overdue: 0, inProgress: 0 };
+          tasksByPerson[id].total++;
+          if (t.end && t.end < today) tasksByPerson[id].overdue++;
+          if (t.status === "In Progress") tasksByPerson[id].inProgress++;
+        });
+      });
+    });
+  });
+  const workload = people
+    .map(p => ({ ...p, ...tasksByPerson[p.id] }))
+    .filter(p => p.total > 0)
+    .sort((a, b) => (b.overdue || 0) - (a.overdue || 0) || (b.total || 0) - (a.total || 0));
+
+  // ── Upcoming time off (next 30 days) ──
+  const in30 = new Date(Date.now() + 30 * 86400000).toISOString().slice(0, 10);
+  const upcomingPto = pto
+    .filter(p => p.end >= today && p.start <= in30)
+    .sort((a, b) => a.start.localeCompare(b.start))
+    .map(p => {
+      const person = people.find(x => x.id === p.personId);
+      const days = Math.round((new Date(p.end + "T00:00:00") - new Date(p.start + "T00:00:00")) / 86400000) + 1;
+      return { ...p, personName: person?.name || "?", personColor: person?.color || "#9ca3af", days };
+    });
+
+  const fmt = (ds) => ds ? new Date(ds + "T00:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric" }) : "—";
+  const sectionStyle = { background: "#fff", border: "1px solid rgba(0,0,0,0.07)", borderRadius: 10, overflow: "hidden", marginBottom: 14 };
+  const headerStyle = { padding: "12px 14px", borderBottom: "1px solid rgba(0,0,0,0.06)", display: "flex", alignItems: "center", gap: 8 };
+  const titleStyle = { fontSize: 13, fontWeight: 800, color: NAVY };
+  const badgeStyle = (color) => ({ fontSize: 10, fontWeight: 700, background: color + "18", color: color, borderRadius: 10, padding: "2px 7px" });
+
+  return (
+    <div style={{ paddingBottom: 8 }}>
+      <div style={{ fontSize: 16, fontWeight: 800, color: NAVY, marginBottom: 14 }}>Overview</div>
+
+      {/* ── Overdue Tasks ── */}
+      <div style={sectionStyle}>
+        <div style={headerStyle}>
+          <span style={{ fontSize: 16 }}>🔴</span>
+          <span style={titleStyle}>Overdue</span>
+          <span style={badgeStyle("#ef4444")}>{overdueTasks.length}</span>
+        </div>
+        {overdueTasks.length === 0
+          ? <div style={{ padding: "14px 16px", fontSize: 12, color: "#9ca3af" }}>No overdue tasks 🎉</div>
+          : overdueTasks.slice(0, 10).map(t => (
+            <div key={t.id} onClick={() => onEditItem && onEditItem({ ...t, projectId: t.projId, projectName: t.projName, projectColor: t.projColor, deliverableId: t.delId })}
+              style={{ padding: "10px 14px", borderBottom: "1px solid rgba(0,0,0,0.04)", display: "flex", alignItems: "center", gap: 10, cursor: "pointer", WebkitTapHighlightColor: "transparent" }}
+              onTouchStart={e => e.currentTarget.style.background = "rgba(0,0,0,0.03)"}
+              onTouchEnd={e => e.currentTarget.style.background = "transparent"}>
+              <div style={{ width: 4, alignSelf: "stretch", borderRadius: 2, background: t.projColor, flexShrink: 0 }} />
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 12, fontWeight: 600, color: "#1f2937", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{t.title}</div>
+                <div style={{ fontSize: 10, color: "#9ca3af", marginTop: 1 }}>{t.projName} · Due {fmt(t.end)}</div>
+              </div>
+              <div style={{ fontSize: 10, fontWeight: 700, color: "#ef4444", flexShrink: 0 }}>
+                {Math.round((new Date(today) - new Date(t.end + "T00:00:00")) / 86400000)}d late
+              </div>
+            </div>
+          ))
+        }
+        {overdueTasks.length > 10 && (
+          <div style={{ padding: "8px 14px", fontSize: 11, color: "#9ca3af", textAlign: "center" }}>
+            +{overdueTasks.length - 10} more
+          </div>
+        )}
+      </div>
+
+      {/* ── Workload by Person ── */}
+      <div style={sectionStyle}>
+        <div style={headerStyle}>
+          <span style={{ fontSize: 16 }}>👥</span>
+          <span style={titleStyle}>Workload</span>
+          <span style={badgeStyle(TEAL)}>{workload.length} people</span>
+        </div>
+        {workload.length === 0
+          ? <div style={{ padding: "14px 16px", fontSize: 12, color: "#9ca3af" }}>No active tasks assigned</div>
+          : workload.map(p => {
+            const maxTasks = Math.max(...workload.map(x => x.total || 0));
+            const pct = maxTasks > 0 ? Math.round((p.total / maxTasks) * 100) : 0;
+            return (
+              <div key={p.id} style={{ padding: "10px 14px", borderBottom: "1px solid rgba(0,0,0,0.04)" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+                  <div style={{ width: 24, height: 24, borderRadius: "50%", background: p.color, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 10, fontWeight: 800, color: "#fff", flexShrink: 0 }}>
+                    {(p.name || "?")[0]}
+                  </div>
+                  <span style={{ fontSize: 12, fontWeight: 600, color: "#1f2937", flex: 1 }}>{p.name}</span>
+                  <span style={{ fontSize: 11, color: "#6b7280" }}>{p.total} task{p.total !== 1 ? "s" : ""}</span>
+                  {p.overdue > 0 && <span style={badgeStyle("#ef4444")}>{p.overdue} late</span>}
+                </div>
+                <div style={{ height: 5, background: "rgba(0,0,0,0.06)", borderRadius: 3, overflow: "hidden" }}>
+                  <div style={{ width: pct + "%", height: "100%", borderRadius: 3,
+                    background: p.overdue > 0 ? "#ef4444" : p.inProgress > 0 ? TEAL : "#d1d5db",
+                    transition: "width 0.3s" }} />
+                </div>
+              </div>
+            );
+          })
+        }
+      </div>
+
+      {/* ── Upcoming Time Off ── */}
+      <div style={sectionStyle}>
+        <div style={headerStyle}>
+          <span style={{ fontSize: 16 }}>🏖️</span>
+          <span style={titleStyle}>Time Off — Next 30 Days</span>
+        </div>
+        {upcomingPto.length === 0
+          ? <div style={{ padding: "14px 16px", fontSize: 12, color: "#9ca3af" }}>No upcoming time off</div>
+          : upcomingPto.map((p, i) => (
+            <div key={i} style={{ padding: "10px 14px", borderBottom: "1px solid rgba(0,0,0,0.04)", display: "flex", alignItems: "center", gap: 10 }}>
+              <div style={{ width: 24, height: 24, borderRadius: "50%", background: p.personColor, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 10, fontWeight: 800, color: "#fff", flexShrink: 0 }}>
+                {(p.personName || "?")[0]}
+              </div>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontSize: 12, fontWeight: 600, color: "#1f2937" }}>{p.personName}</div>
+                <div style={{ fontSize: 10, color: "#9ca3af" }}>{fmt(p.start)} – {fmt(p.end)} · {p.days} day{p.days !== 1 ? "s" : ""}</div>
+              </div>
+              {p.note && <div style={{ fontSize: 10, color: "#6b7280", maxWidth: 80, textAlign: "right", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.note}</div>}
+            </div>
+          ))
+        }
+      </div>
+    </div>
+  );
+}
+
 function StatusView({ projects, people, statusNotes, onUpdateNote, onAddDeliverable, onAddSubtask, onSaveTrackOverride, onEditItem, onOpenProject, adminTasks = [], onEditAdminTask, onUpdateAdminTaskNotes }) {
   const [trackOpenId, setTrackOpenId] = useState(null); // del.id whose track dropdown is open
 
@@ -14023,7 +14173,6 @@ export default function App() {
   return (
     <div style={{ minHeight: "100vh", background: "#f5f6f8", color: "#111827", fontFamily: '"Roboto", Arial, sans-serif', display: "flex", flexDirection: "column", maxWidth: "100vw", overflowX: isMobile ? "auto" : "hidden" }}>
 
-      <meta name="viewport" content="width=device-width, initial-scale=1" />
       <link rel="preconnect" href="https://fonts.googleapis.com" />
       <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
       <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700;900&display=swap" rel="stylesheet" />
@@ -14307,11 +14456,12 @@ export default function App() {
           borderTop:"1px solid rgba(255,255,255,0.1)", display:"flex", alignItems:"stretch",
           paddingBottom:"env(safe-area-inset-bottom)", height:"calc(52px + env(safe-area-inset-bottom))" }}>
           {[
-            { id:"myhub",    icon:"⊙", label:"My Hub" },
-            { id:"timeline", icon:"▬", label:"Timeline" },
-            { id:"status",   icon:"◉", label:"Status" },
-            { id:"__more__", icon:"☰", label:"More" },
-          ].filter(t => t.id === "__more__" || navItems.some(n => n.id === t.id)).map(t => (
+            { id:"myhub",        icon:"⊙", label:"My Hub" },
+            { id:"timeline",     icon:"▬", label:"Timeline" },
+            { id:"people",       icon:"◎", label:"By Person" },
+            { id:"mobiledash",   icon:"◈", label:"Overview" },
+            { id:"__more__",     icon:"☰", label:"More" },
+          ].filter(t => t.id === "__more__" || t.id === "mobiledash" || navItems.some(n => n.id === t.id)).map(t => (
             <button key={t.id} onClick={() => t.id === "__more__" ? setMobileNavOpen(true) : setView(t.id)}
               style={{ flex:1, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center",
                 gap:2, background:"none", border:"none", cursor:"pointer", padding:"6px 0",
@@ -14324,7 +14474,7 @@ export default function App() {
       )}
 
       {/* Main */}
-      <main className={isMobile ? "mobile-main" : ""} style={{ flex: 1, minHeight: 0, padding: isMobile ? "8px 10px" : "12px 14px", overflow: "auto", display: "flex", flexDirection: "column", gap: 14, boxSizing: "border-box", width: "100%", overflowX: isMobile ? "auto" : "hidden" }}>
+      <main className={isMobile ? "mobile-main" : ""} style={{ flex: 1, minHeight: 0, padding: isMobile ? "8px 10px" : "12px 14px", overflowY: "auto", overflowX: isMobile ? "hidden" : "hidden", display: "flex", flexDirection: "column", gap: 14, boxSizing: "border-box", width: "100%" }}>
 
         {/* ── Desktop-only view guard on mobile ──────────────────────── */}
         {isMobile && DESKTOP_ONLY_VIEWS.has(view) ? (
@@ -14499,6 +14649,9 @@ export default function App() {
           />
         )}
         {view === "people"  && <PeopleView projects={projects} people={people} onEditItem={handleEditItem} onMarkDone={handleMarkDone} onSaveItem={handleSaveItem} holidays={holidays} pto={pto} />}
+        {view === "mobiledash" && isMobile && (
+          <MobileDashboard projects={projects} people={people} pto={pto} holidays={holidays} adminTasks={adminTasks} ownMemberId={ownMemberId} onEditItem={handleEditItem} today={new Date().toISOString().slice(0,10)} />
+        )}
         {view === "workload" && (
           <WorkloadView projects={projects} people={people} onEditItem={handleEditItem} pto={pto} holidays={holidays} adminTasks={adminTasks} />
         )}
