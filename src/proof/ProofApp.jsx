@@ -9,7 +9,7 @@ import {
   fetchProofreaders, archiveRequest, unarchiveRequest, findByTaskId,
   DB_READY, getProofCurrentUser, fetchMemberName, deleteRequest, findMemberIdByName
 } from "./lib/proofDb";
-import { readAndClearPrefill, markPulseXTaskDone, createProofCompletionNotification, notifyNewProofRequest, findScopedProofreaders, findAllProofreadersByRole } from "../lib/proofIntegration";
+import { readAndClearPrefill, markPulseXTaskDone, createProofCompletionNotification, notifyNewProofRequest } from "../lib/proofIntegration";
 
 import QueueView    from "./components/QueueView";
 import MyQueueView  from "./components/MyQueueView";
@@ -46,14 +46,6 @@ export default function ProofApp() {
   const [quickAssigning, setQuickAssigning] = useState(null);
   const [showArchived,   setShowArchived]   = useState(false);
   const [syncWarning,    setSyncWarning]    = useState(null);
-
-  // Re-fetch requests periodically so badge counts (e.g. "unassigned" on the
-  // Queue tab) stay live without requiring a manual page reload.
-  async function refreshRequests() {
-    if (!DB_READY) return;
-    const { data: reqs } = await fetchRequestsFiltered(false);
-    if (reqs) setRequests(reqs);
-  }
 
   // ── Boot: load data from Supabase ──────────────────────────
   useEffect(() => {
@@ -103,20 +95,6 @@ export default function ProofApp() {
     boot();
   }, []);
 
-  // ── Keep the queue current: poll periodically + refresh when the tab
-  // regains focus, so a new request shows up without a manual reload.
-  useEffect(() => {
-    if (!DB_READY) return;
-    refreshRequests(); // check immediately once currentUser/currentUserId are resolved
-    const interval = setInterval(refreshRequests, 45000); // every 45s
-    const onVisible = () => { if (document.visibilityState === "visible") refreshRequests(); };
-    document.addEventListener("visibilitychange", onVisible);
-    return () => {
-      clearInterval(interval);
-      document.removeEventListener("visibilitychange", onVisible);
-    };
-  }, [currentUser, currentUserId]);
-
   // ── Save new / edit existing ────────────────────────────────
   async function handleSave(form) {
     const isNew = !form.id || form._prefill;
@@ -140,13 +118,11 @@ export default function ProofApp() {
         setRequests(rs => rs.map(r => r.id === tempId ? saved : r));
       }
       // Notify every proofreader that a new request has entered the queue.
-      // Prefer proofreaders scoped to the account director's business unit
-      // (matched via client name) — fall back to everyone with the
-      // proofreading role if no one in that scope has it yet.
+      // Excludes the submitter, in case the submitter is themselves a proofreader.
       if (isNew && !error) {
-        const scopedIds = await findScopedProofreaders(record.client);
-        const candidateIds = scopedIds.length ? scopedIds : await findAllProofreadersByRole();
-        const recipientIds = candidateIds.filter(id => id !== currentUserId);
+        const recipientIds = proofreaders
+          .filter(p => p.id && p.id !== currentUserId)
+          .map(p => p.id);
         if (recipientIds.length) {
           notifyNewProofRequest({
             proofreaderMemberIds: recipientIds,
@@ -354,7 +330,16 @@ export default function ProofApp() {
             {showArchived ? "📦 Hide Archived" : "📦 Archived"}
           </button>
           <button onClick={() => {
-            window.close();
+            // Navigate to PulseX root — window.close() only works for tabs
+            // opened via window.open(), which the browser blocks otherwise.
+            if (window.opener && !window.opener.closed) {
+              // If opened from PulseX via window.open(), focus that tab
+              window.opener.focus();
+              window.close();
+            } else {
+              // Opened directly / same tab — just go to the root
+              window.location.href = window.location.origin;
+            }
           }}
             style={{ padding:"5px 12px", background:"rgba(255,255,255,0.1)", color:"#ffffff",
               border:"1px solid rgba(255,255,255,0.25)", borderRadius:6, cursor:"pointer",

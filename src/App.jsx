@@ -14021,15 +14021,18 @@ export default function App() {
   );
 
   return (
-    <div style={{ minHeight: "100vh", background: "#f5f6f8", color: "#111827", fontFamily: '"Roboto", Arial, sans-serif', display: "flex", flexDirection: "column", maxWidth: "100vw", overflowX: "hidden" }}>
+    <div style={{ minHeight: "100vh", background: "#f5f6f8", color: "#111827", fontFamily: '"Roboto", Arial, sans-serif', display: "flex", flexDirection: "column", maxWidth: "100vw", overflowX: isMobile ? "auto" : "hidden" }}>
 
-      <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=5" />
+      <meta name="viewport" content="width=device-width, initial-scale=1" />
       <link rel="preconnect" href="https://fonts.googleapis.com" />
       <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
       <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700;900&display=swap" rel="stylesheet" />
       <style>{`
         * { box-sizing: border-box; margin: 0; padding: 0; }
         html, body { width: 100%; max-width: 100%; overflow-x: hidden; }
+        @media (max-width: 767px) {
+          html, body { overflow-x: auto; }
+        }
         #root { width: 100%; }
 
         /* ── Mobile-specific overrides ─────────────────────────── */
@@ -14321,7 +14324,7 @@ export default function App() {
       )}
 
       {/* Main */}
-      <main className={isMobile ? "mobile-main" : ""} style={{ flex: 1, minHeight: 0, padding: isMobile ? "8px 10px" : "12px 14px", overflow: "auto", display: "flex", flexDirection: "column", gap: 14, boxSizing: "border-box", width: "100%" }}>
+      <main className={isMobile ? "mobile-main" : ""} style={{ flex: 1, minHeight: 0, padding: isMobile ? "8px 10px" : "12px 14px", overflow: "auto", display: "flex", flexDirection: "column", gap: 14, boxSizing: "border-box", width: "100%", overflowX: isMobile ? "auto" : "hidden" }}>
 
         {/* ── Desktop-only view guard on mobile ──────────────────────── */}
         {isMobile && DESKTOP_ONLY_VIEWS.has(view) ? (
