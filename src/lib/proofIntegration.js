@@ -92,11 +92,16 @@ export async function createProofCompletionNotification({
       const errText = await res.text().catch(() => "");
       console.warn("[ProofIntegration] Full notification failed:", res.status, errText.slice(0, 300));
 
-      // Retry with minimal fields — safe for any table schema
+      // Retry with minimal fields — safe for any table schema. Keep the
+      // explicit "proof_complete" type even here — falling back to the
+      // generic "task_completed" type would make this indistinguishable
+      // from a regular project task completion in PulseX's notification
+      // center, which previously caused regular completions to get mixed
+      // up with "open the proof queue" behavior.
       const minimalNotif = {
         id:                    notifId,
         task_id:               taskId || null,
-        notification_type:     "task_completed",
+        notification_type:     "proof_complete",
         message:               msg,
         assigned_to_person_id: recipientMemberId,
         is_read:               false,

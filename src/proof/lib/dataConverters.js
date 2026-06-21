@@ -10,6 +10,7 @@ export function rowToSubtask(r) {
     file_url: r.file_url || "",
     isWaiting: r.is_waiting ?? false,
     completedAt: r.completed_at || null,
+    assignedByPersonId: r.assigned_by_person_id || null,
   };
 }
 export function rowToDeliverable(r, subs) {
@@ -24,6 +25,7 @@ export function rowToDeliverable(r, subs) {
     isWaiting: r.is_waiting ?? false,
     completedAt: r.completed_at || null,
     requestedDeliveryDate: r.requested_delivery_date || null,
+    assignedByPersonId: r.assigned_by_person_id || null,
     subtasks: (subs || []).filter(s => s.deliverable_id != null && s.deliverable_id === r.id)
       .sort((a, b) => a.position - b.position).map(rowToSubtask),
   };
@@ -62,6 +64,7 @@ export function delToRow(d, projectId, pos = 0) {
     file_url: d.file_url || null, position: pos,
     is_waiting: d.isWaiting ?? false,
     requested_delivery_date: d.requestedDeliveryDate || null,
+    assigned_by_person_id: d.assignedByPersonId || null,
   };
 }
 export function subToRow(s, delId, projId, pos = 0) {
@@ -74,6 +77,7 @@ export function subToRow(s, delId, projId, pos = 0) {
     custom_hours: s.customHours ?? null,
     file_url: s.file_url || null, position: pos,
     is_waiting: s.isWaiting ?? false,
+    assigned_by_person_id: s.assignedByPersonId || null,
   };
 }
 
