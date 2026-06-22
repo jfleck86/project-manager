@@ -14171,44 +14171,42 @@ export default function App() {
   );
 
   return (
-    <div style={{ minHeight: "100vh", background: "#f5f6f8", color: "#111827", fontFamily: '"Roboto", Arial, sans-serif', display: "flex", flexDirection: "column", maxWidth: "100vw", overflowX: isMobile ? "auto" : "hidden" }}>
+    <div style={{ height: isMobile ? "100%" : "100vh", background: "#f5f6f8", color: "#111827", fontFamily: '"Roboto", Arial, sans-serif', display: "flex", flexDirection: "column", maxWidth: "100vw", overflowX: "hidden", overflowY: "hidden" }}>
 
       <link rel="preconnect" href="https://fonts.googleapis.com" />
       <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
       <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700;900&display=swap" rel="stylesheet" />
-      <style>{`
-        * { box-sizing: border-box; margin: 0; padding: 0; }
-        html, body { width: 100%; max-width: 100%; overflow-x: hidden; }
-        @media (max-width: 767px) {
-          html, body { overflow-x: auto; }
-        }
-        #root { width: 100%; }
+       <style>{`
+         * { box-sizing: border-box; margin: 0; padding: 0; }
+         html, body { width: 100%; height: 100%; }
 
-        /* ── Mobile-specific overrides ─────────────────────────── */
-        @media (max-width: 767px) {
-          /* Bottom safe-area padding for notched iPhones */
-          .mobile-main { padding-bottom: calc(60px + env(safe-area-inset-bottom)) !important; }
-          /* Full-screen modals on phone */
-          .modal-card { width: 100vw !important; min-height: 100dvh !important; max-height: 100dvh !important; border-radius: 0 !important; margin: 0 !important; overflow-y: auto !important; }
-          .modal-backdrop { align-items: flex-end !important; padding: 0 !important; }
-          /* Hub task tiles — full width on mobile */
-          .hub-tile-grid { grid-template-columns: 1fr !important; }
-          /* Inputs and selects — prevent iOS zoom on focus (must be >=16px) */
-          input, select, textarea { font-size: 16px !important; }
-          /* Notification panel — full width */
-          .notif-panel { width: 100vw !important; right: 0 !important; left: 0 !important; }
-          /* Project pills — scroll horizontally */
-          .project-pills { flex-wrap: nowrap !important; overflow-x: auto !important; padding-bottom: 4px; }
-        }
-        @media (max-width: 640px) {
-          .nav-label { display: none; }
-          .dash-sidebar { width: 100% !important; }
-        }
-        @media (max-width: 480px) {
-          header { padding: 0 8px !important; }
-          main { padding: 8px !important; gap: 10px !important; }
-          .nav-label { display: none !important; }
-        }
+         /* Desktop: clip horizontal overflow */
+         @media (min-width: 768px) {
+           html, body { overflow-x: hidden; }
+         }
+
+         /* Mobile: position:fixed is the only reliable way to get a full-screen
+            scrollable app on iOS Safari. overflow-x:hidden on body silently kills
+            ALL touch scrolling on iOS — never set it on mobile. */
+         @media (max-width: 767px) {
+           html, body { overflow: hidden; position: fixed; width: 100%; height: 100%; }
+           #root { height: 100%; display: flex; flex-direction: column; overflow: hidden; }
+           .mobile-main { padding-bottom: calc(60px + env(safe-area-inset-bottom)) !important; -webkit-overflow-scrolling: touch; }
+           .modal-card { width: 100vw !important; min-height: 100dvh !important; max-height: 100dvh !important; border-radius: 0 !important; margin: 0 !important; overflow-y: auto !important; }
+           .modal-backdrop { align-items: flex-end !important; padding: 0 !important; }
+           .hub-tile-grid { grid-template-columns: 1fr !important; }
+           input, select, textarea { font-size: 16px !important; }
+           .notif-panel { width: 100vw !important; right: 0 !important; left: 0 !important; }
+           .project-pills { flex-wrap: nowrap !important; overflow-x: auto !important; padding-bottom: 4px; -webkit-overflow-scrolling: touch; }
+         }
+         @media (max-width: 640px) {
+           .nav-label { display: none; }
+           .dash-sidebar { width: 100% !important; }
+         }
+         @media (max-width: 480px) {
+           header { padding: 0 8px !important; }
+           .nav-label { display: none !important; }
+         }
         ::-webkit-scrollbar { width: 5px; height: 5px; }
         ::-webkit-scrollbar-track { background: #e8eaee; }
         ::-webkit-scrollbar-thumb { background: #c4c9d4; border-radius: 3px; }
@@ -14474,7 +14472,7 @@ export default function App() {
       )}
 
       {/* Main */}
-      <main className={isMobile ? "mobile-main" : ""} style={{ flex: 1, minHeight: 0, padding: isMobile ? "8px 10px" : "12px 14px", overflowY: "auto", overflowX: isMobile ? "hidden" : "hidden", display: "flex", flexDirection: "column", gap: 14, boxSizing: "border-box", width: "100%" }}>
+      <main className={isMobile ? "mobile-main" : ""} style={{ flex: 1, minHeight: 0, padding: isMobile ? "8px 10px" : "12px 14px", overflowY: "auto", overflowX: "hidden", display: "flex", flexDirection: "column", gap: 14, boxSizing: "border-box", width: "100%", WebkitOverflowScrolling: "touch" }}>
 
         {/* ── Desktop-only view guard on mobile ──────────────────────── */}
         {isMobile && DESKTOP_ONLY_VIEWS.has(view) ? (
