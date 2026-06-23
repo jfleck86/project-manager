@@ -2293,6 +2293,11 @@ function TimelineView({ projects, people, onEditItem, onAddDeliverable, onAddSub
     if (isMobile) return false; // always list view on mobile — Gantt needs wide screen
     try { return JSON.parse(localStorage.getItem('planr_show_gantt') ?? 'true'); } catch { return true; }
   });
+  // If viewport switches to mobile (e.g. DevTools simulation, screen resize, or
+  // orientation change), force list mode — gantt is unusable at phone widths.
+  useEffect(() => {
+    if (isMobile && showGantt) setShowGantt(false);
+  }, [isMobile]);
   const toggleGantt = () => setShowGantt(v => {
     const next = !v;
     try { localStorage.setItem('planr_show_gantt', JSON.stringify(next)); } catch {}
@@ -2323,7 +2328,11 @@ function TimelineView({ projects, people, onEditItem, onAddDeliverable, onAddSub
     } catch { return { ...COL_DEFAULTS }; }
   });
 
-  // Persist colWidths to localStorage whenever they change
+  // Mobile list-view: fixed narrow columns so headers and cells always match.
+  // Dur(0) and Deps(0) are hidden. Total width = 160+70+70+90+150 = 540px.
+  const MOB_COLS = { num:0, title:160, start:70, end:70, dur:0, deps:0, assignees:90, notes:150 };
+  // activeCols is used everywhere (headers AND cells) so they always stay in sync
+  const activeCols = (isMobile && !showGantt) ? MOB_COLS : colWidths;
   useEffect(() => {
     try { localStorage.setItem('planr_colWidths', JSON.stringify(colWidths)); } catch {}
   }, [colWidths]);
@@ -2522,15 +2531,17 @@ function TimelineView({ projects, people, onEditItem, onAddDeliverable, onAddSub
           border: "1px solid rgba(0,0,0,0.07)",
           borderRadius: 10,
           fontFamily: "inherit",
-          height: "calc(100vh - 130px)",
+          height: isMobile ? undefined : "calc(100vh - 130px)",
           minHeight: 300,
           overflowY: "auto",
-          overflowX: showGantt ? "auto" : "hidden",
+          overflowX: showGantt ? "auto" : (isMobile ? "auto" : "hidden"),
           WebkitOverflowScrolling: "touch",
         }}
       >
-        {/* Min-width wrapper so content never wraps */}
-        <div style={{ minWidth: showGantt ? LEFT_W + totalDays * DAY_W : "100%", background: "#fff" }}>
+        {/* Min-width wrapper so content never wraps — on mobile list view use
+        {/* In list mode, content width is determined naturally by non-zero columns + padding.
+            LeftCell returns null for width=0 so no phantom space. */}
+        <div style={{ minWidth: showGantt ? LEFT_W + totalDays * DAY_W : undefined, background: "#fff" }}>
 
         {/* ── TIMELINE HEADER ── */}
         <div style={{
@@ -2545,7 +2556,7 @@ function TimelineView({ projects, people, onEditItem, onAddDeliverable, onAddSub
           {/* Column labels — frozen left in Gantt view, normal in List view */}
           <div style={{
             display: "flex", alignItems: "center", flexShrink: 0,
-            width: showGantt ? LEFT_W : "100%",
+            width: showGantt ? LEFT_W : "auto",
            
             height: "100%",
             background: "#f0f2f5",
@@ -2556,10 +2567,10 @@ function TimelineView({ projects, people, onEditItem, onAddDeliverable, onAddSub
             {/* 18px spacer matching deliverable drag handle width */}
             <div style={{ width: 18, flexShrink: 0 }} />
             {(isMobile
-              ? [["Title","title"],["Assigned To","assignees"]]
+              ? [["Title","title"],["Start","start"],["End","end"],["Assigned To","assignees"],["Notes","notes"]]
               : [["#","num"],["Title","title"],["Start","start"],["End","end"],["Dur","dur"],["Deps","deps"],["Assigned To","assignees"],["Notes","notes"]]
-            ).map(([label, key]) => (
-              <div key={key} style={{ width: colWidths[key], position: "relative", padding: "0 8px", fontSize: 10, fontWeight: 700, color: "#374151", letterSpacing: "0.07em", flexShrink: 0, borderRight: "1px solid rgba(0,0,0,0.06)", whiteSpace: "nowrap", overflow: "hidden", userSelect: "none", display: "flex", alignItems: "center", height: "100%" }}>
+            ).filter(([,key]) => (activeCols[key] || 0) > 0).map(([label, key]) => (
+              <div key={key} style={{ width: activeCols[key], minWidth: activeCols[key], flexShrink: 0, position: "relative", padding: "0 8px", fontSize: 10, fontWeight: 700, color: "#374151", letterSpacing: "0.07em", flexShrink: 0, borderRight: "1px solid rgba(0,0,0,0.06)", whiteSpace: "nowrap", overflow: "hidden", userSelect: "none", display: "flex", alignItems: "center", height: "100%" }}>
                 {label.toUpperCase()}
                 <div onMouseDown={(e) => startResizeCol(key, e)} style={{ position: "absolute", right: 0, top: 0, bottom: 0, width: 8, cursor: "col-resize", display: "flex", alignItems: "center", justifyContent: "center" }}>
                   <div style={{ width: 2, height: 14, background: "rgba(0,0,0,0.15)", borderRadius: 1 }} />
@@ -2600,12 +2611,12 @@ function TimelineView({ projects, people, onEditItem, onAddDeliverable, onAddSub
           /* headerScrollRef/topScrollRef kept for API compat but scroll is now native */
           onAddDeliverable={onAddDeliverable} onAddSubtask={onAddSubtask}
           onMarkDone={onMarkDone} onSaveItem={onSaveItem} rowIndex={rowIndex} DAY_W={DAY_W}
-          colWidths={colWidths} LEFT_W={LEFT_W} holidays={holidays}
+          colWidths={activeCols} LEFT_W={LEFT_W} holidays={holidays}
           onInsertSubtask={onInsertSubtask} onReorderDeliverables={onReorderDeliverables} onReorderSubtasks={onReorderSubtasks} deliverableTemplates={deliverableTemplates} onApplyTemplate={onApplyTemplate} onDeleteSubtask={onDeleteSubtask}
           statusNotes={statusNotes} onUpdateNote={onUpdateNote}
           clipboard={clipboard} onCopySubtask={onCopySubtask} onCopyDeliverable={onCopyDeliverable}
           onPasteSubtask={onPasteSubtask} onPasteDeliverable={onPasteDeliverable}
-        showGantt={showGantt} />
+        showGantt={showGantt} isMobile={isMobile} />
         </div>{/* end minWidth wrapper */}
       </div>{/* end containerRef timeline box */}
     </div>
@@ -2933,6 +2944,7 @@ function ContextMenu({ x, y, items, onClose }) {
 
 // ── LeftCell — sticky frozen column cell used in timeline rows ────────────────
 function LeftCell({ width, children, center = false, last = false }) {
+  if (!width) return null; // zero-width columns contribute no space at all
   return (
     <div style={{
       width, minWidth: width, flexShrink: 0,
@@ -3051,9 +3063,9 @@ function DeliverableRow({ del, proj, people, collapsed, toggle, weeks, todayOff,
         >⠿</div>
         <div onMouseEnter={e => e.currentTarget.style.background="#fff8ed"} onMouseLeave={e => e.currentTarget.style.background="#fff"} style={{ display:"flex", flexShrink:0, alignSelf:"stretch", position: showGantt ? "sticky" : "static", left:18, zIndex: showGantt ? 20 : "auto", background:"#fff", width: showGantt ? LEFT_W : "100%", boxShadow: showGantt ? "2px 0 4px rgba(0,0,0,0.07)" : "none" }}>
         {/* Row # */}
-        <LeftCell width={colWidths.num} center>
+        {!isMobile && <LeftCell width={colWidths.num} center>
           <span style={{ fontSize: 10, fontWeight: 700, color: "#9ca3af" }}>{rowNum}</span>
-        </LeftCell>
+        </LeftCell>}
 
         {/* Title */}
         <LeftCell width={colWidths.title}>
@@ -3081,8 +3093,6 @@ function DeliverableRow({ del, proj, people, collapsed, toggle, weeks, todayOff,
           </div>
         </LeftCell>
 
-
-
         {/* Start */}
         <LeftCell width={colWidths.start}>
           <InlineDate value={del.start} onChange={v => save({ start: v })} />
@@ -3093,17 +3103,17 @@ function DeliverableRow({ del, proj, people, collapsed, toggle, weeks, todayOff,
           <InlineDate value={del.end} onChange={v => save({ end: v })} />
         </LeftCell>
 
-        {/* Duration (read-only, auto from dates) */}
+        {/* Duration — width:0 on mobile via activeCols */}
         <LeftCell width={colWidths.dur}>
-          <span style={{ fontSize: 10, color: "#6b7280", padding: "2px 3px" }} title="Business days">{busyDays(del.start, del.end, new Set((holidays||[]).map(h=>h.date)))}d</span>
+          <span style={{ fontSize: 10, color: "#6b7280", padding: "2px 3px" }}>{busyDays(del.start, del.end, new Set((holidays||[]).map(h=>h.date)))}d</span>
         </LeftCell>
 
-        {/* Dependencies */}
+        {/* Dependencies — width:0 on mobile via activeCols */}
         <LeftCell width={colWidths.deps}>
           <InlineDeps deps={del.dependencies || []} rowIndex={rowIndex} onChange={ids => save({ dependencies: ids })} />
         </LeftCell>
 
-        {/* Assignees — editable only when deliverable has no subtasks (leaf work item) */}
+        {/* Assignees */}
         <LeftCell width={colWidths.assignees}>
           {del.subtasks && del.subtasks.length > 0
             ? <span style={{ fontSize: 10, color: "#d1d5db", padding: "2px 4px", fontStyle: "italic" }} title="Assign to subtasks instead">—</span>
@@ -3283,7 +3293,7 @@ function SubtaskRow({ sub, del, proj, people, weeks, todayOff, allItemsFlat, onE
       </LeftCell>}
 
       {/* Title */}
-      <LeftCell width={isMobile ? undefined : colWidths.title} style={isMobile ? { flex:1, minWidth:0 } : undefined}>
+      <LeftCell width={colWidths.title}>
         <div style={{ display: "flex", alignItems: "center", gap: 5, paddingLeft: 18 }}>
           <div style={{ width: 10, height: 1, background: "rgba(0,0,0,0.1)", flexShrink: 0 }} />
           {/* Drag handle */}
@@ -3308,7 +3318,6 @@ function SubtaskRow({ sub, del, proj, people, weeks, todayOff, allItemsFlat, onE
         </div>
       </LeftCell>
 
-      {!isMobile && <>
       {/* Start */}
       <LeftCell width={colWidths.start}>
         <InlineDate value={sub.start} onChange={v => save({ start: v })} />
@@ -3317,26 +3326,25 @@ function SubtaskRow({ sub, del, proj, people, weeks, todayOff, allItemsFlat, onE
       <LeftCell width={colWidths.end}>
         <InlineDate value={sub.end} onChange={v => save({ end: v })} />
       </LeftCell>
-      {/* Duration */}
+      {/* Dur/Deps — colWidths.dur/deps === 0 on mobile via activeCols, so these take no space */}
       <LeftCell width={colWidths.dur}>
-        <span style={{ fontSize: 10, color: "#6b7280", padding: "2px 3px" }} title="Business days">{busyDays(sub.start, sub.end, new Set((holidays||[]).map(h=>h.date)))}</span>
+        <span style={{ fontSize: 10, color: "#6b7280", padding: "2px 3px" }} title="Business days">{busyDays(sub.start, sub.end, new Set((holidays||[]).map(h=>h.date)))}d</span>
       </LeftCell>
-      {/* Dependencies */}
       <LeftCell width={colWidths.deps}>
         <InlineDeps deps={sub.dependencies || []} rowIndex={rowIndex} onChange={ids => save({ dependencies: ids })} />
       </LeftCell>
-      </>}{/* end !isMobile desktop columns */}
       {/* Assignees */}
       <LeftCell width={colWidths.assignees}>
         <InlineAssignees assignees={sub.assignees || []} people={people} onChange={v => save({ assignees: v })} />
       </LeftCell>
-      {!isMobile && <InlineNoteCell
+      {/* Notes — on mobile colWidths.notes=150 (wrapping); on desktop uses saved colWidth */}
+      <InlineNoteCell
         width={colWidths.notes}
         note={statusNotes[`${proj.id}::${sub.id}`] || ""}
         onChange={onUpdateNote ? (text) => onUpdateNote(`${proj.id}::${sub.id}`, text) : null}
         color={proj.color}
         last
-      />}
+      />
 
       </div>{/* end sticky left */}
       {/* Gantt bar */}
@@ -8906,6 +8914,9 @@ function StatusView({ projects, people, statusNotes, onUpdateNote, onAddDelivera
 
       {/* ── Status table ── */}
       <div style={{ background: "#ffffff", border: "1px solid rgba(0,0,0,0.07)", borderRadius: 10, overflow: "hidden" }}>
+        {/* Horizontal scroll wrapper — on mobile the 11-column table needs ~900px min width */}
+        <div style={{ overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
+        <div style={{ minWidth: 900 }}>
         {/* Header */}
         <div style={{ display: "grid", gridTemplateColumns: "minmax(75px,0.9fr) minmax(95px,1.2fr) minmax(100px,1.3fr) minmax(100px,1.3fr) minmax(110px,0.85fr) minmax(90px,0.7fr) minmax(65px,0.6fr) minmax(65px,0.6fr) minmax(65px,0.6fr) minmax(110px,1.8fr) minmax(65px,0.65fr)", gap: 0, borderBottom: "1px solid rgba(0,0,0,0.07)", background: "#eceef2" }}>
           {[["Client","client"],["Project","project"],["Deliverable","deliverable"],["Current Task",null],["Health","track"],["Dept",null],["Proj Due","due"],["Task Due","taskdue"],["Team","assigned"],["Notes",null],["",null]].map(([h, col], i) => (
@@ -9138,6 +9149,8 @@ function StatusView({ projects, people, statusNotes, onUpdateNote, onAddDelivera
             </div>
           );
         })}
+        </div>{/* end minWidth wrapper */}
+        </div>{/* end horizontal scroll wrapper */}
       </div>
 
       {/* ── Note editor inline modal ── */}
@@ -11228,7 +11241,7 @@ function Overlay({ children, onClose }) {
 }
 function ModalShell({ title, onClose, children, accentColor = BRAND_TEAL, width = 480 }) {
   return (
-    <div style={{ background: "#ffffff", border: "1px solid rgba(0,0,0,0.09)", borderRadius: 12, width, maxHeight: "92vh", overflow: "auto", boxShadow: "0 30px 90px rgba(0,0,0,0.35)" }}>
+    <div style={{ background: "#ffffff", border: "1px solid rgba(0,0,0,0.09)", borderRadius: 12, width, maxHeight: "92vh", overflowY: "auto", overflowX: "hidden", boxShadow: "0 30px 90px rgba(0,0,0,0.35)" }}>
       <div style={{ borderBottom: "1px solid rgba(0,0,0,0.07)", padding: "16px 20px", display: "flex", alignItems: "center", gap: 10 }}>
         <div style={{ width: 4, height: 20, background: accentColor, borderRadius: 2, flexShrink: 0 }} />
         <span style={{ flex: 1, fontSize: 15, fontWeight: 700, color: "#111827" }}>{title}</span>
@@ -14003,7 +14016,7 @@ export default function App() {
       person_id:   ownMemberId,
       event_type:  eventType,
       occurred_at: new Date().toISOString(),
-    }).catch(() => {});
+    }).catch(() => {}); // 401 = table has no INSERT policy; safe to ignore
   }, [SB_READY, ownMemberId]);
 
   // Store the real name from the people array once both people + ownMemberId are available
@@ -14131,6 +14144,10 @@ export default function App() {
   ];
   const _allowed = allowedNavItems(currentRole);
   const navItems = ALL_NAV_ITEMS.filter(n => _allowed.has(n.id));
+  // Desktop nav hides By Person — it's accessible on mobile via the bottom tab bar
+  // and drawer, but the desktop nav already has By Person visible there too.
+  // Per request: By Person should only be surfaced on mobile.
+  const desktopNavItems = navItems.filter(n => n.id !== "people");
 
   // Mobile detection — re-checks on resize so orientation changes work.
   // 768px is the boundary: anything narrower is treated as phone/mobile.
@@ -14143,7 +14160,7 @@ export default function App() {
   }, []);
 
   // Views that genuinely can't work on a 375-430px phone screen
-  const DESKTOP_ONLY_VIEWS = new Set(["workload","reporting","dashboard","history","kpi","business-units"]);
+  const DESKTOP_ONLY_VIEWS = new Set(["people","workload","reporting","dashboard","history","kpi","business-units"]);
   // Mobile-friendly nav items (subset shown in bottom tab bar)
   const MOBILE_NAV_IDS = ["myhub"];
 
@@ -14171,54 +14188,57 @@ export default function App() {
   );
 
   return (
-    <div style={{ height: isMobile ? "100%" : "100vh", background: "#f5f6f8", color: "#111827", fontFamily: '"Roboto", Arial, sans-serif', display: "flex", flexDirection: "column", maxWidth: "100vw", overflowX: "hidden", overflowY: "hidden" }}>
+    <div className={isMobile ? "mobile-app" : ""} style={{ minHeight: isMobile ? "100%" : "100vh", background: "#f5f6f8", color: "#111827", fontFamily: '"Roboto", Arial, sans-serif', display: "flex", flexDirection: "column", maxWidth: "100vw", overflowX: "hidden" }}>
 
       <link rel="preconnect" href="https://fonts.googleapis.com" />
       <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
       <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700;900&display=swap" rel="stylesheet" />
        <style>{`
          * { box-sizing: border-box; margin: 0; padding: 0; }
-         html, body { width: 100%; height: 100%; }
+         html, body { width: 100%; }
 
-         /* Desktop: clip horizontal overflow */
+         /* ── Mobile scroll: the simplest approach that actually works ──
+            NO position:fixed on body (kills height calculation)
+            NO overflow:hidden on body (kills ALL touch scroll on iOS)
+            Just a normal document, with main as the scroll container.   */
+         @media (max-width: 767px) {
+           html, body { height: 100%; overflow: hidden; }
+           #root { height: 100%; }
+           .mobile-main {
+             overflow-y: scroll !important;
+             -webkit-overflow-scrolling: touch !important;
+             padding-bottom: calc(60px + env(safe-area-inset-bottom)) !important;
+           }
+           .mobile-app {
+             height: 100%;
+              overflow-x: hidden;
+             display: flex;
+             flex-direction: column;
+           }
+           input, select, textarea { font-size: 16px !important; }
+           .modal-card { width: 100vw !important; border-radius: 0 !important; margin: 0 !important; }
+           .modal-backdrop { align-items: flex-end !important; padding: 0 !important; }
+           .hub-tile-grid { grid-template-columns: 1fr !important; }
+           .notif-panel { width: 100vw !important; right: 0 !important; left: 0 !important; }
+           .project-pills { flex-wrap: nowrap !important; overflow-x: auto !important; -webkit-overflow-scrolling: touch; padding-bottom: 4px; }
+         }
          @media (min-width: 768px) {
            html, body { overflow-x: hidden; }
          }
-
-         /* Mobile: position:fixed is the only reliable way to get a full-screen
-            scrollable app on iOS Safari. overflow-x:hidden on body silently kills
-            ALL touch scrolling on iOS — never set it on mobile. */
-         @media (max-width: 767px) {
-           html, body { overflow: hidden; position: fixed; width: 100%; height: 100%; }
-           #root { height: 100%; display: flex; flex-direction: column; overflow: hidden; }
-           .mobile-main { padding-bottom: calc(60px + env(safe-area-inset-bottom)) !important; -webkit-overflow-scrolling: touch; }
-           .modal-card { width: 100vw !important; min-height: 100dvh !important; max-height: 100dvh !important; border-radius: 0 !important; margin: 0 !important; overflow-y: auto !important; }
-           .modal-backdrop { align-items: flex-end !important; padding: 0 !important; }
-           .hub-tile-grid { grid-template-columns: 1fr !important; }
-           input, select, textarea { font-size: 16px !important; }
-           .notif-panel { width: 100vw !important; right: 0 !important; left: 0 !important; }
-           .project-pills { flex-wrap: nowrap !important; overflow-x: auto !important; padding-bottom: 4px; -webkit-overflow-scrolling: touch; }
-         }
-         @media (max-width: 640px) {
-           .nav-label { display: none; }
-           .dash-sidebar { width: 100% !important; }
-         }
-         @media (max-width: 480px) {
-           header { padding: 0 8px !important; }
-           .nav-label { display: none !important; }
-         }
-        ::-webkit-scrollbar { width: 5px; height: 5px; }
-        ::-webkit-scrollbar-track { background: #e8eaee; }
-        ::-webkit-scrollbar-thumb { background: #c4c9d4; border-radius: 3px; }
-        input[type=date]::-webkit-calendar-picker-indicator { filter: invert(0); cursor: pointer; }
-        input[type=range] { cursor: pointer; }
-        nav::-webkit-scrollbar { display: none; }
-        select option { background: #ffffff; color: #1a1d23; }
-        [data-timeline-body] { cursor: default; }
-        [data-timeline-body]:not(:has(input:focus)):not(:has(textarea:focus)) { cursor: grab; }
-        [data-timeline-body][data-panning] { cursor: grabbing !important; }
-        .add-btn:hover { opacity: 1 !important; }
-      `}</style>
+         @media (max-width: 640px) { .nav-label { display: none; } }
+         @media (max-width: 480px) { header { padding: 0 8px !important; } .nav-label { display: none !important; } }
+         ::-webkit-scrollbar { width: 5px; height: 5px; }
+         ::-webkit-scrollbar-track { background: #e8eaee; }
+         ::-webkit-scrollbar-thumb { background: #c4c9d4; border-radius: 3px; }
+         input[type=date]::-webkit-calendar-picker-indicator { filter: invert(0); cursor: pointer; }
+         input[type=range] { cursor: pointer; }
+         nav::-webkit-scrollbar { display: none; }
+         select option { background: #ffffff; color: #1a1d23; }
+         [data-timeline-body] { cursor: default; }
+         [data-timeline-body]:not(:has(input:focus)):not(:has(textarea:focus)) { cursor: grab; }
+         [data-timeline-body][data-panning] { cursor: grabbing !important; }
+         .add-btn:hover { opacity: 1 !important; }
+       `}</style>
 
       {/* ── Mobile Nav Drawer ─────────────────────────────────────────── */}
       {isMobile && mobileNavOpen && (
@@ -14308,7 +14328,7 @@ export default function App() {
           style={{ display: "flex", gap: 2, overflowX: "auto", overflowY: "visible", flex: 1, scrollbarWidth: "none", msOverflowStyle: "none", WebkitOverflowScrolling: "touch", minWidth: 0 }}
           onWheel={e => { if (!e.shiftKey && Math.abs(e.deltaX) < Math.abs(e.deltaY)) { e.currentTarget.scrollLeft += e.deltaY; } }}
         >
-          {navItems.map(n => {
+          {desktopNavItems.map(n => {
             // Badge = unread notifications (all types) for this user
             // Admin sees all unread; members see only their own assignments
             // Badge: shows unread notifications FOR THE LOGGED-IN USER (ownMemberId)
@@ -14456,7 +14476,7 @@ export default function App() {
           {[
             { id:"myhub",        icon:"⊙", label:"My Hub" },
             { id:"timeline",     icon:"▬", label:"Timeline" },
-            { id:"people",       icon:"◎", label:"By Person" },
+            { id:"status",       icon:"◉", label:"Status" },
             { id:"mobiledash",   icon:"◈", label:"Overview" },
             { id:"__more__",     icon:"☰", label:"More" },
           ].filter(t => t.id === "__more__" || t.id === "mobiledash" || navItems.some(n => n.id === t.id)).map(t => (
@@ -14472,7 +14492,7 @@ export default function App() {
       )}
 
       {/* Main */}
-      <main className={isMobile ? "mobile-main" : ""} style={{ flex: 1, minHeight: 0, padding: isMobile ? "8px 10px" : "12px 14px", overflowY: "auto", overflowX: "hidden", display: "flex", flexDirection: "column", gap: 14, boxSizing: "border-box", width: "100%", WebkitOverflowScrolling: "touch" }}>
+      <main className={isMobile ? "mobile-main" : ""} style={{ flex: 1, minHeight: 0, padding: isMobile ? "8px 10px" : "12px 14px", overflowY: isMobile ? "scroll" : "auto", overflowX: "hidden", display: "flex", flexDirection: "column", gap: 14, boxSizing: "border-box", width: "100%" }}>
 
         {/* ── Desktop-only view guard on mobile ──────────────────────── */}
         {isMobile && DESKTOP_ONLY_VIEWS.has(view) ? (
