@@ -887,7 +887,7 @@ function CheckButton({ isDone, onClick }) {
 }
 
 // ─── PROJECT DETAILS MODAL ───────────────────────────────────────────────────
-function ProjectDetailsModal({ proj, people, onClose, onSave, onArchive, onDelete, onSaveAsTemplate, buClients = [] }) {
+function ProjectDetailsModal({ proj, people, onClose, onSave, onArchive, onDelete, onSaveAsTemplate, buClients = [], onGenerateReport }) {
   // Use proj as the source of truth; local edits stored as overrides.
   // This avoids useState timing issues where proj arrives after first render.
   const [overrides, setOverrides] = useState({});
@@ -954,6 +954,17 @@ function ProjectDetailsModal({ proj, people, onClose, onSave, onArchive, onDelet
           <button onClick={onClose} style={{ background: "none", border: "none", fontSize: 20,
             color: "#9ca3af", cursor: "pointer", lineHeight: 1, padding: 4 }}>×</button>
         </div>
+        {/* Generate Report button strip */}
+        {onGenerateReport && (
+          <div style={{ padding: "8px 22px", background: "rgba(0,0,0,0.02)", borderBottom: "1px solid rgba(0,0,0,0.06)", display: "flex", alignItems: "center", justifyContent: "flex-end" }}>
+            <button onClick={() => { onGenerateReport(proj.id); onClose(); }}
+              style={{ padding: "6px 16px", background: BRAND_TEAL, border: "none", borderRadius: 7,
+                color: "#fff", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit",
+                display: "flex", alignItems: "center", gap: 6 }}>
+              📊 Generate Project Update Report
+            </button>
+          </div>
+        )}
 
         {/* Body */}
         <div style={{ padding: "20px 22px", display: "flex", flexDirection: "column", gap: 18, overflowY: "auto", maxHeight: "65vh" }}>
@@ -1493,7 +1504,7 @@ function TaskModal({ item, projectColor, client, allItems, onClose, onSave, allP
 
           {/* ── Notes ── */}
           <div>
-            <div style={labelStyle}>Notes</div>
+            <div style={labelStyle}>Notes <span style={{ fontWeight: 400, color: "#9ca3af", fontSize: 9, textTransform: "none", letterSpacing: 0 }}>— temporary context &amp; updates</span></div>
             <textarea
               value={(() => {
                 const noteKey = item.deliverableId
@@ -1513,6 +1524,26 @@ function TaskModal({ item, projectColor, client, allItems, onClose, onSave, allP
               style={{ ...selectStyle, resize: "vertical", lineHeight: 1.5, fontFamily: "inherit" }}
             />
           </div>
+
+          {/* ── Specifications & Requirements — deliverable-level only ── */}
+          {!item.deliverableId && (
+            <div style={{ borderTop: "1px solid rgba(0,0,0,0.06)", paddingTop: 16 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+                <div style={labelStyle}>Specifications &amp; Requirements</div>
+                <span style={{ fontSize: 9, color: "#6b7280", fontWeight: 400, textTransform: "none", letterSpacing: 0, background: "rgba(0,0,0,0.04)", borderRadius: 4, padding: "2px 6px" }}>
+                  Official execution requirements
+                </span>
+              </div>
+              <textarea
+                value={form.specifications || ""}
+                onChange={e => set("specifications", e.target.value)}
+                placeholder={"e.g.\n• HTML file required\n• 600px width\n• Dark mode version\n• Subject line ≤ 50 characters"}
+                rows={5}
+                style={{ ...selectStyle, resize: "vertical", lineHeight: 1.6, fontFamily: "inherit",
+                  background: "rgba(0,181,181,0.03)", border: "1px solid rgba(0,181,181,0.2)" }}
+              />
+            </div>
+          )}
         </div>
         {/* Footer */}
         <div style={{ borderTop: "1px solid rgba(0,0,0,0.07)", padding: "14px 22px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
@@ -2276,7 +2307,7 @@ function OverdueTray({ items, onOpen, todayStr }) {
 }
 
 
-function TimelineView({ projects, people, onEditItem, onAddDeliverable, onAddSubtask, onMarkDone, onSaveItem, holidays = [], onInsertSubtask, onReorderDeliverables, onReorderSubtasks, deliverableTemplates = [], onApplyTemplate, ownMemberId = "", onDeleteSubtask, statusNotes = {}, onUpdateNote, onSaveProject, onOpenProject, clipboard, onCopySubtask, onCopyDeliverable, onPasteSubtask, onPasteDeliverable, isMobile = false }) {
+function TimelineView({ projects, people, onEditItem, onAddDeliverable, onAddSubtask, onMarkDone, onSaveItem, holidays = [], onInsertSubtask, onReorderDeliverables, onReorderSubtasks, deliverableTemplates = [], onApplyTemplate, ownMemberId = "", onDeleteSubtask, statusNotes = {}, onUpdateNote, onSaveProject, onOpenProject, clipboard, onCopySubtask, onCopyDeliverable, onPasteSubtask, onPasteDeliverable, isMobile = false, onGenerateReport }) {
   const [collapsed, setCollapsed] = useState(() => {
     try { return JSON.parse(localStorage.getItem('planr_collapsed') || '{}'); } catch { return {}; }
   });
@@ -2497,7 +2528,13 @@ function TimelineView({ projects, people, onEditItem, onAddDeliverable, onAddSub
             color: selectedProjects.includes(p.id) ? p.color : "#6b7280",
           }}>{p.name}</div>
         ))}
-        {!isMobile && <button onClick={jumpToToday} style={{ marginLeft:"auto", padding:"4px 14px", background:BRAND_TEAL, color:"#fff", border:"none", borderRadius:7, cursor:"pointer", fontSize:12, fontWeight:700, fontFamily:"inherit", display:"flex", alignItems:"center", gap:5, flexShrink:0 }}>⌖ Today</button>}
+        {!isMobile && <button onClick={jumpToToday} style={{ marginLeft: selectedProjects.length === 1 && onGenerateReport ? 8 : "auto", padding:"4px 14px", background:BRAND_TEAL, color:"#fff", border:"none", borderRadius:7, cursor:"pointer", fontSize:12, fontWeight:700, fontFamily:"inherit", display:"flex", alignItems:"center", gap:5, flexShrink:0 }}>⌖ Today</button>}
+        {selectedProjects.length === 1 && onGenerateReport && (
+          <button onClick={() => onGenerateReport(selectedProjects[0])}
+            style={{ padding:"4px 14px", background:"rgba(0,0,0,0.06)", border:"1px solid rgba(0,0,0,0.12)", borderRadius:7, cursor:"pointer", fontSize:12, fontWeight:700, color:"#374151", fontFamily:"inherit", display:"flex", alignItems:"center", gap:6 }}>
+            📊 Generate Report
+          </button>
+        )}
         {!isMobile && <button onClick={toggleGantt}
           title={showGantt ? "Hide Gantt — List View" : "Show Gantt — Planning View"}
           style={{ padding:"4px 14px", background: showGantt ? "rgba(0,0,0,0.08)" : BRAND_TEAL, color: showGantt ? "#374151" : "#fff", border:"1px solid rgba(0,0,0,0.12)", borderRadius:7, cursor:"pointer", fontSize:12, fontWeight:700, fontFamily:"inherit", display:"flex", alignItems:"center", gap:5, flexShrink:0 }}>
@@ -7045,7 +7082,7 @@ function KPIDashboardView({ projects, people, notifications, adminTasks = [], sb
         </div>
       )}
 
-      {/* ═══ 1. ADOPTION ═══ */}
+        {/* PART 2: TEAM OUTLOOK & UPCOMING WORK */}
       <KPISection title="1 · Adoption">
         <p style={{ margin:"0 0 16px", fontSize:12, color:"#6b7280", lineHeight:1.5 }}>
           Tracks whether the team is actively using PulseX. Adoption is the foundation — the platform only improves visibility and planning if people are using it.
@@ -7110,7 +7147,7 @@ function KPIDashboardView({ projects, people, notifications, adminTasks = [], sb
         </div>
       </KPISection>
 
-      {/* ═══ 2. DATA QUALITY ═══ */}
+        {/* PART 2: TEAM OUTLOOK & UPCOMING WORK */}
       <KPISection title="2 · Data Quality">
         <p style={{ margin:"0 0 16px", fontSize:12, color:"#6b7280", lineHeight:1.5 }}>
           Measures how complete and usable the data in PulseX is. High data quality means reports are reliable, capacity is accurate, and nothing important is invisible to the team.
@@ -7213,7 +7250,7 @@ function KPIDashboardView({ projects, people, notifications, adminTasks = [], sb
         )}
       </KPISection>
 
-      {/* ═══ 3. WORKFLOW METRICS ═══ */}
+        {/* PART 2: TEAM OUTLOOK & UPCOMING WORK */}
       <KPISection title="3 · Workflow Metrics">
         <p style={{ margin:"0 0 16px", fontSize:12, color:"#6b7280", lineHeight:1.5 }}>
           Measures how effectively PulseX is being used to plan, estimate, and manage work. Higher scores mean more predictable delivery and better resource allocation.
@@ -7259,7 +7296,7 @@ function KPIDashboardView({ projects, people, notifications, adminTasks = [], sb
         </div>
       </KPISection>
 
-      {/* ═══ 4. SYSTEM VALUE ═══ */}
+        {/* PART 2: TEAM OUTLOOK & UPCOMING WORK */}
       <KPISection title="4 · System Value">
         <p style={{ margin:"0 0 16px", fontSize:12, color:"#6b7280", lineHeight:1.5 }}>
           Measures whether PulseX has enough data to generate meaningful reports, health scores, and capacity forecasts — the outputs the platform exists to produce.
@@ -7279,7 +7316,7 @@ function KPIDashboardView({ projects, people, notifications, adminTasks = [], sb
         </div>
       </KPISection>
 
-      {/* ═══ 5. USER BEHAVIOR ═══ */}
+        {/* PART 2: TEAM OUTLOOK & UPCOMING WORK */}
       <KPISection title="5 · User Behavior">
         <p style={{ margin:"0 0 16px", fontSize:12, color:"#6b7280", lineHeight:1.5 }}>
           Shows which parts of PulseX the team uses most. Helps identify underused features, training opportunities, and where the platform is delivering the most value.
@@ -7331,7 +7368,7 @@ function KPIDashboardView({ projects, people, notifications, adminTasks = [], sb
         </div>
       </KPISection>
 
-      {/* ═══ 6. TRENDS ═══ */}
+        {/* PART 2: TEAM OUTLOOK & UPCOMING WORK */}
       {filteredSnaps.length >= 2 && (
         <KPISection title="6 · Historical Trends">
           <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:16 }}>
@@ -8782,7 +8819,776 @@ function MobileDashboard({ projects, people, pto = [], holidays = [], adminTasks
   );
 }
 
-function StatusView({ projects, people, statusNotes, onUpdateNote, onAddDeliverable, onAddSubtask, onSaveTrackOverride, onEditItem, onOpenProject, adminTasks = [], onEditAdminTask, onUpdateAdminTaskNotes }) {
+// ── ProjectUpdateReport ────────────────────────────────────────────────────
+// Reads project state and produces a communication-style report answering:
+// "Where are we? What's done? What still needs to happen?"
+
+
+// ── ProjectUpdateReport ──────────────────────────────────────────────────────
+// Communication-style report: "Where are we? What's done? What still needs to happen?"
+// Part 1: computed from live project data
+// Part 2: Team Outlook - computed + manually editable commentary
+
+function ProjectUpdateReport({ project, people, onClose, onUpdateCommentary }) {
+  const today = new Date(); today.setHours(0,0,0,0);
+  const todayStr = today.toISOString().slice(0,10);
+  const TEAL = "#00B5B5", NAVY = "#002A4E";
+
+  const reportRef = React.useRef(null);
+
+  const downloadReport = () => {
+    const node = reportRef.current;
+    if (!node) return;
+    const clone = node.cloneNode(true);
+
+    // Remove interactive controls
+    clone.querySelectorAll("button").forEach(b => b.remove());
+
+    // Replace textareas with styled divs showing their live value
+    clone.querySelectorAll("textarea").forEach(ta => {
+      const orig = node.querySelectorAll("textarea");
+      // Match by position in NodeList
+      const idx = [...clone.querySelectorAll("textarea")].indexOf(ta);
+      const liveVal = idx >= 0 && orig[idx] ? orig[idx].value : ta.value;
+      const div = document.createElement("div");
+      div.style.cssText = ta.style.cssText;
+      div.style.whiteSpace = "pre-wrap";
+      div.style.minHeight = "40px";
+      div.textContent = liveVal || "";
+      ta.replaceWith(div);
+    });
+
+    const html = `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Project Update - ${project.name} - ${todayStr}</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: "Roboto", Arial, sans-serif; background: #f5f6f8; color: #111827; }
+  table { border-collapse: collapse; width: 100%; }
+  @media print {
+    body { background: #fff; }
+    @page { margin: 1cm; size: A4; }
+  }
+</style>
+</head>
+<body>
+${clone.outerHTML}
+</body>
+</html>`;
+
+    const blob = new Blob([html], { type: "text/html;charset=utf-8" });
+    const url  = URL.createObjectURL(blob);
+    const a    = document.createElement("a");
+    a.href     = url;
+    a.download = "Project-Update-" + project.name.replace(/[^a-z0-9]/gi, "-") + "-" + todayStr + ".html";
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
+  // ── Commentary state ─────────────────────────────────────────────────────
+  const initCommentary = Object.assign({
+    assessment: "green", highlights: "", currentFocus: "",
+    risks: "", decisionsNeeded: "", dependencies: "", milestones: "",
+    additionalNotes: "", nextSteps: {},
+    outlookRisks: "", outlookDecisions: "", outlookNotes: "",
+  }, project.commentary || {});
+  const [commentary, setCommentary] = React.useState(initCommentary);
+  const [saved, setSaved] = React.useState(false);
+
+  const setC = (k, v) => {
+    const next = Object.assign({}, commentary, { [k]: v });
+    setCommentary(next);
+    if (onUpdateCommentary) onUpdateCommentary(next);
+  };
+  const setNextStep = (delId, v) => {
+    const ns = Object.assign({}, commentary.nextSteps || {}, { [delId]: v });
+    const next = Object.assign({}, commentary, { nextSteps: ns });
+    setCommentary(next);
+    if (onUpdateCommentary) onUpdateCommentary(next);
+  };
+  const saveAll = () => {
+    if (onUpdateCommentary) onUpdateCommentary(commentary);
+    setSaved(true);
+    setTimeout(() => setSaved(false), 1500);
+  };
+
+  // ── Helpers ──────────────────────────────────────────────────────────────
+  const fmt = (ds) => {
+    if (!ds) return "--";
+    return new Date(ds + "T00:00:00").toLocaleDateString("en-US",
+      { month: "short", day: "numeric", year: "numeric" });
+  };
+  const fmtS = (ds) => {
+    if (!ds) return "--";
+    return new Date(ds + "T00:00:00").toLocaleDateString("en-US",
+      { month: "short", day: "numeric" });
+  };
+  const pName  = (id) => (people.find(p => p.id === id) || {}).name || "Unassigned";
+  const pFirst = (id) => ((people.find(p => p.id === id) || {}).name || "--").split(" ")[0];
+  const pColor = (id) => ((people.find(p => p.id === id) || {}).color) || "#9ca3af";
+  const daysFromNow = (ds) => {
+    if (!ds) return null;
+    return Math.round((new Date(ds + "T00:00:00") - today) / 86400000);
+  };
+
+  // ── Flat task list ────────────────────────────────────────────────────────
+  const allTasks = project.deliverables.flatMap(del => {
+    const src = del.subtasks && del.subtasks.length > 0 ? del.subtasks : [del];
+    return src.map(t => Object.assign({}, t,
+      { delId: del.id, delTitle: del.title, delEnd: del.end }));
+  });
+  const doneTasks    = allTasks.filter(t => t.status === "Done");
+  const pendingTasks = allTasks.filter(t => t.status !== "Done");
+  const pct = allTasks.length > 0 ? Math.round(doneTasks.length / allTasks.length * 100) : 0;
+  const delsComplete = project.deliverables.filter(d => d.status === "Done").length;
+
+  const allEnds  = project.deliverables.map(d => d.end).filter(Boolean).sort();
+  const target   = allEnds[allEnds.length - 1] || null;
+  const daysLeft = daysFromNow(target);
+
+  // ── Health ────────────────────────────────────────────────────────────────
+  const overdue  = pendingTasks.filter(t => t.end && t.end < todayStr);
+  const blocked  = pendingTasks.filter(t => t.status === "Blocked");
+  const health   = blocked.length > 0 ? "At Risk"
+    : overdue.length > 2 ? "Off Track"
+    : overdue.length > 0 ? "Needs Attention"
+    : "On Track";
+  const healthC  = { "On Track": "#10b981", "Needs Attention": "#f59e0b",
+                     "Off Track": "#f97316", "At Risk": "#ef4444" }[health];
+
+  // ── Risks list ────────────────────────────────────────────────────────────
+  const risks = [];
+  blocked.forEach(t => {
+    risks.push({ issue: '"' + t.title + '" is blocked',
+      owner: (t.assignees || [])[0], sev: "High", color: "#ef4444",
+      impact: "Delays downstream tasks" });
+  });
+  overdue.forEach(t => {
+    const late = Math.abs(daysFromNow(t.end));
+    risks.push({ issue: '"' + t.title + '" is ' + late + 'd overdue',
+      owner: (t.assignees || [])[0], sev: late > 7 ? "High" : "Medium",
+      color: late > 7 ? "#ef4444" : "#f59e0b", impact: "Due " + fmtS(t.end) });
+  });
+  pendingTasks.filter(t => !(t.assignees || []).length).forEach(t => {
+    risks.push({ issue: '"' + t.title + '" has no owner',
+      owner: null, sev: "Medium", color: "#f59e0b",
+      impact: "Cannot be scheduled or tracked" });
+  });
+
+  // ── Recently completed (7 days) ───────────────────────────────────────────
+  const ago7    = new Date(today); ago7.setDate(today.getDate() - 7);
+  const ago7Str = ago7.toISOString().slice(0,10);
+  const recent  = doneTasks
+    .filter(t => t.completedAt && t.completedAt.slice(0,10) >= ago7Str)
+    .sort((a,b) => (b.completedAt||"").localeCompare(a.completedAt||""));
+
+  // ── Remaining deliverables ────────────────────────────────────────────────
+  const remDels = project.deliverables.filter(d => d.status !== "Done");
+
+  // ── Shared styles ─────────────────────────────────────────────────────────
+  const card  = { background: "#fff", border: "1px solid rgba(0,0,0,0.07)",
+                  borderRadius: 10, marginBottom: 20, overflow: "hidden" };
+  const th    = { fontSize: 9, fontWeight: 700, color: "#9ca3af",
+                  textTransform: "uppercase", letterSpacing: "0.08em",
+                  padding: "8px 14px", background: "#f8fafc",
+                  borderBottom: "1px solid rgba(0,0,0,0.06)", whiteSpace: "nowrap" };
+  const td    = { padding: "10px 14px", fontSize: 12, color: "#374151",
+                  verticalAlign: "top" };
+  const secH  = { fontSize: 11, fontWeight: 800, color: NAVY,
+                  textTransform: "uppercase", letterSpacing: "0.1em",
+                  marginBottom: 12, display: "flex", alignItems: "center", gap: 8 };
+  const badge = (c) => ({ display: "inline-block", padding: "2px 8px",
+                          borderRadius: 10, fontSize: 9, fontWeight: 700,
+                          background: c + "18", color: c });
+  const taStyle = { width: "100%", fontSize: 12, border: "1px solid rgba(0,0,0,0.1)",
+                    borderRadius: 7, padding: "9px 12px", fontFamily: "inherit",
+                    lineHeight: 1.6, resize: "vertical", background: "#fafafa",
+                    outline: "none", color: "#374151" };
+  const subH = { fontSize: 10, fontWeight: 700, color: "#6b7280",
+                 textTransform: "uppercase", letterSpacing: "0.08em",
+                 marginBottom: 5, display: "block" };
+
+  const aColors = { green: "#10b981", yellow: "#f59e0b", red: "#ef4444" };
+  const aLabels = { green: "On Track", yellow: "Needs Attention", red: "At Risk" };
+  const aColor  = aColors[commentary.assessment] || "#10b981";
+
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.45)",
+      zIndex: 1200, overflowY: "auto", backdropFilter: "blur(6px)",
+      padding: "24px 16px" }}
+      onClick={e => e.target === e.currentTarget && onClose()}>
+      <div ref={reportRef} style={{ width: "100%", maxWidth: 860, margin: "0 auto",
+        background: "#f5f6f8", borderRadius: 14,
+        boxShadow: "0 40px 120px rgba(0,0,0,0.4)", overflow: "hidden" }}>
+
+        {/* Report Header */}
+        <div style={{ background: NAVY, padding: "24px 32px", position: "relative" }}>
+          <div style={{ fontSize: 10, fontWeight: 700, color: "rgba(255,255,255,0.5)",
+            textTransform: "uppercase", letterSpacing: "0.1em", marginBottom: 6 }}>
+            Project Update Report - {fmt(todayStr)}
+          </div>
+          <div style={{ fontSize: 26, fontWeight: 900, color: "#fff", marginBottom: 4 }}>
+            {project.name}
+          </div>
+          <div style={{ fontSize: 13, color: "rgba(255,255,255,0.65)" }}>
+            {project.client}
+          </div>
+          <div style={{ position: "absolute", top: 20, right: 24, display: "flex",
+            gap: 8, alignItems: "center" }}>
+            <button onClick={downloadReport} style={{ background: "rgba(255,255,255,0.15)",
+              border: "1px solid rgba(255,255,255,0.3)", color: "#fff",
+              padding: "6px 14px", borderRadius: 7, cursor: "pointer",
+              fontSize: 12, fontWeight: 700, fontFamily: "inherit",
+              display: "flex", alignItems: "center", gap: 6 }}>
+              Download
+            </button>
+            <button onClick={onClose} style={{ background: "rgba(255,255,255,0.1)",
+              border: "none", color: "#fff", width: 32, height: 32, borderRadius: "50%",
+              cursor: "pointer", fontSize: 18, display: "flex", alignItems: "center",
+              justifyContent: "center", fontFamily: "inherit" }}>x</button>
+          </div>
+        </div>
+
+        {/* ── PART 1 ─────────────────────────────────────────────────── */}
+        <div style={{ padding: "28px 32px" }}>
+
+          {/* S1: Executive Summary */}
+          <div style={Object.assign({}, card, { borderTop: "3px solid " + healthC })}>
+            <div style={{ padding: "20px 24px" }}>
+              <div style={Object.assign({}, secH, { marginBottom: 18 })}>
+                Executive Summary
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)",
+                gap: 16, marginBottom: 20 }}>
+                {[
+                  { label: "Project Health",     key: "health" },
+                  { label: "% Complete",         key: "pct" },
+                  { label: "Deliverables Done",  key: "dels" },
+                  { label: "Tasks Done",         key: "tasks" },
+                  { label: "Project Manager",    key: "pm" },
+                  { label: "Account Lead",       key: "lead" },
+                  { label: "Target Completion",  key: "date" },
+                  { label: "Days Remaining",     key: "days" },
+                ].map(({ label, key }) => {
+                  let val;
+                  if (key === "health") {
+                    val = <span style={{ fontWeight: 800, color: healthC }}>{health}</span>;
+                  } else if (key === "pct") {
+                    val = <span style={{ fontWeight: 800, fontSize: 18, color: TEAL }}>{pct}%</span>;
+                  } else if (key === "dels") {
+                    val = delsComplete + " of " + project.deliverables.length;
+                  } else if (key === "tasks") {
+                    val = doneTasks.length + " of " + allTasks.length;
+                  } else if (key === "pm") {
+                    val = pName(project.projectManagerId);
+                  } else if (key === "lead") {
+                    val = pName(project.accountLeadId);
+                  } else if (key === "date") {
+                    val = target ? fmt(target) : "--";
+                  } else if (key === "days") {
+                    if (daysLeft == null) {
+                      val = "--";
+                    } else if (daysLeft < 0) {
+                      val = <span style={{ fontWeight: 700, color: "#ef4444" }}>
+                              {Math.abs(daysLeft)}d overdue
+                            </span>;
+                    } else if (daysLeft < 7) {
+                      val = <span style={{ fontWeight: 700, color: "#f59e0b" }}>
+                              {daysLeft}d
+                            </span>;
+                    } else {
+                      val = daysLeft + "d";
+                    }
+                  }
+                  return (
+                    <div key={key} style={{ background: "#f8fafc", borderRadius: 8,
+                      padding: "12px 14px" }}>
+                      <div style={{ fontSize: 9, fontWeight: 700, color: "#9ca3af",
+                        textTransform: "uppercase", letterSpacing: "0.08em",
+                        marginBottom: 5 }}>{label}</div>
+                      <div style={{ fontSize: 13, color: "#1f2937" }}>{val}</div>
+                    </div>
+                  );
+                })}
+              </div>
+              <div style={{ height: 8, background: "rgba(0,0,0,0.06)", borderRadius: 4,
+                overflow: "hidden" }}>
+                <div style={{ height: "100%", width: pct + "%", background: healthC,
+                  borderRadius: 4, transition: "width 0.4s" }} />
+              </div>
+              <div style={{ fontSize: 10, color: "#9ca3af", marginTop: 5 }}>
+                {pct}% complete - {pendingTasks.length} tasks remaining
+              </div>
+            </div>
+          </div>
+
+          {/* S2: Project Commentary */}
+          <div style={Object.assign({}, card, { borderTop: "3px solid " + aColor })}>
+            <div style={{ padding: "20px 24px" }}>
+              <div style={{ ...secH, justifyContent: "space-between", marginBottom: 18 }}>
+                <span>Project Commentary</span>
+                <button onClick={saveAll} style={{ fontSize: 11, padding: "5px 14px",
+                  borderRadius: 7, background: saved ? "#10b981" : TEAL, color: "#fff",
+                  border: "none", cursor: "pointer", fontFamily: "inherit", fontWeight: 700,
+                  textTransform: "none", letterSpacing: 0 }}>
+                  {saved ? "Saved" : "Save Commentary"}
+                </button>
+              </div>
+
+              {/* Assessment toggle */}
+              <div style={{ marginBottom: 18 }}>
+                <span style={subH}>Overall Assessment</span>
+                <div style={{ display: "flex", gap: 8 }}>
+                  {["green", "yellow", "red"].map(v => {
+                    const c = aColors[v];
+                    const active = commentary.assessment === v;
+                    return (
+                      <button key={v} onClick={() => setC("assessment", v)}
+                        style={{ padding: "7px 18px", borderRadius: 8,
+                          border: "2px solid " + c,
+                          background: active ? c + "18" : "transparent",
+                          color: c, fontWeight: 800, fontSize: 12,
+                          cursor: "pointer", fontFamily: "inherit",
+                          opacity: active ? 1 : 0.5 }}>
+                        {aLabels[v]}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+                <div>
+                  <span style={subH}>Highlights</span>
+                  <textarea rows={4} style={taStyle} value={commentary.highlights}
+                    onChange={e => setC("highlights", e.target.value)}
+                    placeholder={"* Initial concepts approved\n* Copy finalized\n* Email build completed"} />
+                </div>
+                <div>
+                  <span style={subH}>Current Focus</span>
+                  <textarea rows={4} style={taStyle} value={commentary.currentFocus}
+                    onChange={e => setC("currentFocus", e.target.value)}
+                    placeholder={"* Proof review\n* Final asset preparation\n* Client approval"} />
+                </div>
+                <div>
+                  <span style={subH}>Risks / Concerns</span>
+                  <textarea rows={4} style={taStyle} value={commentary.risks}
+                    onChange={e => setC("risks", e.target.value)}
+                    placeholder={"* Awaiting client feedback\n* Legal review timing\n* Resource constraints"} />
+                </div>
+                <div>
+                  <span style={subH}>Decisions Needed</span>
+                  <textarea rows={4} style={taStyle} value={commentary.decisionsNeeded}
+                    onChange={e => setC("decisionsNeeded", e.target.value)}
+                    placeholder={"* Confirm audience list\n* Approve subject line\n* Select creative direction"} />
+                </div>
+                <div>
+                  <span style={subH}>Dependencies / Waiting On</span>
+                  <textarea rows={4} style={taStyle} value={commentary.dependencies}
+                    onChange={e => setC("dependencies", e.target.value)}
+                    placeholder={"Item | Owner | Impact\nFinal copy approval | Client | Prevents proof release"} />
+                </div>
+                <div>
+                  <span style={subH}>Upcoming Milestones</span>
+                  <textarea rows={4} style={taStyle} value={commentary.milestones}
+                    onChange={e => setC("milestones", e.target.value)}
+                    placeholder={"Milestone | Target Date\nProof Approval | Jun 30\nDeployment | Jul 7"} />
+                </div>
+              </div>
+              <div style={{ marginTop: 16 }}>
+                <span style={subH}>Additional Notes</span>
+                <textarea rows={3} style={taStyle} value={commentary.additionalNotes}
+                  onChange={e => setC("additionalNotes", e.target.value)}
+                  placeholder={"Any context or nuance not captured elsewhere..."} />
+              </div>
+            </div>
+          </div>
+
+          {/* S3: Risks & Issues */}
+          {risks.length > 0 && (
+            <div style={card}>
+              <div style={{ padding: "16px 24px 0" }}>
+                <div style={secH}>
+                  Risks & Issues ({risks.length})
+                </div>
+              </div>
+              <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                <thead>
+                  <tr>
+                    <th style={th}>Issue</th>
+                    <th style={th}>Owner</th>
+                    <th style={th}>Severity</th>
+                    <th style={th}>Impact</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {risks.map((r, i) => (
+                    <tr key={i} style={{ borderBottom: "1px solid rgba(0,0,0,0.04)" }}>
+                      <td style={Object.assign({}, td, { borderLeft: "3px solid " + r.color })}>
+                        <span style={{ fontWeight: 600 }}>{r.issue}</span>
+                      </td>
+                      <td style={td}>
+                        {r.owner
+                          ? pFirst(r.owner)
+                          : <span style={{ color: "#9ca3af" }}>--</span>}
+                      </td>
+                      <td style={td}><span style={badge(r.color)}>{r.sev}</span></td>
+                      <td style={{ ...td, color: "#6b7280" }}>{r.impact}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          {/* S4: Recently Completed */}
+          {recent.length > 0 && (
+            <div style={card}>
+              <div style={{ padding: "16px 24px 0" }}>
+                <div style={secH}>Recently Completed (last 7 days)</div>
+              </div>
+              <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                <thead>
+                  <tr>
+                    <th style={th}>Task</th>
+                    <th style={th}>Owner</th>
+                    <th style={th}>Completed</th>
+                    <th style={th}>Deliverable</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {recent.map((t, i) => (
+                    <tr key={i} style={{ borderBottom: "1px solid rgba(0,0,0,0.04)" }}>
+                      <td style={{ ...td, fontWeight: 600 }}>{t.title}</td>
+                      <td style={td}>{pFirst((t.assignees || [])[0])}</td>
+                      <td style={{ ...td, color: "#10b981" }}>
+                        {fmtS((t.completedAt || "").slice(0,10))}
+                      </td>
+                      <td style={{ ...td, color: "#6b7280" }}>{t.delTitle}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          {/* S7: Remaining Deliverables */}
+          {remDels.length > 0 && (
+            <div style={card}>
+              <div style={{ padding: "16px 24px 0" }}>
+                <div style={secH}>Remaining Deliverables</div>
+              </div>
+              <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                <thead>
+                  <tr>
+                    {["Deliverable","Health","% Done","Remaining","Due","Owner"].map(h => (
+                      <th key={h} style={th}>{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {remDels.map((d, i) => {
+                    const dts  = d.subtasks && d.subtasks.length > 0 ? d.subtasks : [d];
+                    const done = dts.filter(t => t.status === "Done").length;
+                    const rem  = dts.filter(t => t.status !== "Done").length;
+                    const dp   = dts.length > 0 ? Math.round(done / dts.length * 100) : 0;
+                    const bk   = dts.filter(t => t.status === "Blocked").length;
+                    const ov   = dts.filter(t => t.status !== "Done" && t.end && t.end < todayStr).length;
+                    const dh   = bk > 0 ? "Blocked" : ov > 0 ? "Behind" : "On Track";
+                    const dc   = { "On Track": "#10b981", "Behind": "#f59e0b",
+                                   "Blocked": "#ef4444" }[dh];
+                    const owners = (d.assignees || []).map(id => pFirst(id)).join(", ") || "--";
+                    return (
+                      <tr key={i} style={{ borderBottom: "1px solid rgba(0,0,0,0.04)" }}>
+                        <td style={{ ...td, fontWeight: 600,
+                          borderLeft: "3px solid " + project.color }}>{d.title}</td>
+                        <td style={td}><span style={badge(dc)}>{dh}</span></td>
+                        <td style={td}>
+                          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                            <div style={{ height: 5, width: 60,
+                              background: "rgba(0,0,0,0.06)", borderRadius: 3,
+                              overflow: "hidden" }}>
+                              <div style={{ height: "100%", width: dp + "%",
+                                background: dc, borderRadius: 3 }} />
+                            </div>
+                            <span style={{ fontSize: 10, color: "#6b7280" }}>{dp}%</span>
+                          </div>
+                        </td>
+                        <td style={td}>{rem}</td>
+                        <td style={{ ...td, color: d.end && d.end < todayStr ? "#ef4444" : "#374151" }}>
+                          {fmtS(d.end)}
+                        </td>
+                        <td style={td}>{owners}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          {/* S8: Deliverable Specifications */}
+          {project.deliverables.some(d => d.specifications) && (
+            <div style={card}>
+              <div style={{ padding: "16px 24px 12px" }}>
+                <div style={secH}>Deliverable Specifications & Requirements</div>
+              </div>
+              {project.deliverables.filter(d => d.specifications).map((d, i) => {
+                const dts = d.subtasks && d.subtasks.length > 0 ? d.subtasks : [d];
+                const rem = dts.filter(t => t.status !== "Done").length;
+                return (
+                  <div key={i} style={{ padding: "16px 24px",
+                    borderTop: "1px solid rgba(0,0,0,0.05)" }}>
+                    <div style={{ display: "flex", alignItems: "baseline",
+                      gap: 12, marginBottom: 10 }}>
+                      <div style={{ fontWeight: 800, fontSize: 13, color: NAVY }}>
+                        {d.title}
+                      </div>
+                      <div style={{ fontSize: 10, color: "#9ca3af" }}>
+                        Due {fmtS(d.end)}
+                      </div>
+                      {rem > 0 && (
+                        <div style={{ fontSize: 10, color: "#f59e0b", fontWeight: 700 }}>
+                          {rem} tasks remaining
+                        </div>
+                      )}
+                    </div>
+                    <div style={{ background: "rgba(0,181,181,0.04)",
+                      border: "1px solid rgba(0,181,181,0.15)", borderRadius: 7,
+                      padding: "12px 16px" }}>
+                      <pre style={{ margin: 0, fontSize: 12, color: "#374151",
+                        whiteSpace: "pre-wrap", fontFamily: "inherit", lineHeight: 1.7 }}>
+                        {d.specifications}
+                      </pre>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+        </div>
+
+        {/* ── PART 2: TEAM OUTLOOK ────────────────────────────────────── */}
+        <div style={{ background: NAVY, padding: "16px 32px" }}>
+          <div style={{ fontSize: 10, fontWeight: 700,
+            color: "rgba(255,255,255,0.5)",
+            textTransform: "uppercase", letterSpacing: "0.1em" }}>
+            Part 2 - Team Outlook & Upcoming Work
+          </div>
+        </div>
+
+        <div style={{ padding: "28px 32px" }}>
+
+          {/* Upcoming Work by Deliverable */}
+          <div style={{ marginBottom: 8 }}>
+            <div style={{ ...secH, marginBottom: 20 }}>
+              Upcoming Work by Deliverable
+            </div>
+            {project.deliverables.filter(d => d.status !== "Done").map(del => {
+              const tasks = del.subtasks && del.subtasks.length > 0
+                ? del.subtasks : [del];
+              const upTasks = tasks
+                .filter(t => t.status !== "Done")
+                .sort((a,b) => (a.start||"").localeCompare(b.start||""));
+              if (!upTasks.length) return null;
+              const nsText = (commentary.nextSteps || {})[del.id] || "";
+              return (
+                <div key={del.id} style={{ ...card, marginBottom: 20 }}>
+                  <div style={{ padding: "14px 24px",
+                    borderBottom: "1px solid rgba(0,0,0,0.06)",
+                    background: project.color + "08",
+                    borderTop: "3px solid " + project.color,
+                    display: "flex", alignItems: "baseline", gap: 14 }}>
+                    <div style={{ fontWeight: 800, fontSize: 15, color: NAVY }}>
+                      {del.title}
+                    </div>
+                    <div style={{ fontSize: 11, color: "#6b7280" }}>
+                      Target Delivery: {fmtS(del.end)}
+                    </div>
+                  </div>
+                  <div style={{ padding: "12px 24px 0" }}>
+                    <div style={{ fontSize: 10, fontWeight: 700, color: "#6b7280",
+                      textTransform: "uppercase", letterSpacing: "0.08em",
+                      marginBottom: 8 }}>Coming Up</div>
+                  </div>
+                  <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                    <thead>
+                      <tr>
+                        <th style={th}>Team Member</th>
+                        <th style={th}>Upcoming Work</th>
+                        <th style={th}>Timing</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {upTasks.map((t, i) => {
+                        const names = (t.assignees || [])
+                          .map(id => pName(id))
+                          .filter(n => n !== "Unassigned");
+                        let timing = "--";
+                        if (t.start && t.end) {
+                          timing = t.start === t.end
+                            ? fmtS(t.start)
+                            : fmtS(t.start) + " - " + fmtS(t.end);
+                        } else if (t.end) {
+                          timing = fmtS(t.end);
+                        }
+                        const late = t.end && t.end < todayStr;
+                        const blc = late ? "3px solid #ef4444" : "3px solid transparent";
+                        return (
+                          <tr key={i} style={{ borderBottom: "1px solid rgba(0,0,0,0.04)" }}>
+                            <td style={{ ...td, borderLeft: blc }}>
+                              {names.length > 0 ? (
+                                <div style={{ display: "flex", flexDirection: "column",
+                                  gap: 3 }}>
+                                  {names.map(nm => {
+                                    const aid = (t.assignees||[]).find(id => pName(id) === nm);
+                                    return (
+                                      <div key={nm} style={{ display: "flex",
+                                        alignItems: "center", gap: 6, fontWeight: 600 }}>
+                                        <div style={{ width: 18, height: 18,
+                                          borderRadius: "50%", background: pColor(aid),
+                                          display: "flex", alignItems: "center",
+                                          justifyContent: "center", fontSize: 9,
+                                          fontWeight: 800, color: "#fff",
+                                          flexShrink: 0 }}>{nm[0]}</div>
+                                        {nm}
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                              ) : (
+                                <span style={{ color: "#9ca3af", fontStyle: "italic" }}>
+                                  Unassigned
+                                </span>
+                              )}
+                            </td>
+                            <td style={td}>
+                              <span style={{ fontWeight: t.status === "In Progress" ? 700 : 400 }}>
+                                {t.title}
+                              </span>
+                              {t.status === "In Progress" && (
+                                <span style={{ marginLeft: 8, fontSize: 9, fontWeight: 700,
+                                  color: TEAL, background: TEAL + "18",
+                                  borderRadius: 4, padding: "2px 6px" }}>Active</span>
+                              )}
+                              {t.status === "Blocked" && (
+                                <span style={{ marginLeft: 8, fontSize: 9, fontWeight: 700,
+                                  color: "#ef4444", background: "#ef444418",
+                                  borderRadius: 4, padding: "2px 6px" }}>Blocked</span>
+                              )}
+                            </td>
+                            <td style={{ ...td, color: late ? "#ef4444" : "#374151",
+                              fontWeight: late ? 700 : 400, whiteSpace: "nowrap" }}>
+                              {timing}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                  <div style={{ padding: "14px 24px",
+                    borderTop: "1px solid rgba(0,0,0,0.05)", background: "#fafafa" }}>
+                    <div style={{ fontSize: 10, fontWeight: 700, color: "#6b7280",
+                      textTransform: "uppercase", letterSpacing: "0.08em",
+                      marginBottom: 6 }}>Next Steps</div>
+                    <textarea
+                      value={nsText}
+                      onChange={e => setNextStep(del.id, e.target.value)}
+                      placeholder={"* Finalize copy revisions\n* Complete creative development\n* Route proof for review"}
+                      rows={3}
+                      style={{ width: "100%", fontSize: 12,
+                        border: "1px solid rgba(0,0,0,0.1)", borderRadius: 7,
+                        padding: "8px 12px", fontFamily: "inherit", lineHeight: 1.6,
+                        resize: "vertical", background: "#fff",
+                        outline: "none", color: "#374151" }} />
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+
+          {/* Risks / Items to Watch */}
+          <div style={card}>
+            <div style={{ padding: "16px 24px 12px" }}>
+              <div style={secH}>Risks / Items to Watch</div>
+              <textarea value={commentary.outlookRisks}
+                onChange={e => setC("outlookRisks", e.target.value)}
+                placeholder={"* Awaiting client approval on final copy\n* Proof turnaround may impact timing\n* Resource availability should be monitored"}
+                rows={4} style={taStyle} />
+            </div>
+          </div>
+
+          {/* Decisions Needed */}
+          <div style={card}>
+            <div style={{ padding: "16px 24px 12px" }}>
+              <div style={secH}>Decisions Needed</div>
+              <div style={{ fontSize: 10, color: "#9ca3af", marginBottom: 8 }}>
+                Format: Decision | Owner | Needed By - one per line
+              </div>
+              <textarea value={commentary.outlookDecisions}
+                onChange={e => setC("outlookDecisions", e.target.value)}
+                placeholder={"Subject line approval | Client | Jun 25\nFinal audience list | Account Team | Jun 28\nVideo version selection | Stakeholders | Jul 1"}
+                rows={4} style={taStyle} />
+              {commentary.outlookDecisions && commentary.outlookDecisions.trim() && (
+                <div style={{ marginTop: 12, overflowX: "auto" }}>
+                  <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+                    <thead>
+                      <tr>
+                        <th style={th}>Decision</th>
+                        <th style={th}>Owner</th>
+                        <th style={th}>Needed By</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {commentary.outlookDecisions.split("\n")
+                        .filter(l => l.trim())
+                        .map((l, i) => {
+                          const parts = l.split("|").map(c => c.trim());
+                          return (
+                            <tr key={i} style={{ borderBottom: "1px solid rgba(0,0,0,0.04)" }}>
+                              <td style={{ ...td, fontWeight: 600 }}>
+                                {parts[0] || ""}
+                              </td>
+                              <td style={td}>{parts[1] || ""}</td>
+                              <td style={{ ...td, color: "#f59e0b", fontWeight: 700 }}>
+                                {parts[2] || ""}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Additional Notes */}
+          <div style={card}>
+            <div style={{ padding: "16px 24px 12px" }}>
+              <div style={secH}>Additional Notes</div>
+              <textarea value={commentary.outlookNotes}
+                onChange={e => setC("outlookNotes", e.target.value)}
+                placeholder={"* Overall timing remains on track\n* No major blockers identified\n* Minor adjustments incorporated"}
+                rows={3} style={taStyle} />
+            </div>
+          </div>
+
+        </div>
+
+      </div>
+    </div>
+  );
+}
+
+
+function StatusView({ projects, people, statusNotes, onUpdateNote, onAddDeliverable, onAddSubtask, onSaveTrackOverride, onEditItem, onOpenProject, adminTasks = [], onEditAdminTask, onUpdateAdminTaskNotes, onGenerateReport }) {
   const [trackOpenId, setTrackOpenId] = useState(null); // del.id whose track dropdown is open
 
   const [editingNote, setEditingNote] = useState(null); // { projId, delId }
@@ -8909,6 +9715,12 @@ function StatusView({ projects, people, statusNotes, onUpdateNote, onAddDelivera
             <option value="all">All Projects</option>
             {projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
           </select>
+          {filterProj !== "all" && onGenerateReport && (
+            <button onClick={() => onGenerateReport(filterProj)}
+              style={{ padding:"5px 14px", background:"rgba(0,0,0,0.06)", border:"1px solid rgba(0,0,0,0.12)", borderRadius:7, cursor:"pointer", fontSize:11, fontWeight:700, color:"#374151", fontFamily:"inherit" }}>
+              📊 Generate Report
+            </button>
+          )}
         </div>
       </div>
 
@@ -12531,6 +13343,7 @@ export default function App() {
   const [newDeliverable, setNewDeliverable] = useState(null);
   const [newSubtask, setNewSubtask] = useState(null);
   const [projectDetailsId, setProjectDetailsId] = useState(null); // project id for details modal
+  const [updateReportProjectId, setUpdateReportProjectId] = useState(null); // project id for update report
   // Clipboard for copy/paste on timeline
 
   // ── PTO & current user ──────────────────────────────────────────────────
@@ -13601,6 +14414,11 @@ export default function App() {
     if (SB_READY) await sb.update("admin_tasks", id, { notes, updated_at: new Date().toISOString() });
   };
 
+  const handleUpdateCommentary = async (projectId, commentary) => {
+    setProjects(prev => prev.map(p => p.id === projectId ? { ...p, commentary } : p));
+    if (SB_READY) await sb.update("projects", projectId, { commentary }).catch(() => {});
+  };
+
   // ── Program close notification ──────────────────────────────────────────────
   const checkProjectCompletion = async (projectId) => {
     const proj = projects.find(p => p.id === projectId);
@@ -14144,10 +14962,10 @@ export default function App() {
   ];
   const _allowed = allowedNavItems(currentRole);
   const navItems = ALL_NAV_ITEMS.filter(n => _allowed.has(n.id));
-  // Desktop nav hides By Person — it's accessible on mobile via the bottom tab bar
-  // and drawer, but the desktop nav already has By Person visible there too.
-  // Per request: By Person should only be surfaced on mobile.
-  const desktopNavItems = navItems.filter(n => n.id !== "people");
+  // Desktop nav excludes "people" intentionally — By Person is surfaced on mobile
+  // bottom tab bar only. Desktop users access it via the drawer.
+  // ACTUALLY: restore it for desktop — users want it in both places.
+  const desktopNavItems = navItems; // show all nav items including By Person
 
   // Mobile detection — re-checks on resize so orientation changes work.
   // 768px is the boundary: anything narrower is treated as phone/mobile.
@@ -14663,6 +15481,7 @@ export default function App() {
             onCopyDeliverable={handleCopyDeliverable}
             onPasteSubtask={handlePasteSubtask}
             onPasteDeliverable={handlePasteDeliverable}
+            onGenerateReport={(projId) => setUpdateReportProjectId(projId)}
             isMobile={isMobile}
           />
         )}
@@ -14750,7 +15569,7 @@ export default function App() {
             ))}
           </div>
         )}
-        {view === "status"  && <StatusView projects={projects} people={people} statusNotes={statusNotes} onUpdateNote={handleUpdateNote} onAddDeliverable={(proj) => setNewDeliverable(proj)} onAddSubtask={(proj, del) => setNewSubtask({ project: proj, deliverable: del })} onSaveTrackOverride={(projId, delId, val) => setProjects(ps => ps.map(p => p.id !== projId ? p : { ...p, deliverables: p.deliverables.map(d => d.id !== delId ? d : { ...d, trackOverride: val }) }))} onEditItem={handleEditItem} onOpenProject={id => setProjectDetailsId(id)} adminTasks={adminTasks} onEditAdminTask={(task) => setStatusEditingAdminTask(task)} onUpdateAdminTaskNotes={updateAdminTaskNotes} />}
+        {view === "status"  && <StatusView projects={projects} people={people} statusNotes={statusNotes} onUpdateNote={handleUpdateNote} onAddDeliverable={(proj) => setNewDeliverable(proj)} onAddSubtask={(proj, del) => setNewSubtask({ project: proj, deliverable: del })} onSaveTrackOverride={(projId, delId, val) => setProjects(ps => ps.map(p => p.id !== projId ? p : { ...p, deliverables: p.deliverables.map(d => d.id !== delId ? d : { ...d, trackOverride: val }) }))} onEditItem={handleEditItem} onOpenProject={id => setProjectDetailsId(id)} adminTasks={adminTasks} onEditAdminTask={(task) => setStatusEditingAdminTask(task)} onUpdateAdminTaskNotes={updateAdminTaskNotes} onGenerateReport={(projId) => setUpdateReportProjectId(projId)} />}
         </>
         )}
       </main>
@@ -14902,8 +15721,20 @@ export default function App() {
           onDelete={(id) => { handleDeleteProject(id); setProjectDetailsId(null); }}
           onSaveAsTemplate={(proj) => { handleSaveAsTemplate(proj); }}
           buClients={buClients}
+          onGenerateReport={(projId) => { setProjectDetailsId(null); setUpdateReportProjectId(projId); }}
         />
       )}
+      {updateReportProjectId && (() => {
+        const rptProj = projects.find(p => p.id === updateReportProjectId);
+        return rptProj ? (
+          <ProjectUpdateReport
+            project={rptProj}
+            people={people}
+            onClose={() => setUpdateReportProjectId(null)}
+            onUpdateCommentary={(c) => handleUpdateCommentary(rptProj.id, c)}
+          />
+        ) : null;
+      })()}
       {statusEditingAdminTask && (
         <AssignTaskModal
           people={people}

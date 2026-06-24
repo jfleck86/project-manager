@@ -19,13 +19,14 @@ export function rowToDeliverable(r, subs) {
     department: r.department || "", start: r.start_date || "", end: r.end_date || "",
     progress: r.progress ?? 0, dependencies: r.dependencies ?? [], assignees: r.assignees ?? [],
     trackOverride: r.track_override || null,
-    effort: r.custom_hours ? "C" : (r.effort || "M"),  // restore "C" if custom_hours present
+    effort: r.custom_hours ? "C" : (r.effort || "M"),
     customHours: r.custom_hours ?? null,
     file_url: r.file_url || "",
     isWaiting: r.is_waiting ?? false,
     completedAt: r.completed_at || null,
     requestedDeliveryDate: r.requested_delivery_date || null,
     assignedByPersonId: r.assigned_by_person_id || null,
+    specifications: r.specifications || "",
     subtasks: (subs || []).filter(s => s.deliverable_id != null && s.deliverable_id === r.id)
       .sort((a, b) => a.position - b.position).map(rowToSubtask),
   };
@@ -49,6 +50,7 @@ export function rowToProject(r, dels, subs) {
     kickoffRequested:   r.kickoff_requested    || false,
     kickoffDate:        r.kickoff_date         || null,
     kickoffNotifSentAt: r.kickoff_notif_sent_at || null,
+    commentary: r.commentary || {},
     deliverables: (dels || []).filter(d => d.project_id === r.id)
       .sort((a, b) => (a.position ?? 0) - (b.position ?? 0)).map(d => rowToDeliverable(d, subs)),
   };
@@ -59,12 +61,13 @@ export function delToRow(d, projectId, pos = 0) {
     department: d.department || null, start_date: d.start || null, end_date: d.end || null,
     progress: d.progress ?? 0, dependencies: d.dependencies ?? [], assignees: d.assignees ?? [],
     track_override: d.trackOverride || null,
-    effort: d.effort === "C" ? "M" : (d.effort || "M"),  // "C" is UI-only; "M" is DB placeholder
+    effort: d.effort === "C" ? "M" : (d.effort || "M"),
     custom_hours: d.customHours ?? null,
     file_url: d.file_url || null, position: pos,
     is_waiting: d.isWaiting ?? false,
     requested_delivery_date: d.requestedDeliveryDate || null,
     assigned_by_person_id: d.assignedByPersonId || null,
+    specifications: d.specifications || null,
   };
 }
 export function subToRow(s, delId, projId, pos = 0) {
