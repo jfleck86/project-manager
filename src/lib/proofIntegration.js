@@ -7,12 +7,39 @@
 const BASE = () => (typeof window !== "undefined" && window.__SB_URL__) || import.meta.env.VITE_SUPABASE_URL || "";
 const KEY  = () => (typeof window !== "undefined" && window.__SB_KEY__)  || import.meta.env.VITE_SUPABASE_ANON_KEY || "";
 
-function headers(token) {
+// Read-only headers — anon key is acceptable for SELECT operations.
+function readHeaders() {
   return {
     "Content-Type": "application/json",
     "apikey": KEY(),
-    "Authorization": `Bearer ${token || KEY()}`,
+    "Authorization": `Bearer ${KEY()}`,
   };
+}
+
+// Write headers — must use the authenticated user JWT.
+// If no session is available the write is intentionally skipped by the
+// caller; we do NOT fall back to the anon key because the anon key
+// has no INSERT permission on task_notifications (and shouldn't).
+function writeHeaders(accessToken) {
+  return {
+    "Content-Type": "application/json",
+    "apikey": KEY(),
+    "Authorization": `Bearer ${accessToken}`,
+    "Prefer": "return=minimal",
+  };
+}
+
+// Retrieve the stored user access token. Returns null if not found so
+// callers can decide whether to proceed or bail out gracefully.
+function getStoredToken() {
+  try {
+    const raw = localStorage.getItem("sb_session");
+    if (!raw) return null;
+    const s = JSON.parse(raw);
+    return s?.access_token || null;
+  } catch {
+    return null;
+  }
 }
 
 // ── Find an existing proof request linked to a PulseX task ───
@@ -22,7 +49,7 @@ export async function findLinkedProofRequest(taskId) {
   try {
     const res = await fetch(
       `${BASE()}/rest/v1/proof_requests?related_task_id=eq.${taskId}&is_archived=eq.false&limit=1`,
-      { headers: headers(null) }
+      { headers: readHeaders() }
     );
     if (!res.ok) return null;
     const data = await res.json();
@@ -34,7 +61,7 @@ export async function findLinkedProofRequest(taskId) {
 
 export async function markPulseXTaskDone(taskId, accessToken) {
   if (!taskId || !BASE()) return { error: "Not configured" };
-  const hdrs = { ...headers(accessToken), "Prefer": "return=minimal" };
+  const hdrs = { ...writeHeaders(accessToken), "Prefer": "return=minimal" };
   const body  = JSON.stringify({ status: "Done" });
 
   // Try subtasks first, then deliverables
@@ -56,21 +83,17 @@ export async function createProofCompletionNotification({
 }) {
   if (!BASE() || !recipientMemberId) return;
 
-  // Use the stored user JWT so the insert passes RLS on task_notifications.
-  // Falls back to anon key if no session found.
-  const token = (() => {
-    try {
-      const s = JSON.parse((() => { try { return localStorage.getItem("sb_session"); } catch(e) { return null; } })() || "null");
-      return s?.access_token || KEY();
-    } catch { return KEY(); }
-  })();
+  // Require a real user JWT — do NOT fall back to the anon key.
+  // The anon key has no INSERT permission on task_notifications.
+  const token = accessToken || getStoredToken();
+  if (!token) {
+    console.warn("[ProofIntegration] No auth token available — notification skipped");
+    return;
+  }
 
-  const hdrs = { "Content-Type": "application/json", apikey: KEY(), Authorization: `Bearer ${token}`, Prefer: "return=minimal" };
-  const msg  = `Proofing is complete for "${taskTitle || "Proof Request"}" on "${projectName || ""}".`;
-  const url  = `${BASE()}/rest/v1/task_notifications`;
-
-  // Attempt 1: full notification with all fields (requires proof_queue_integration.sql for extra columns)
-  // id format matches PulseX's own notification creation (text primary key, not uuid)
+  const hdrs   = writeHeaders(token);
+  const msg    = `Proofing is complete for "${taskTitle || "Proof Request"}" on "${projectName || ""}".`;
+  const url    = `${BASE()}/rest/v1/task_notifications`;
   const notifId = `notif_proof_${Date.now()}_${recipientMemberId}`;
 
   const fullNotif = {
@@ -93,11 +116,7 @@ export async function createProofCompletionNotification({
       console.warn("[ProofIntegration] Full notification failed:", res.status, errText.slice(0, 300));
 
       // Retry with minimal fields — safe for any table schema. Keep the
-      // explicit "proof_complete" type even here — falling back to the
-      // generic "task_completed" type would make this indistinguishable
-      // from a regular project task completion in PulseX's notification
-      // center, which previously caused regular completions to get mixed
-      // up with "open the proof queue" behavior.
+      // explicit "proof_complete" type so it renders the right action in PulseX.
       const minimalNotif = {
         id:                    notifId,
         task_id:               taskId || null,
@@ -117,23 +136,17 @@ export async function createProofCompletionNotification({
       }
     }
 
-    console.log("[ProofIntegration] ✓ Notification sent, id:", notifId, "→ member:", recipientMemberId);
+    console.log("[ProofIntegration] Notification sent, id:", notifId, "→ member:", recipientMemberId);
   } catch (e) {
     console.error("[ProofIntegration] notification threw:", e.message);
   }
 }
 
 // ── Find proofreaders scoped to the account director's business unit ────
-// Matches the proof request's client name against business_unit_clients,
-// then returns person_ids of members in that scope whose team_members.role
-// is "proofreading" (the access-level role set in Business Units → All
-// people, not a separate discipline tag). Returns [] if no client match or
-// no one in that scope has the proofreading role yet — callers should fall
-// back to findAllProofreadersByRole() in that case.
 
 export async function findScopedProofreaders(clientName) {
   if (!BASE() || !clientName) return [];
-  const hdrs = { apikey: KEY(), Authorization: `Bearer ${KEY()}` };
+  const hdrs = readHeaders();
   try {
     const clientRes = await fetch(
       `${BASE()}/rest/v1/business_unit_clients?client_name=eq.${encodeURIComponent(clientName)}&select=business_unit_id&limit=1`,
@@ -167,17 +180,14 @@ export async function findScopedProofreaders(clientName) {
   }
 }
 
-// ── Global fallback: everyone with role = "proofreading", regardless of
-// business unit. Used when a proof request's client doesn't match any
-// configured scope, or no one in that scope has the proofreading role yet.
+// ── Global fallback: everyone with role = "proofreading" ────────────────
 
 export async function findAllProofreadersByRole() {
   if (!BASE()) return [];
-  const hdrs = { apikey: KEY(), Authorization: `Bearer ${KEY()}` };
   try {
     const res = await fetch(
       `${BASE()}/rest/v1/team_members?role=eq.proofreading&select=id`,
-      { headers: hdrs }
+      { headers: readHeaders() }
     );
     if (!res.ok) return [];
     const rows = await res.json();
@@ -189,25 +199,20 @@ export async function findAllProofreadersByRole() {
 }
 
 // ── Notify all proofreaders when a new request enters the queue ──────────
-// Sends one task_notifications row per proofreader. Uses notification_type
-// "proof_new_request" — make sure the SQL CHECK constraint on task_notifications
-// allows this value (see proof_queue setup SQL), otherwise the insert fails
-// and proofreaders simply won't be notified (no silent type-swap fallback,
-// since that previously caused the wrong action button to render in PulseX).
 
 export async function notifyNewProofRequest({
   proofreaderMemberIds = [], client, projectName, submittedBy, proofRequestId,
 }) {
   if (!BASE() || !proofreaderMemberIds.length) return;
 
-  const token = (() => {
-    try {
-      const s = JSON.parse((() => { try { return localStorage.getItem("sb_session"); } catch(e) { return null; } })() || "null");
-      return s?.access_token || KEY();
-    } catch { return KEY(); }
-  })();
+  // Require a real user JWT — do NOT fall back to the anon key.
+  const token = getStoredToken();
+  if (!token) {
+    console.warn("[ProofIntegration] No auth token — new-request notifications skipped");
+    return;
+  }
 
-  const hdrs = { "Content-Type": "application/json", apikey: KEY(), Authorization: `Bearer ${token}`, Prefer: "return=minimal" };
+  const hdrs = writeHeaders(token);
   const url  = `${BASE()}/rest/v1/task_notifications`;
   const msg  = `New proof request from ${submittedBy || "a team member"}: "${projectName || "Untitled"}"${client ? ` (${client})` : ""}.`;
 
@@ -228,8 +233,6 @@ export async function notifyNewProofRequest({
       if (!res.ok) {
         const errText = await res.text().catch(() => "");
         console.warn("[ProofIntegration] New-request notification failed for", memberId, ":", res.status, errText.slice(0, 300));
-      } else {
-        console.log("[ProofIntegration] ✓ New-request notification sent → member:", memberId);
       }
     } catch (e) {
       console.error("[ProofIntegration] new-request notification threw:", e.message);
@@ -265,20 +268,20 @@ export function buildPrefill({ project, deliverable, task, currentUserName, curr
 }
 
 // ── localStorage bridge (PulseX → Proof Queue, works across tabs) ──────────
-// sessionStorage is per-tab — a new tab cannot read it.
-// localStorage persists across tabs; we clear after first read + timestamp check.
+
 const PREFILL_KEY = "proof_queue_prefill";
 
 export function storePrefill(data) {
   try { localStorage.setItem(PREFILL_KEY, JSON.stringify({ ...data, _ts: Date.now() })); } catch {}
 }
+
 export function readAndClearPrefill() {
   try {
-    const raw = (() => { try { return localStorage.getItem(PREFILL_KEY); } catch(e) { return null; } })()
+    const raw = localStorage.getItem(PREFILL_KEY);
     if (!raw) return null;
-    try { localStorage.removeItem(PREFILL_KEY); } catch(e) {}
+    try { localStorage.removeItem(PREFILL_KEY); } catch {}
     const parsed = JSON.parse(raw);
-    if (parsed._ts && Date.now() - parsed._ts > 120000) return null; // stale
+    if (parsed._ts && Date.now() - parsed._ts > 120000) return null; // stale after 2 min
     delete parsed._ts;
     return parsed;
   } catch { return null; }

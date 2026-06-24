@@ -67,7 +67,26 @@ const ZOOM_LEVELS = [
 let _zoomRatio = 1.0;
 const fs = (px) => Math.round(px * _zoomRatio);
 const totalDays = Math.ceil((TIMELINE_END - TIMELINE_START) / 86400000);
-const TODAY = (() => { const d = new Date(); d.setHours(0,0,0,0); return d; })();
+// Gate verbose diagnostics behind a dev flag so they don't reach production.
+// Set window.__PULSEX_DEV__ = true in the console to re-enable during debugging.
+const DEV = typeof window !== "undefined" && (
+  window.__PULSEX_DEV__ === true ||
+  (typeof import.meta !== "undefined" && import.meta.env?.DEV === true)
+);
+const devLog  = (...args) => { if (DEV) console.log(...args); };
+const devWarn = (...args) => { if (DEV) console.warn(...args); };
+
+// Return today's date normalised to midnight. Called at render-time so the
+// app stays correct if a session spans midnight — a module-level constant
+// would freeze on the date the JS bundle first loaded.
+const getToday = () => { const d = new Date(); d.setHours(0,0,0,0); return d; };
+// Convenience string form used in many places
+const getTodayStr = () => getToday().toISOString().slice(0,10);
+
+// Keep a module-level alias for the small number of places that genuinely
+// only run once (e.g. TIMELINE_START offset). These are safe because they
+// are layout constants, not "is this task overdue?" comparisons.
+const TODAY = getToday();
 function cloneSubtask(sub) { return { ...sub, id: "s_" + Date.now() + "_" + Math.random().toString(36).slice(2,6) }; }
 // Custom effort wrapper — handles "C" (custom hours) in addition to S/M/L
 const effortHrs = (effort, customHours) => {
@@ -2831,7 +2850,7 @@ function ProjectSection({ proj, people, collapsed, toggle, weeks, todayOff, allI
           <span onClick={() => toggle(proj.id)} style={{ fontSize: 10, color: "#6b7280", lineHeight: 1, width: 12, flexShrink: 0, transition: "transform 0.15s", display: "inline-block", transform: isProjCollapsed ? "rotate(-90deg)" : "rotate(0deg)", cursor: "pointer" }}>▼</span>
           <div onClick={() => toggle(proj.id)} style={{ width: 3, height: 16, background: proj.color, borderRadius: 2, flexShrink: 0, cursor: "pointer" }} />
           {/* Project name — click to open details modal */}
-          <span onClick={() => { console.log("[PulseX] project click", proj.id); onOpenProject && onOpenProject(proj.id); }} style={{ fontSize: 11, fontWeight: 800, color: proj.color, letterSpacing: "0.05em", textTransform: "uppercase", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", cursor: "pointer", textDecorationLine: "underline", textDecorationStyle: "dotted", textUnderlineOffset: 2 }} title="View project details">{proj.name}</span>
+          <span onClick={() => { devLog("[PulseX] project click", proj.id); onOpenProject && onOpenProject(proj.id); }} style={{ fontSize: 11, fontWeight: 800, color: proj.color, letterSpacing: "0.05em", textTransform: "uppercase", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", cursor: "pointer", textDecorationLine: "underline", textDecorationStyle: "dotted", textUnderlineOffset: 2 }} title="View project details">{proj.name}</span>
           {/* Team member avatars */}
           {(proj.teamMemberIds||[]).slice(0,3).map(id => {
             const p = people.find(x => x.id === id); if (!p) return null;
@@ -7450,13 +7469,13 @@ function ReportingDashboardView({ projects, people, holidays = [], pto = [], adm
       sb.select("business_unit_clients", "select=client_name,business_unit_id"),
       sb.select("business_unit_members", "select=person_id,business_unit_id"),
     ]).then(([c, m]) => {
-      if (c.error) console.warn("[Forecast] business_unit_clients fetch error:", c.error);
-      if (m.error) console.warn("[Forecast] business_unit_members fetch error:", m.error);
-      console.log("[Forecast] business_unit_clients loaded:", c.data?.length || 0, c.data);
-      console.log("[Forecast] business_unit_members loaded:", m.data?.length || 0, m.data);
+      if (c.error) devWarn("[Forecast] business_unit_clients fetch error:", c.error);
+      if (m.error) devWarn("[Forecast] business_unit_members fetch error:", m.error);
+      devLog("[Forecast] business_unit_clients loaded:", c.data?.length || 0, c.data);
+      devLog("[Forecast] business_unit_members loaded:", m.data?.length || 0, m.data);
       if (c.data) setBuClientsRDV(c.data);
       if (m.data) setBuMembersRDV(m.data);
-    }).catch(e => console.warn("[Forecast] BU scope fetch threw:", e.message));
+    }).catch(e => devWarn("[Forecast] BU scope fetch threw:", e.message));
   }, [SB_READY]);
 
   // client name → business_unit_id (which scope a client belongs to, if any)
@@ -7614,7 +7633,7 @@ function ReportingDashboardView({ projects, people, holidays = [], pto = [], adm
         // Automatically derived from actual scope membership — see isClientOtherTeamFor.
         const isOtherTeam = isClientOtherTeamFor(pid, client);
         if (typeof window !== "undefined" && window.__PULSEX_DEBUG_SCOPE__) {
-          console.log(`[Forecast] ${person.name} / "${client}" → buId=${clientToBuId[client] || "none"}, ` +
+          devLog(`[Forecast] ${person.name} / "${client}" → buId=${clientToBuId[client] || "none"}, ` +
             `personBuIds=${[...(personBuIds[pid] || [])].join(",") || "none"}, isOtherTeam=${isOtherTeam}`);
         }
         return { client, allocHrs, billedHrs, spentHrs, forecastHrs, pacedHrs, taskFuture, needsPlanning, clientBehind, isOtherTeam };
@@ -11346,27 +11365,37 @@ ${proj.kickoffRequested
 
 // ── SOW Brief ────────────────────────────────────────────────────────────────
 function generateBriefHtml(proj, deliverables, people) {
-  const fmtDate = d => d ? new Date(d+"T00:00:00").toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"}) : "—";
-  const person  = id => people.find(p => p.id === id)?.name || "—";
+  // Escape all user-supplied strings before interpolating into HTML.
+  // Without this, a project name like "<script>..." executes when the
+  // downloaded .doc is opened in a browser.
+  const esc = (s) => String(s == null ? "" : s)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
 
-  const th = c => `<th>${c}</th>`;
+  const fmtDate = d => d ? new Date(d+"T00:00:00").toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"}) : "\u2014";
+  const person  = id => esc(people.find(p => p.id === id)?.name || "\u2014");
+
+  const th = c => `<th>${esc(c)}</th>`;
   const td = (c,s="") => `<td${s?` style="${s}"`:""}>${c||"&nbsp;"}</td>`;
   const tbl = (cols, rows, note="") => `
     <table><thead><tr>${cols.map(th).join("")}</tr></thead>
-    <tbody>${rows.map((r,i)=>`<tr>${cols.map((_,ci)=>td(r[ci]||"",i%2===1?"background:#f5f6f8":"")).join("")}</tr>`).join("")}
-    </tbody></table>${note?`<p style="font-size:9pt;color:#6b7280;font-style:italic;margin:-12px 0 14px">${note}</p>`:""}`;
+    <tbody>${rows.map((r,i)=>`<tr>${cols.map((_,ci)=>td(esc(r[ci]||""),i%2===1?"background:#f5f6f8":"")).join("")}</tr>`).join("")}
+    </tbody></table>${note?`<p style="font-size:9pt;color:#6b7280;font-style:italic;margin:-12px 0 14px">${esc(note)}</p>`:""}`;
   const blank = (t="Complete prior to start of work meeting") =>
-    `<table><tr><td style="border:1px dashed #d1d5db;padding:14px;color:#9ca3af;font-style:italic;min-height:55px;background:#fafafa">${t}</td></tr></table>`;
+    `<table><tr><td style="border:1px dashed #d1d5db;padding:14px;color:#9ca3af;font-style:italic;min-height:55px;background:#fafafa">${esc(t)}</td></tr></table>`;
   const blankRows = n => Array(n).fill(null).map(()=>[]);
-  const delPlus = cols => [...deliverables.map(d=>[d.title||d.name||"",...Array(cols).fill("")]),["Project-Wide",...Array(cols).fill("")]];
-  const teamRows = [[person(proj.accountLeadId)||"—","Account Lead",""],
-    [person(proj.projectManagerId)||"—","Project Manager",""],
+  const delPlus = cols => [...deliverables.map(d=>[esc(d.title||d.name||""),...Array(cols).fill("")]),["Project-Wide",...Array(cols).fill("")]];
+  const teamRows = [[person(proj.accountLeadId)||"\u2014","Account Lead",""],
+    [person(proj.projectManagerId)||"\u2014","Project Manager",""],
     ...(proj.teamMemberIds||[]).map(id=>[person(id),"Team Member",""]),
     ...blankRows(2)];
-  const s4 = deliverables.map(d=>[d.title||d.name||"","","","",fmtDate(d.requestedDeliveryDate||d.end),"",""]);
-  const s10 = deliverables.map(d=>[d.title||d.name||"","","","",""]);
+  const s4 = deliverables.map(d=>[esc(d.title||d.name||""),"","","",fmtDate(d.requestedDeliveryDate||d.end),"",""]);
+  const s10 = deliverables.map(d=>[esc(d.title||d.name||""),"","","",""]);
   const dateStr = new Date().toLocaleDateString("en-US",{month:"long",day:"numeric",year:"numeric"});
-  const prog = proj.projectNumber ? ` &nbsp;&middot;&nbsp; Program #: ${proj.projectNumber}` : "";
+  const prog = proj.projectNumber ? ` &nbsp;&middot;&nbsp; Program #: ${esc(proj.projectNumber)}` : "";
 
   return `<html xmlns:o='urn:schemas-microsoft-com:office:office'
     xmlns:w='urn:schemas-microsoft-com:office:word'
@@ -11385,21 +11414,21 @@ td{border:1px solid #e5e7eb;padding:8px 10px;vertical-align:top}
 <table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;margin-bottom:28px">
   <tr>
     <td bgcolor="#002A4E" style="background:#002A4E;padding:22px 28px">
-      <font face="Calibri,Arial" size="5" color="#FFFFFF"><b>${proj.name}</b></font><br><br>
-      <font face="Calibri,Arial" size="2" color="#CCCCCC">Project Brief &nbsp;&middot;&nbsp; ${proj.client||"—"} &nbsp;&middot;&nbsp; Generated ${dateStr}${prog}</font>
+      <font face="Calibri,Arial" size="5" color="#FFFFFF"><b>${esc(proj.name)}</b></font><br><br>
+      <font face="Calibri,Arial" size="2" color="#CCCCCC">Project Brief &nbsp;&middot;&nbsp; ${esc(proj.client||"—")} &nbsp;&middot;&nbsp; Generated ${dateStr}${prog}</font>
     </td>
   </tr>
 </table>
 
 <h2>1. Project Overview</h2>
 <table style="border-collapse:collapse;margin-bottom:16px"><tbody>
-  <tr><td style="width:50%;border:none;padding:4px 8px 4px 0"><b>Project Name:</b> ${proj.name}</td><td style="width:50%;border:none;padding:4px 8px"><b>Client:</b> ${proj.client||"—"}</td></tr>
-  <tr><td style="border:none;padding:4px 8px 4px 0"><b>Program #:</b> ${proj.projectNumber||"—"}</td><td style="border:none;padding:4px 8px"><b>Priority:</b> ${proj.priority||"—"}</td></tr>
+  <tr><td style="width:50%;border:none;padding:4px 8px 4px 0"><b>Project Name:</b> ${esc(proj.name)}</td><td style="width:50%;border:none;padding:4px 8px"><b>Client:</b> ${esc(proj.client||"—")}</td></tr>
+  <tr><td style="border:none;padding:4px 8px 4px 0"><b>Program #:</b> ${esc(proj.projectNumber||"—")}</td><td style="border:none;padding:4px 8px"><b>Priority:</b> ${esc(proj.priority||"—")}</td></tr>
   <tr><td style="border:none;padding:4px 8px 4px 0"><b>Account Lead:</b> ${person(proj.accountLeadId)}</td><td style="border:none;padding:4px 8px"><b>Project Manager:</b> ${person(proj.projectManagerId)}</td></tr>
-  <tr><td style="border:none;padding:4px 8px 4px 0"><b>Earliest Launch:</b> ${fmtDate(proj.earliestLaunchDate)}</td><td style="border:none;padding:4px 8px"><b>Status:</b> ${proj.projectStatus||"—"}</td></tr>
+  <tr><td style="border:none;padding:4px 8px 4px 0"><b>Earliest Launch:</b> ${fmtDate(proj.earliestLaunchDate)}</td><td style="border:none;padding:4px 8px"><b>Status:</b> ${esc(proj.projectStatus||"—")}</td></tr>
 </tbody></table>
-${proj.objective?`<p style="background:#e8f5f5;border-left:3px solid #00B5B5;padding:8px 12px;margin-bottom:14px"><b>Objective:</b> ${proj.objective}</p>`:""}
-${tbl(["Deliverable","Requested Delivery Date"],deliverables.map(d=>[d.title||d.name||"",fmtDate(d.requestedDeliveryDate||d.end)]))}
+${proj.objective?`<p style="background:#e8f5f5;border-left:3px solid #00B5B5;padding:8px 12px;margin-bottom:14px"><b>Objective:</b> ${esc(proj.objective)}</p>`:""}
+${tbl(["Deliverable","Requested Delivery Date"],deliverables.map(d=>[esc(d.title||d.name||""),fmtDate(d.requestedDeliveryDate||d.end)]))}
 
 <h2>2. Audience &amp; Brand</h2>
 <h3>Target Audience</h3>${blank()}
@@ -12499,12 +12528,12 @@ function BusinessUnitsView({ people, sb, SB_READY, currentRole, currentUserId, o
       if (personModal.appUserId) {
         const r = await sb.update("app_users", personModal.appUserId, { role: personModal.role });
         roleErr = r.error;
-        console.log("[BU] role save by id:", personModal.appUserId, "→", personModal.role, "error:", roleErr);
+        devLog("[BU] role save by id:", personModal.appUserId, "→", personModal.role, "error:", roleErr);
       }
       // Always also try by team_member_id to handle cases where appUserId lookup failed
       const r2 = await sb.updateWhere("app_users", "team_member_id", tmRow.id, { role: personModal.role });
-      if (r2.error) console.warn("[BU] role save by team_member_id failed:", r2.error);
-      else console.log("[BU] role save by team_member_id OK for", tmRow.id, "→", personModal.role);
+      if (r2.error) devWarn("[BU] role save by team_member_id failed:", r2.error);
+      else devLog("[BU] role save by team_member_id OK for", tmRow.id, "→", personModal.role);
     }
     const updated = { ...tmRow, role: personModal.role || "contributor", appUserId: personModal.appUserId };
     if (onPersonSaved) onPersonSaved(updated);
@@ -13223,7 +13252,7 @@ export default function App() {
     setSessionExpired(false); setView("myhub"); setAuthLoading(false);
   };
   const handleLogout = async () => {
-    console.log("[PulseX] handleLogout called");
+    devLog("[PulseX] handleLogout called");
     await signOut(authSession?.access_token || "");
     setAuthSession(null);
     setAuthUser(null);
@@ -13292,20 +13321,6 @@ export default function App() {
       }
     }, 1000);
     return () => clearInterval(t);
-  }, []);
-
-  // Watch for session expiry signal from sbFetch
-  useEffect(() => {
-    const interval = setInterval(() => {
-      if (window.__pulsex_session_expired_flag__) {
-        window.__pulsex_session_expired_flag__ = false;
-        setAuthSession(null);
-        setAuthUser(null);
-        setCurrentRole("viewer");
-        setSessionExpired(true);
-      }
-    }, 1000);
-    return () => clearInterval(interval);
   }, []);
 
   const [view, setViewRaw] = useState(() => {
@@ -13427,7 +13442,7 @@ export default function App() {
       setLoading(false);
       return;
     }
-    console.log("[PulseX] loadAll — URL:", SB_URL ? "set" : "MISSING");
+    devLog("[PulseX] loadAll — URL:", SB_URL ? "set" : "MISSING");
     setDbError(null);
     try {
       const [pR, dR, sR, mR, hR, nR, tR, ptR, auR] = await Promise.all([
@@ -13446,13 +13461,13 @@ export default function App() {
       }
       // Seed if empty
       if (!seeded.current && (!pR.data || pR.data.length === 0)) {
-        console.log("[PulseX] DB empty — seeding defaults");
+        devLog("[PulseX] DB empty — seeding defaults");
         seeded.current = true;
         await seedDefaults();
         return loadAll();
       }
       seeded.current = true;
-      console.log("[PulseX] Loaded — projects:", pR.data?.length, "deliverables:", dR.data?.length, "subtasks:", sR.data?.length);
+      devLog("[PulseX] Loaded — projects:", pR.data?.length, "deliverables:", dR.data?.length, "subtasks:", sR.data?.length);
       const _r = pR.data?.[0] || {};
       const active   = (pR.data || []).filter(p => !p.archived);
       const archived = (pR.data || []).filter(p => p.archived);
@@ -13461,11 +13476,11 @@ export default function App() {
       const deliverableIds = new Set((dR.data || []).map(d => d.id));
       const cleanSubtasks = (sR.data || []).filter(s => {
         if (s.deliverable_id == null) {
-          console.warn("[PulseX] Orphan subtask (null deliverable_id):", s.id, s.title);
+          devWarn("[PulseX] Orphan subtask (null deliverable_id):", s.id, s.title);
           return false;
         }
         if (!deliverableIds.has(s.deliverable_id)) {
-          console.warn("[PulseX] Orphan subtask (missing deliverable):", s.id, s.title, "→", s.deliverable_id);
+          devWarn("[PulseX] Orphan subtask (missing deliverable):", s.id, s.title, "→", s.deliverable_id);
           return false;
         }
         return true;
@@ -14829,20 +14844,19 @@ export default function App() {
   // If the first write to user_activity returns 401 (no INSERT policy), skip all future writes
   // rather than spamming the network and console on every tab change.
   const activityWriteDisabled = React.useRef(false);
-  const trackActivity = React.useCallback((eventType) => {
+  const trackActivity = React.useCallback(async (eventType) => {
     if (!SB_READY || !ownMemberId || activityWriteDisabled.current) return;
-    sb.upsert("user_activity", {
+    // sb.upsert always resolves (never rejects) — check the returned error object.
+    // Any error (typically 401 = no INSERT RLS policy) disables future writes
+    // for this session so we don't spam the network on every tab change.
+    const result = await sb.upsert("user_activity", {
       person_id:   ownMemberId,
       event_type:  eventType,
       occurred_at: new Date().toISOString(),
-    }).catch((err) => {
-      // 401 = table has no INSERT RLS policy. Disable writes for this session
-      // so we don't spam the network. The KPI dashboard reads will still work
-      // if SELECT is permitted separately.
-      if (err?.status === 401 || err?.message?.includes("401")) {
-        activityWriteDisabled.current = true;
-      }
-    });
+    }).catch(() => ({ error: true }));
+    if (result?.error) {
+      activityWriteDisabled.current = true;
+    }
   }, [SB_READY, ownMemberId]);
 
   // Store the real name from the people array once both people + ownMemberId are available
