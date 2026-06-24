@@ -14772,7 +14772,7 @@ export default function App() {
         }
       }
       optimistic(
-        () => setProjects(ps => ps.map(p => p.id !== projectId ? p : { ...p, deliverables: p.deliverables.map(d => d.id !== deliverableId ? d : { ...d, subtasks: d.subtasks.map(s => s.id !== subtaskId ? s : { ...s, status: next, progress: newProg }) }) })),
+        () => setProjects(ps => ps.map(p => p.id !== projectId ? p : { ...p, deliverables: p.deliverables.map(d => d.id !== deliverableId ? d : { ...d, subtasks: d.subtasks.map(s => s.id !== subtaskId ? s : { ...s, status: next, progress: newProg, completedAt: next === "Done" ? new Date().toISOString() : null }) }) })),
         async () => { const cAt = next === "Done" ? new Date().toISOString() : null;
           const { error } = await sb.update("subtasks", subtaskId, cAt ? { status: next, progress: newProg, completed_at: cAt } : { status: next, progress: newProg });
           if (!error && next === "Done") setTimeout(() => checkProjectCompletion(projectId), 500);
@@ -14783,7 +14783,7 @@ export default function App() {
       const newProg = next === "Done" ? 100 : del?.progress ?? 0;
       if (next === "Done") createNotification(del?.title || "Deliverable", del?.title || "", del?.status);
       optimistic(
-        () => setProjects(ps => ps.map(p => p.id !== projectId ? p : { ...p, deliverables: p.deliverables.map(d => d.id !== deliverableId ? d : { ...d, status: next, progress: newProg, subtasks: next === "Done" ? d.subtasks.map(s => ({ ...s, status: "Done", progress: 100 })) : d.subtasks }) })),
+        () => setProjects(ps => ps.map(p => p.id !== projectId ? p : { ...p, deliverables: p.deliverables.map(d => d.id !== deliverableId ? d : { ...d, status: next, progress: newProg, completedAt: next === "Done" ? new Date().toISOString() : null, subtasks: next === "Done" ? d.subtasks.map(s => ({ ...s, status: "Done", progress: 100 })) : d.subtasks }) })),
         async () => {
           const cAtD = next === "Done" ? new Date().toISOString() : null;
           const { error } = await sb.update("deliverables", deliverableId, cAtD ? { status: next, progress: newProg, completed_at: cAtD } : { status: next, progress: newProg });
@@ -14826,15 +14826,23 @@ export default function App() {
   // ── KPI activity tracking ─────────────────────────────────────────────────
   // Records logins and page views to user_activity for the KPI Dashboard.
   // Fires once on auth success (login event) and on every tab change.
+  // If the first write to user_activity returns 401 (no INSERT policy), skip all future writes
+  // rather than spamming the network and console on every tab change.
+  const activityWriteDisabled = React.useRef(false);
   const trackActivity = React.useCallback((eventType) => {
-    if (!SB_READY || !ownMemberId) return;
-    // Do NOT pass id — let Supabase generate a uuid via gen_random_uuid().
-    // Passing a text string like "ua_p1_login_123" causes a 400 because id is uuid type.
+    if (!SB_READY || !ownMemberId || activityWriteDisabled.current) return;
     sb.upsert("user_activity", {
       person_id:   ownMemberId,
       event_type:  eventType,
       occurred_at: new Date().toISOString(),
-    }).catch(() => {}); // 401 = table has no INSERT policy; safe to ignore
+    }).catch((err) => {
+      // 401 = table has no INSERT RLS policy. Disable writes for this session
+      // so we don't spam the network. The KPI dashboard reads will still work
+      // if SELECT is permitted separately.
+      if (err?.status === 401 || err?.message?.includes("401")) {
+        activityWriteDisabled.current = true;
+      }
+    });
   }, [SB_READY, ownMemberId]);
 
   // Store the real name from the people array once both people + ownMemberId are available
@@ -14962,10 +14970,9 @@ export default function App() {
   ];
   const _allowed = allowedNavItems(currentRole);
   const navItems = ALL_NAV_ITEMS.filter(n => _allowed.has(n.id));
-  // Desktop nav excludes "people" intentionally — By Person is surfaced on mobile
-  // bottom tab bar only. Desktop users access it via the drawer.
-  // ACTUALLY: restore it for desktop — users want it in both places.
-  const desktopNavItems = navItems; // show all nav items including By Person
+  // By Person (id:"people") is accessible on desktop via the nav tabs and on
+  // mobile via the hamburger drawer. desktopNavItems = navItems for now.
+  const desktopNavItems = navItems;
 
   // Mobile detection — re-checks on resize so orientation changes work.
   // 768px is the boundary: anything narrower is treated as phone/mobile.
